@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -108,6 +109,32 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		want   string
 	}{
 		{"bad log level", func(c *Config) { c.Log.Level = "chatty" }, "log.level"},
+		{"admin without a name", func(c *Config) {
+			c.General.AdminInterfaceEnabled = true
+			c.General.AdminPassword = "secret"
+		}, "general.adminUsername"},
+		{"admin without a password", func(c *Config) {
+			c.General.AdminInterfaceEnabled = true
+			c.General.AdminUsername = "admin"
+		}, "general.adminPassword"},
+		{"admin port", func(c *Config) {
+			c.General.AdminInterfaceEnabled = true
+			c.General.AdminUsername = "admin"
+			c.General.AdminPassword = "secret"
+			c.General.AdminInterfacePort = 0
+		}, "general.adminInterfacePort"},
+		{"admin address", func(c *Config) {
+			c.General.AdminInterfaceEnabled = true
+			c.General.AdminUsername = "admin"
+			c.General.AdminPassword = "secret"
+			c.General.AdminInterfaceAddress = "the loopback"
+		}, "general.adminInterfaceAddress"},
+		{"half an admin tls pair", func(c *Config) {
+			c.General.AdminInterfaceEnabled = true
+			c.General.AdminUsername = "admin"
+			c.General.AdminPassword = "secret"
+			c.General.AdminCert = "cert.pem"
+		}, "together"},
 		{"bad log format", func(c *Config) { c.Log.Format = "xml" }, "log.format"},
 		{"nothing enabled", func(c *Config) { c.FTP.Enabled = false; c.TFTP.Enabled = false }, "nothing to do"},
 		{"ftp port", func(c *Config) { c.FTP.Port = 0 }, "ftp.port"},
@@ -330,5 +357,42 @@ func TestGeneralBasefolderHasToBeAbsolute(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "absolute path") {
 		t.Errorf("error = %v, want one about an absolute path", err)
+	}
+}
+
+// TestAdminInterfaceCanStandAlone checks that a host brought up with only the
+// web interface on is a valid configuration: it is how the rest of the file
+// gets filled in.
+func TestAdminInterfaceCanStandAlone(t *testing.T) {
+	cfg := Default()
+	cfg.FTP.Enabled = false
+	cfg.TFTP.Enabled = false
+	cfg.General.Basefolder = t.TempDir()
+	cfg.General.AdminInterfaceEnabled = true
+	cfg.General.AdminUsername = "admin"
+	cfg.General.AdminPassword = "secret"
+
+	if err := cfg.Resolved().Validate(); err != nil {
+		t.Fatalf("a host with only the admin interface on was refused: %v", err)
+	}
+}
+
+// TestParseLeavesTheFallbackAlone is what the admin interface depends on:
+// Parse says what the file says, and only Resolved hands the fallback out.
+func TestParseLeavesTheFallbackAlone(t *testing.T) {
+	folder := t.TempDir()
+	cfg, err := Parse([]byte("[general]\nbasefolder = " + strconv.Quote(folder) + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FTP.Basefolder != "" {
+		t.Errorf("Parse resolved ftp.basefolder to %q", cfg.FTP.Basefolder)
+	}
+	if resolved := cfg.Resolved(); resolved.FTP.Basefolder != folder {
+		t.Errorf("Resolved left ftp.basefolder as %q", resolved.FTP.Basefolder)
+	}
+	// the copy is not shared with the original
+	if cfg.FTP.Basefolder != "" {
+		t.Error("Resolved changed the configuration it was called on")
 	}
 }

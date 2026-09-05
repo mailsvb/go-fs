@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"go-fs/internal/admin"
 	"go-fs/internal/config"
 	"go-fs/internal/ftp"
 	"go-fs/internal/httpd"
@@ -25,53 +26,72 @@ import (
 	"go-fs/internal/tftp"
 )
 
+// env is what building a service is given: the configuration, and the path of
+// the file it came from, which the admin interface edits.
+type env struct {
+	cfg  config.Config
+	path string
+}
+
 // entry describes how one service is switched on, built and updated.
 type entry struct {
 	name    string
-	enabled func(config.Config) bool
-	create  func(config.Config, *slog.Logger) (service.Server, error)
-	reload  func(service.Server, config.Config) error
+	enabled func(env) bool
+	create  func(env, *slog.Logger) (service.Server, error)
+	reload  func(service.Server, env) error
 }
 
 var services = []entry{
 	{
 		name:    "ftp",
-		enabled: func(c config.Config) bool { return c.FTP.Enabled || c.FTPS.Enabled },
-		create: func(c config.Config, log *slog.Logger) (service.Server, error) {
-			return ftp.New(c.FTP, c.FTPS, log)
+		enabled: func(e env) bool { return e.cfg.FTP.Enabled || e.cfg.FTPS.Enabled },
+		create: func(e env, log *slog.Logger) (service.Server, error) {
+			return ftp.New(e.cfg.FTP, e.cfg.FTPS, log)
 		},
-		reload: func(s service.Server, c config.Config) error {
-			return s.(*ftp.Server).Reload(c.FTP, c.FTPS)
+		reload: func(s service.Server, e env) error {
+			return s.(*ftp.Server).Reload(e.cfg.FTP, e.cfg.FTPS)
 		},
 	},
 	{
 		name:    "sftp",
-		enabled: func(c config.Config) bool { return c.SFTP.Enabled },
-		create: func(c config.Config, log *slog.Logger) (service.Server, error) {
-			return sftp.New(c.SFTP, log)
+		enabled: func(e env) bool { return e.cfg.SFTP.Enabled },
+		create: func(e env, log *slog.Logger) (service.Server, error) {
+			return sftp.New(e.cfg.SFTP, log)
 		},
-		reload: func(s service.Server, c config.Config) error {
-			return s.(*sftp.Server).Reload(c.SFTP)
+		reload: func(s service.Server, e env) error {
+			return s.(*sftp.Server).Reload(e.cfg.SFTP)
 		},
 	},
 	{
 		name:    "http",
-		enabled: func(c config.Config) bool { return c.HTTP.Enabled || c.HTTPS.Enabled },
-		create: func(c config.Config, log *slog.Logger) (service.Server, error) {
-			return httpd.New(c.HTTP, c.HTTPS, log)
+		enabled: func(e env) bool { return e.cfg.HTTP.Enabled || e.cfg.HTTPS.Enabled },
+		create: func(e env, log *slog.Logger) (service.Server, error) {
+			return httpd.New(e.cfg.HTTP, e.cfg.HTTPS, log)
 		},
-		reload: func(s service.Server, c config.Config) error {
-			return s.(*httpd.Server).Reload(c.HTTP, c.HTTPS)
+		reload: func(s service.Server, e env) error {
+			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS)
 		},
 	},
 	{
 		name:    "tftp",
-		enabled: func(c config.Config) bool { return c.TFTP.Enabled },
-		create: func(c config.Config, log *slog.Logger) (service.Server, error) {
-			return tftp.New(c.TFTP, log)
+		enabled: func(e env) bool { return e.cfg.TFTP.Enabled },
+		create: func(e env, log *slog.Logger) (service.Server, error) {
+			return tftp.New(e.cfg.TFTP, log)
 		},
-		reload: func(s service.Server, c config.Config) error {
-			return s.(*tftp.Server).Reload(c.TFTP)
+		reload: func(s service.Server, e env) error {
+			return s.(*tftp.Server).Reload(e.cfg.TFTP)
+		},
+	},
+	{
+		// the web interface that edits the configuration file. It only writes
+		// the file; what applies the change is the watcher below.
+		name:    "admin",
+		enabled: func(e env) bool { return e.cfg.General.AdminInterfaceEnabled },
+		create: func(e env, log *slog.Logger) (service.Server, error) {
+			return admin.New(e.cfg.General, e.path, log)
+		},
+		reload: func(s service.Server, e env) error {
+			return s.(*admin.Server).Reload(e.cfg.General)
 		},
 	},
 }
@@ -79,14 +99,17 @@ var services = []entry{
 // Supervisor holds what is running.
 type Supervisor struct {
 	log *slog.Logger
+	// path is the configuration file everything came from. The admin interface
+	// is handed it so that it can edit the file it is configured by.
+	path string
 
 	mu      sync.Mutex
 	running map[string]service.Server
 	current config.Config
 }
 
-func New(logger *slog.Logger) *Supervisor {
-	return &Supervisor{log: logger, running: make(map[string]service.Server)}
+func New(logger *slog.Logger, path string) *Supervisor {
+	return &Supervisor{log: logger, path: path, running: make(map[string]service.Server)}
 }
 
 // Apply brings what is running in line with cfg. A service that cannot be
@@ -96,16 +119,17 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	current := env{cfg: cfg, path: s.path}
 	for _, entry := range services {
 		server, running := s.running[entry.name]
-		wanted := entry.enabled(cfg)
+		wanted := entry.enabled(current)
 
 		switch {
 		case !running && !wanted:
 			continue
 
 		case !running && wanted:
-			if err := s.start(ctx, entry, cfg); err != nil {
+			if err := s.start(ctx, entry, current); err != nil {
 				s.log.Error("cannot start the server", "server", entry.name, "error", err)
 			}
 
@@ -115,14 +139,14 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 			s.log.Info("server stopped", "server", entry.name)
 
 		default:
-			err := entry.reload(server, cfg)
+			err := entry.reload(server, current)
 			switch {
 			case err == nil:
 				s.log.Info("server reloaded", "server", entry.name)
 			case errors.Is(err, service.ErrNeedsRestart):
 				_ = server.Shutdown(context.Background())
 				delete(s.running, entry.name)
-				if err := s.start(ctx, entry, cfg); err != nil {
+				if err := s.start(ctx, entry, current); err != nil {
 					s.log.Error("cannot restart the server", "server", entry.name, "error", err)
 					continue
 				}
@@ -143,8 +167,8 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 }
 
 // start builds and starts one service.
-func (s *Supervisor) start(ctx context.Context, e entry, cfg config.Config) error {
-	server, err := e.create(cfg, s.log)
+func (s *Supervisor) start(ctx context.Context, e entry, current env) error {
+	server, err := e.create(current, s.log)
 	if err != nil {
 		return err
 	}

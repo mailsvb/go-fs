@@ -103,7 +103,7 @@ func New(cfg config.FTP, ftps config.FTPS, logger *slog.Logger) (*Server, error)
 	}
 	server.snapshot.Store(&settings{cfg: cfg, ftps: ftps})
 	if ftps.Enabled {
-		server.tls, err = tlsconf.Build(ftps.Cert, ftps.Key, "ftps", logger)
+		server.tls, err = tlsconf.Build(ftps.Cert, ftps.Key, "ftps.cert", "ftps.key", logger)
 		if err != nil {
 			return nil, err
 		}

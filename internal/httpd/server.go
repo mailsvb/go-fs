@@ -170,7 +170,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	if set.https.Enabled {
-		tlsConfig, err := tlsconf.Build(set.https.Cert, set.https.Key, "https", s.log)
+		tlsConfig, err := tlsconf.Build(set.https.Cert, set.https.Key, "https.cert", "https.key", s.log)
 		if err != nil {
 			s.closeListeners()
 			return err

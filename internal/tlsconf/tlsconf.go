@@ -17,18 +17,19 @@ import (
 	"time"
 )
 
-// Build loads the configured key pair, or generates one. section names the
-// configuration keys the messages talk about, "ftps" or "https".
+// Build loads the configured key pair, or generates one. certName and keyName
+// are the configuration keys the messages talk about, "ftps.cert" and
+// "ftps.key" for the FTP server.
 //
 // The Node implementation shipped a fixed certificate whose private key is
 // published with the package, which means it offers no confidentiality at all.
 // Generating a certificate at startup keeps the server usable without any setup
 // while making it obvious that it proves no identity.
-func Build(cert, key, section string, logger *slog.Logger) (*tls.Config, error) {
+func Build(cert, key, certName, keyName string, logger *slog.Logger) (*tls.Config, error) {
 	if cert != "" && key != "" {
 		certificate, err := tls.LoadX509KeyPair(cert, key)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", section, err)
+			return nil, fmt.Errorf("%s and %s: %w", certName, keyName, err)
 		}
 		return &tls.Config{
 			Certificates: []tls.Certificate{certificate},
@@ -38,10 +39,11 @@ func Build(cert, key, section string, logger *slog.Logger) (*tls.Config, error) 
 
 	certificate, err := selfSignedCertificate()
 	if err != nil {
-		return nil, fmt.Errorf("%s: cannot generate a certificate: %w", section, err)
+		return nil, fmt.Errorf("cannot generate a certificate for %s: %w", certName, err)
 	}
-	logger.Warn(fmt.Sprintf("no %s.cert and %s.key configured, generated a temporary "+
-		"self-signed certificate; it changes on every restart and proves no identity", section, section))
+	logger.Warn(fmt.Sprintf("no %s and %s configured, generated a temporary "+
+		"self-signed certificate; it changes on every restart and proves no identity",
+		certName, keyName))
 	return &tls.Config{
 		Certificates: []tls.Certificate{certificate},
 		MinVersion:   tls.VersionTLS12,

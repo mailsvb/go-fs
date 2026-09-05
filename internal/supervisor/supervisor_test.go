@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,7 +92,9 @@ func baseConfig(t *testing.T) config.Config {
 func newSupervisor(t *testing.T) (*Supervisor, *logStore, context.Context) {
 	t.Helper()
 	logs := &logStore{}
-	sup := New(slog.New(logs))
+	// the path only has to name the file the admin interface would edit; the
+	// interface reads it when a request asks for it, not when it is built
+	sup := New(slog.New(logs), filepath.Join(t.TempDir(), "go-fs.toml"))
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() {
 		cancel()
@@ -240,5 +243,49 @@ func TestReloadDoesNotDisturbATransfer(t *testing.T) {
 	// and the account added mid-transfer works
 	if res := fetch(t, port, "/private/", "jane", "secret"); res.StatusCode == http.StatusUnauthorized {
 		t.Error("jane should have been accepted")
+	}
+}
+
+// TestAdminInterfaceIsASupervisedService checks that the web interface joins,
+// reloads and leaves like the file servers do.
+func TestAdminInterfaceIsASupervisedService(t *testing.T) {
+	sup, logs, ctx := newSupervisor(t)
+
+	cfg := baseConfig(t)
+	cfg.General.AdminInterfaceEnabled = true
+	cfg.General.AdminInterfacePort = freePort(t)
+	cfg.General.AdminUsername = "admin"
+	cfg.General.AdminPassword = "secret"
+
+	if err := sup.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(sup.Running(), "admin") {
+		t.Fatalf("the admin interface is not running: %v", sup.Running())
+	}
+
+	// the credentials are swapped without rebinding the listener
+	cfg.General.AdminPassword = "changed"
+	if err := sup.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	logs.waitFor(t, "server reloaded")
+	if logs.has("server restarted") {
+		t.Error("changing the password restarted the interface")
+	}
+
+	// the port cannot move under a bound listener
+	cfg.General.AdminInterfacePort = freePort(t)
+	if err := sup.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	logs.waitFor(t, "server restarted")
+
+	cfg.General.AdminInterfaceEnabled = false
+	if err := sup.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(sup.Running(), "admin") {
+		t.Errorf("the admin interface is still running: %v", sup.Running())
 	}
 }

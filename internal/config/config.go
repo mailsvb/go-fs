@@ -10,6 +10,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -51,6 +52,25 @@ type General struct {
 	ReloadConfig bool `toml:"reloadConfig"`
 	// ReloadInterval is how many seconds pass between two checks of the file.
 	ReloadInterval int `toml:"reloadInterval"`
+
+	// AdminInterfaceEnabled serves the web interface that edits this file. It
+	// is off unless it is switched on, so that an upgrade never opens it by
+	// itself.
+	AdminInterfaceEnabled bool `toml:"adminInterfaceEnabled"`
+	// AdminInterfaceAddress is the interface it binds to. It is the loopback
+	// address by default, because the page shows and edits every password in
+	// this file; set it to an empty string to bind every interface.
+	AdminInterfaceAddress string `toml:"adminInterfaceAddress"`
+	AdminInterfacePort    int    `toml:"adminInterfacePort"`
+	// AdminUsername and AdminPassword are the single account of the web
+	// interface. Both have to be set for it to start.
+	AdminUsername string `toml:"adminUsername"`
+	AdminPassword string `toml:"adminPassword"`
+	// AdminCert and AdminKey are PEM file paths. The interface is always
+	// served over TLS; when both are empty a self-signed certificate is
+	// generated at startup.
+	AdminCert string `toml:"adminCert"`
+	AdminKey  string `toml:"adminKey"`
 }
 
 // Log controls the diagnostics the servers produce. The original emitted
@@ -306,8 +326,10 @@ type TFTP struct {
 func Default() Config {
 	return Config{
 		General: General{
-			ReloadConfig:   true,
-			ReloadInterval: 5,
+			ReloadConfig:          true,
+			ReloadInterval:        5,
+			AdminInterfaceAddress: "127.0.0.1",
+			AdminInterfacePort:    10443,
 		},
 		Log: Log{
 			Level:  "info",
@@ -365,29 +387,42 @@ func Default() Config {
 	}
 }
 
-// Load reads path onto the defaults and validates the result.
-func Load(path string) (Config, error) {
+// Parse unmarshals data onto the defaults and stops there. It is what an editor
+// of this file wants: the sections say what the file says, so that writing the
+// result back does not turn an inherited value into an explicit one.
+func Parse(data []byte) (Config, error) {
 	cfg := Default()
-	data, err := os.ReadFile(path)
-	if err != nil {
+	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return cfg, err
 	}
-	if err := toml.Unmarshal(data, &cfg); err != nil {
+	return cfg, nil
+}
+
+// Load reads path onto the defaults and validates the result.
+func Load(path string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Default(), err
+	}
+	cfg, err := Parse(data)
+	if err != nil {
 		return cfg, fmt.Errorf("%s: %w", path, err)
 	}
-	cfg.applyGeneral()
+	cfg = cfg.Resolved()
 	if err := cfg.Validate(); err != nil {
 		return cfg, fmt.Errorf("%s: %w", path, err)
 	}
 	return cfg, nil
 }
 
-// applyGeneral hands general.basefolder to every server that did not name one
-// of its own. It runs before validation, so an error names the section the
-// folder ended up in rather than the one it came from.
-func (c *Config) applyGeneral() {
+// Resolved is a copy that hands general.basefolder to every server that did not
+// name one of its own. It is applied before validation, so an error names the
+// section the folder ended up in rather than the one it came from.
+//
+// The copy is shallow, which is safe because only string fields are written.
+func (c Config) Resolved() Config {
 	if c.General.Basefolder == "" {
-		return
+		return c
 	}
 	for _, folder := range []*string{
 		&c.FTP.Basefolder,
@@ -399,6 +434,7 @@ func (c *Config) applyGeneral() {
 			*folder = c.General.Basefolder
 		}
 	}
+	return c
 }
 
 // Save writes the configuration back as TOML.
@@ -440,8 +476,14 @@ func (c Config) Validate() error {
 		}
 	}
 	if !c.FTP.Enabled && !c.FTPS.Enabled && !c.SFTP.Enabled &&
-		!c.HTTP.Enabled && !c.HTTPS.Enabled && !c.TFTP.Enabled {
+		!c.HTTP.Enabled && !c.HTTPS.Enabled && !c.TFTP.Enabled &&
+		!c.General.AdminInterfaceEnabled {
 		return errors.New("no server is enabled, nothing to do")
+	}
+	if c.General.AdminInterfaceEnabled {
+		if err := c.General.validateAdmin(); err != nil {
+			return err
+		}
 	}
 	if c.FTP.Enabled || c.FTPS.Enabled {
 		if err := c.validateFTP(); err != nil {
@@ -642,6 +684,30 @@ func (t TFTP) validate() error {
 		return errors.New("tftp.maxFileSize cannot be negative")
 	}
 	return checkFolder("tftp.basefolder", t.Basefolder)
+}
+
+// validateAdmin checks the web interface. It edits every password in this file,
+// so it may not be reachable without an account of its own.
+func (g General) validateAdmin() error {
+	if err := checkPort("general.adminInterfacePort", g.AdminInterfacePort); err != nil {
+		return err
+	}
+	if g.AdminInterfaceAddress != "" && net.ParseIP(g.AdminInterfaceAddress) == nil {
+		return fmt.Errorf("general.adminInterfaceAddress %q is not an address",
+			g.AdminInterfaceAddress)
+	}
+	if g.AdminUsername == "" {
+		return errors.New("general.adminUsername is not set, " +
+			"the admin interface cannot be served without an account")
+	}
+	if g.AdminPassword == "" {
+		return errors.New("general.adminPassword is not set, " +
+			"the admin interface cannot be served without a password")
+	}
+	if (g.AdminCert == "") != (g.AdminKey == "") {
+		return errors.New("general.adminCert and general.adminKey have to be set together")
+	}
+	return nil
 }
 
 func checkPort(name string, port int) error {

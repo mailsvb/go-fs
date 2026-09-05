@@ -81,7 +81,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	sup := supervisor.New(logger)
+	sup := supervisor.New(logger, *configPath)
 	defer sup.Shutdown(context.Background())
 	if err := sup.Apply(ctx, cfg); err != nil {
 		return err

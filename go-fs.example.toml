@@ -19,6 +19,25 @@ reloadConfig = true
 # seconds between two checks of the file
 reloadInterval = 5
 
+# The web interface that edits this file. It is off unless it is switched on,
+# so an upgrade never opens it by itself. Applying a change there rewrites this
+# file through the toml writer: every key is written out and the comments you
+# are reading are lost, with the previous file kept beside it as go-fs.toml.bak.
+adminInterfaceEnabled = false
+# The interface it binds to. It is the loopback address by default, because the
+# page shows and edits every password in this file; reach it from elsewhere
+# through an ssh tunnel, or set this to "" to bind every interface.
+adminInterfaceAddress = "127.0.0.1"
+adminInterfacePort = 10443
+# The single account of the interface. Both have to be set for it to start.
+adminUsername = "admin"
+adminPassword = ""
+# The interface is always served over TLS. These are PEM file paths; when both
+# are empty a self-signed certificate is generated at startup, which changes on
+# every restart and proves no identity.
+adminCert = ""
+adminKey = ""
+
 [log]
 # debug shows the protocol trace, info reports listeners, logins and transfers.
 level = "info"
