@@ -1,0 +1,121 @@
+# go-fs configuration
+#
+# Every key is optional, an absent key keeps the default shown here. Paths have
+# to exist before the server starts.
+
+[log]
+# debug shows the protocol trace, info reports listeners, logins and transfers.
+level = "info"
+# text or json
+format = "text"
+
+[ftp]
+# Serve the plain control port. The TLS listener has its own switch in [ftps];
+# everything else in this section applies to both of them.
+enabled = true
+port = 21
+# served folder, has to exist
+basefolder = "/srv/ftp"
+
+# maximum simultaneous control connections
+maxConnections = 10
+# first port of the passive data port range, which spans maxConnections ports
+minDataPort = 1024
+# seconds an idle control connection is kept open, 0 disables
+idleTimeout = 600
+# seconds an idle data connection is kept open
+dataTimeout = 5
+# maximum length of a single command line in bytes
+maxCommandLength = 4096
+# seconds to wait before answering a wrong password
+loginFailureDelay = 1
+
+# Allow PORT and EPRT to name a host other than the connected client. Off by
+# default, because it lets the server reach third parties on a client's behalf
+# (RFC 2577). Only needed for server to server transfers.
+allowFtpBounce = false
+# Allow passive data connections from another address than the control
+# connection. Off by default.
+allowForeignDataConnection = false
+
+# The TLS interface of the same FTP server: it serves the accounts, folders and
+# limits of [ftp] above.
+[ftps]
+# Listen on ftps.port and offer AUTH TLS on the plain port. Independent of
+# ftp.enabled, so turning that one off serves implicit FTPS only.
+enabled = false
+port = 990
+# PEM files. When both are empty a self-signed certificate is generated at
+# startup; it changes on every restart and proves no identity, so set your own
+# for anything but a quick test.
+cert = ""
+key = ""
+
+# One table per account, repeated for as many as are needed. There is no default
+# account: a name that is not listed here cannot log in.
+[[ftp.users]]
+username = "john"
+password = "doe"
+# own folder for this user, defaults to ftp.basefolder
+# basefolder = "/srv/ftp/john"
+# accept this user without a password, off by default
+# allowLoginWithoutPassword = false
+# What the account may do. All false when not set, so an account with none of
+# these can log in and look around and nothing more; grant what it needs.
+allowUserFileCreate = true
+allowUserFileRetrieve = true
+allowUserFileOverwrite = true
+allowUserFileDelete = true
+allowUserFolderDelete = true
+allowUserFolderCreate = true
+
+[[ftp.users]]
+username = "max"
+password = "mustermann"
+allowUserFileRetrieve = true
+
+# Anonymous access is an ordinary account: the name clients use, with no
+# password. Below it may read, and nothing else.
+# [[ftp.users]]
+# username = "anonymous"
+# password = ""
+# allowLoginWithoutPassword = true
+# allowUserFileRetrieve = true
+
+[tftp]
+enabled = true
+port = 69
+# interface to bind to, empty binds to all
+address = ""
+# udp4, udp6 or empty. Empty derives it from address and otherwise uses udp6,
+# which also accepts IPv4 clients on a dual stack host. Set udp4 explicitly on
+# hosts configured with bindv6only.
+type = ""
+# served folder, has to exist
+basefolder = "/srv/tftp"
+
+allowRead = true
+allowWrite = false
+# allow a write request to replace an existing file
+allowOverwrite = false
+# allow a write request to create the folders leading up to the file
+allowCreateDirectory = true
+
+# maximum simultaneous transfers, and how many of them one client may hold
+maxConnections = 10
+maxConnectionsPerHost = 5
+# seconds before a packet is retransmitted
+timeout = 5
+# highest retransmit interval a client may negotiate with the timeout option
+maxTimeout = 60
+# retransmissions before a transfer is given up
+retries = 3
+# seconds a single transfer may take in total, 0 disables
+transferTimeout = 300
+# largest negotiable block size, larger requests are capped. The default keeps a
+# block inside a typical ethernet MTU so datagrams are not IP fragmented.
+maxBlockSize = 1468
+# largest negotiable window size, larger requests are capped
+maxWindowSize = 16
+# largest accepted upload in bytes, 0 means no limit
+maxFileSize = 0

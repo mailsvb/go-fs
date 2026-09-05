@@ -1,0 +1,198 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func writeConfig(t *testing.T, body string) (path string, folder string) {
+	t.Helper()
+	folder = t.TempDir()
+	path = filepath.Join(t.TempDir(), "go-fs.toml")
+	body = strings.ReplaceAll(body, "{{folder}}", strings.ReplaceAll(folder, `\`, `\\`))
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path, folder
+}
+
+func TestLoadAppliesDefaults(t *testing.T) {
+	path, _ := writeConfig(t, `
+[ftp]
+basefolder = "{{folder}}"
+port = 2121
+
+[tftp]
+enabled = false
+basefolder = "{{folder}}"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FTP.Port != 2121 {
+		t.Errorf("port = %d, want 2121", cfg.FTP.Port)
+	}
+	// everything not mentioned keeps its default
+	if cfg.FTP.MinDataPort != 1024 {
+		t.Errorf("minDataPort = %d, want the default 1024", cfg.FTP.MinDataPort)
+	}
+	if cfg.FTP.IdleTimeout != 600 || cfg.FTP.MaxCommandLength != 4096 {
+		t.Errorf("timeouts lost their defaults: %+v", cfg.FTP)
+	}
+	if cfg.FTP.AllowFtpBounce || cfg.FTP.AllowForeignDataConnection {
+		t.Error("the protective defaults have to stay off")
+	}
+	if cfg.Log.Level != "info" || cfg.Log.Format != "text" {
+		t.Errorf("log defaults lost: %+v", cfg.Log)
+	}
+}
+
+func TestUserPermissionDefaults(t *testing.T) {
+	path, _ := writeConfig(t, `
+[ftp]
+basefolder = "{{folder}}"
+
+[[ftp.users]]
+username = "john"
+password = "doe"
+
+[[ftp.users]]
+username = "jane"
+allowLoginWithoutPassword = true
+allowUserFileRetrieve = true
+
+[tftp]
+enabled = false
+basefolder = "{{folder}}"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.FTP.Users) != 2 {
+		t.Fatalf("got %d users, want 2", len(cfg.FTP.Users))
+	}
+
+	// an entry that sets nothing is granted nothing
+	john := cfg.FTP.Users[0].Permissions()
+	if john.FileCreate || john.FileRetrieve || john.FileOverwrite ||
+		john.FileDelete || john.FolderCreate || john.FolderDelete {
+		t.Errorf("john should have no permission by default: %+v", john)
+	}
+	if john.LoginNoPassword {
+		t.Error("allowLoginWithoutPassword defaults to false")
+	}
+
+	// and what is granted explicitly is honoured
+	jane := cfg.FTP.Users[1].Permissions()
+	if !jane.LoginNoPassword {
+		t.Error("jane should be allowed to log in without a password")
+	}
+	if !jane.FileRetrieve {
+		t.Error("jane had allowUserFileRetrieve = true")
+	}
+	if jane.FileCreate {
+		t.Error("jane's unset permissions stay false")
+	}
+}
+
+func TestValidateRejectsBadConfiguration(t *testing.T) {
+	folder := t.TempDir()
+	cases := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{"bad log level", func(c *Config) { c.Log.Level = "chatty" }, "log.level"},
+		{"bad log format", func(c *Config) { c.Log.Format = "xml" }, "log.format"},
+		{"nothing enabled", func(c *Config) { c.FTP.Enabled = false; c.TFTP.Enabled = false }, "nothing to do"},
+		{"ftp port", func(c *Config) { c.FTP.Port = 0 }, "ftp.port"},
+		{"data port range", func(c *Config) { c.FTP.MinDataPort = 65530; c.FTP.MaxConnections = 100 }, "port range"},
+		{"missing basefolder", func(c *Config) { c.FTP.Basefolder = filepath.Join(folder, "nope") }, "ftp.basefolder"},
+		{"ftps port", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Port = 0 }, "ftps.port"},
+		{"half a tls pair", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Cert = "cert.pem" }, "together"},
+		{"user without name", func(c *Config) { c.FTP.Users = []User{{Password: "x"}} }, "no username"},
+		{"tftp type", func(c *Config) { c.TFTP.Type = "sctp" }, "tftp.type"},
+		{"tftp block size", func(c *Config) { c.TFTP.MaxBlockSize = 4 }, "tftp.maxBlockSize"},
+		{"tftp maxTimeout below timeout", func(c *Config) { c.TFTP.Timeout = 30; c.TFTP.MaxTimeout = 10 }, "maxTimeout"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.FTP.Basefolder = folder
+			cfg.TFTP.Basefolder = folder
+			tc.mutate(&cfg)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("expected an error mentioning %q", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestTemplateRoundTrips(t *testing.T) {
+	folder := t.TempDir()
+	// the shipped template points at /srv, redirect it at a folder that exists
+	body := strings.ReplaceAll(string(Template()), "/srv/ftp", strings.ReplaceAll(folder, `\`, `\\`))
+	body = strings.ReplaceAll(body, "/srv/tftp", strings.ReplaceAll(folder, `\`, `\\`))
+
+	path := filepath.Join(t.TempDir(), "go-fs.toml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("the shipped template has to load: %v", err)
+	}
+
+	// the template has to state the defaults it documents
+	defaults := Default()
+	if cfg.FTP.Port != defaults.FTP.Port || cfg.FTP.MinDataPort != defaults.FTP.MinDataPort ||
+		cfg.TFTP.MaxBlockSize != defaults.TFTP.MaxBlockSize || cfg.TFTP.MaxTimeout != defaults.TFTP.MaxTimeout {
+		t.Error("the template disagrees with the built-in defaults")
+	}
+
+	// and writing it back has to produce something that loads again
+	out := filepath.Join(t.TempDir(), "written.toml")
+	if err := Save(out, cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load(out)
+	if err != nil {
+		t.Fatalf("a saved configuration has to load again: %v", err)
+	}
+	if reloaded.FTP.Port != cfg.FTP.Port || reloaded.TFTP.MaxBlockSize != cfg.TFTP.MaxBlockSize {
+		t.Error("values were lost writing the configuration back")
+	}
+}
+
+func TestSaveKeepsExplicitUserFlags(t *testing.T) {
+	folder := t.TempDir()
+	cfg := Default()
+	cfg.FTP.Basefolder = folder
+	cfg.TFTP.Basefolder = folder
+	yes := true
+	cfg.FTP.Users = []User{{Username: "john", Password: "doe", AllowUserFileDelete: &yes}}
+
+	path := filepath.Join(t.TempDir(), "saved.toml")
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permissions := reloaded.FTP.Users[0].Permissions()
+	if !permissions.FileDelete {
+		t.Error("an explicit true was lost on the way through the file")
+	}
+	if permissions.FileCreate {
+		t.Error("an unset permission should still deny after a round trip")
+	}
+}
