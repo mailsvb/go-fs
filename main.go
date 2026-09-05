@@ -15,6 +15,7 @@ import (
 
 	"go-fs/internal/config"
 	"go-fs/internal/ftp"
+	"go-fs/internal/httpd"
 	"go-fs/internal/sftp"
 	"go-fs/internal/tftp"
 )
@@ -107,6 +108,19 @@ func run() error {
 		if err := server.Start(ctx); err != nil {
 			shutdownAll(servers)
 			return fmt.Errorf("starting the sftp server: %w", err)
+		}
+		servers = append(servers, server)
+	}
+
+	if cfg.HTTP.Enabled || cfg.HTTPS.Enabled {
+		server, err := httpd.New(cfg.HTTP, cfg.HTTPS, logger)
+		if err != nil {
+			shutdownAll(servers)
+			return err
+		}
+		if err := server.Start(ctx); err != nil {
+			shutdownAll(servers)
+			return fmt.Errorf("starting the http server: %w", err)
 		}
 		servers = append(servers, server)
 	}

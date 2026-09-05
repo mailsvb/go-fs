@@ -3,6 +3,12 @@
 # Every key is optional, an absent key keeps the default shown here. Paths have
 # to exist before the server starts.
 
+# What every server shares. basefolder is the folder they all fall back to when
+# their own section does not name one, so a setup where they serve the same tree
+# says it once here. It has to be an absolute path and it has to exist.
+[general]
+basefolder = "/srv/files"
+
 [log]
 # debug shows the protocol trace, info reports listeners, logins and transfers.
 level = "info"
@@ -14,8 +20,9 @@ format = "text"
 # everything else in this section applies to both of them.
 enabled = true
 port = 21
-# served folder, has to exist
-basefolder = "/srv/ftp"
+# served folder. Uncomment to serve something other than
+# general.basefolder; it has to exist either way.
+# basefolder = "/srv/ftp"
 
 # maximum simultaneous control connections
 maxConnections = 10
@@ -84,8 +91,9 @@ allowUserFileRetrieve = true
 [sftp]
 enabled = false
 port = 22
-# served folder, has to exist
-basefolder = "/srv/sftp"
+# served folder. Uncomment to serve something other than
+# general.basefolder; it has to exist either way.
+# basefolder = "/srv/sftp"
 
 # The SSH host key, base64 of its PEM encoding, so the whole configuration
 # stays in this one file. Empty generates a key at every start, which makes
@@ -116,14 +124,97 @@ allowUserFileDelete = true
 allowUserFolderDelete = true
 allowUserFolderCreate = true
 
-# An account that logs in with a key instead of a password. The entries are
-# authorized_keys lines, the content of an id_*.pub file.
-[[sftp.users]]
+# An account that logs in with a key instead of a password. Uncomment it and
+# put your own key in: the entries are authorized_keys lines, that is the whole
+# content of an id_*.pub file, and every one of them has to parse or the server
+# will not start.
+# [[sftp.users]]
+# username = "max"
+# authorizedKeys = [
+#   "ssh-ed25519 AAAA...the rest of your id_ed25519.pub... max@laptop",
+# ]
+# allowUserFileRetrieve = true
+
+# The HTTP file server: browse and download with GET, upload with PUT, remove
+# with DELETE. Access has two layers. A request is public unless its method is
+# in methodsRequireAuth or its path matches one of pathsRequireAuth; when it is
+# not public it has to be answered by one of the accounts below, whose own
+# paths and rights then decide what it may do.
+[http]
+# Serve the plain port. The TLS listener has its own switch in [https];
+# everything else in this section applies to both of them.
+enabled = false
+port = 9080
+# served folder. Uncomment to serve something other than
+# general.basefolder; it has to exist either way.
+# basefolder = "/srv/http"
+# what clients are challenged with. It is hashed into the digest response, so
+# changing it makes browsers ask for the password again.
+realm = "go-fs"
+
+# maximum simultaneous connections
+maxConnections = 100
+# seconds, 0 disables one. writeTimeout is off because it would cap how long a
+# download may take.
+readTimeout = 120
+writeTimeout = 0
+idleTimeout = 120
+# largest accepted upload in bytes, 0 means no limit
+maxUploadSize = 0
+# how long a session cookie stays valid, in seconds
+sessionTimeout = 86400
+# seconds to wait before answering a request that could not be authenticated
+loginFailureDelay = 1
+
+# Methods that always need an account.
+methodsRequireAuth = ["PUT", "DELETE", "POST"]
+# Regular expressions; a request whose path matches one of these needs an
+# account whatever its method. Everything else is public.
+pathsRequireAuth = []
+
+# The TLS interface of the same HTTP server: it serves the folder, accounts and
+# limits of [http] above.
+[https]
+# Independent of http.enabled, so turning that one off serves HTTPS only.
+enabled = false
+port = 9443
+# PEM files. When both are empty a self-signed certificate is generated at
+# startup; it changes on every restart and proves no identity, so set your own
+# for anything but a quick test.
+cert = ""
+key = ""
+
+# Folders that are kept from growing without bound: once an hour everything but
+# the newest "keep" files in them is deleted. Remove these blocks to switch the
+# sweep off. Paths are relative to http.basefolder.
+# [[http.cleanup]]
+# path = "/iso"
+# keep = 10
+
+# One table per account. paths are regular expressions matched against the
+# request path after it has been normalized, so ".." cannot be used to slip
+# past one; an account with no pattern can reach nothing. Both permissions are
+# false when not set, as everywhere else.
+[[http.users]]
+username = "john"
+password = "doe"
+paths = ["^/.*"]
+allowUserFileUpload = true
+allowUserFileDelete = true
+# Hand this account a session cookie once it has authenticated, so that a
+# browser does not repeat the credentials on every request. The session carries
+# exactly these rights, and cookiePath only tells the browser which URLs to
+# send it back for.
+cookie = false
+# cookiePath = "/"
+
+# An account that may only read, and only below one folder.
+[[http.users]]
 username = "max"
-authorizedKeys = [
-  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample max@laptop",
-]
-allowUserFileRetrieve = true
+password = "mustermann"
+paths = ["^/public/.*"]
+cookie = true
+cookiePath = "/public/"
 
 [tftp]
 enabled = true
@@ -134,8 +225,9 @@ address = ""
 # which also accepts IPv4 clients on a dual stack host. Set udp4 explicitly on
 # hosts configured with bindv6only.
 type = ""
-# served folder, has to exist
-basefolder = "/srv/tftp"
+# served folder. Uncomment to serve something other than
+# general.basefolder; it has to exist either way.
+# basefolder = "/srv/tftp"
 
 allowRead = true
 allowWrite = false

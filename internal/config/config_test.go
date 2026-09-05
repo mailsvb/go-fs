@@ -128,6 +128,47 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.SFTP.Basefolder = folder
 			c.SFTP.Users = []User{{Password: "x"}}
 		}, "no username"},
+		{"broken authorized key", func(c *Config) {
+			c.SFTP.Enabled = true
+			c.SFTP.Basefolder = folder
+			c.SFTP.Users = []User{{Username: "max", AuthorizedKeys: []string{
+				"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExample max@laptop",
+			}}}
+		}, "sftp.users[0].authorizedKeys[0]"},
+		{"sftp account with no way in", func(c *Config) {
+			c.SFTP.Enabled = true
+			c.SFTP.Basefolder = folder
+			c.SFTP.Users = []User{{Username: "max"}}
+		}, "never log in"},
+		{"http port", func(c *Config) { c.HTTP.Enabled = true; c.HTTP.Port = 0 }, "http.port"},
+		{"https port", func(c *Config) { c.HTTPS.Enabled = true; c.HTTPS.Port = 0 }, "https.port"},
+		{"half an https pair", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTPS.Enabled = true
+			c.HTTPS.Cert = "cert.pem"
+		}, "together"},
+		{"http basefolder", func(c *Config) { c.HTTP.Enabled = true }, "http.basefolder"},
+		{"http user without a password", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.Users = []HTTPUser{{Username: "john"}}
+		}, "no password"},
+		{"broken user path pattern", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.Users = []HTTPUser{{Username: "john", Password: "doe", Paths: []string{"([bad"}}}
+		}, "http.users[0].paths[0]"},
+		{"broken protected path pattern", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.PathsRequireAuth = []string{"([bad"}
+		}, "http.pathsRequireAuth[0]"},
+		{"cleanup without a path", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.Cleanup = []Cleanup{{Keep: 3}}
+		}, "http.cleanup[0] has no path"},
 		{"tftp type", func(c *Config) { c.TFTP.Type = "sctp" }, "tftp.type"},
 		{"tftp block size", func(c *Config) { c.TFTP.MaxBlockSize = 4 }, "tftp.maxBlockSize"},
 		{"tftp maxTimeout below timeout", func(c *Config) { c.TFTP.Timeout = 30; c.TFTP.MaxTimeout = 10 }, "maxTimeout"},
@@ -152,9 +193,7 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 func TestTemplateRoundTrips(t *testing.T) {
 	folder := t.TempDir()
 	// the shipped template points at /srv, redirect it at a folder that exists
-	body := strings.ReplaceAll(string(Template()), "/srv/ftp", strings.ReplaceAll(folder, `\`, `\\`))
-	body = strings.ReplaceAll(body, "/srv/sftp", strings.ReplaceAll(folder, `\`, `\\`))
-	body = strings.ReplaceAll(body, "/srv/tftp", strings.ReplaceAll(folder, `\`, `\\`))
+	body := strings.ReplaceAll(string(Template()), "/srv/files", strings.ReplaceAll(folder, `\`, `\\`))
 
 	path := filepath.Join(t.TempDir(), "go-fs.toml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -170,6 +209,21 @@ func TestTemplateRoundTrips(t *testing.T) {
 	if cfg.FTP.Port != defaults.FTP.Port || cfg.FTP.MinDataPort != defaults.FTP.MinDataPort ||
 		cfg.TFTP.MaxBlockSize != defaults.TFTP.MaxBlockSize || cfg.TFTP.MaxTimeout != defaults.TFTP.MaxTimeout {
 		t.Error("the template disagrees with the built-in defaults")
+	}
+
+	// the template leaves every server on general.basefolder
+	if cfg.General.Basefolder != folder {
+		t.Errorf("general.basefolder = %q, want %q", cfg.General.Basefolder, folder)
+	}
+	for name, got := range map[string]string{
+		"ftp":  cfg.FTP.Basefolder,
+		"sftp": cfg.SFTP.Basefolder,
+		"http": cfg.HTTP.Basefolder,
+		"tftp": cfg.TFTP.Basefolder,
+	} {
+		if got != folder {
+			t.Errorf("%s.basefolder = %q, want the general %q", name, got, folder)
+		}
 	}
 
 	// and writing it back has to produce something that loads again
@@ -229,5 +283,52 @@ func TestDecodeHostKey(t *testing.T) {
 		if _, err := DecodeHostKey(value); err == nil {
 			t.Errorf("%q has to be refused", value)
 		}
+	}
+}
+
+func TestGeneralBasefolderIsTheFallback(t *testing.T) {
+	shared := t.TempDir()
+	own := t.TempDir()
+	path, _ := writeConfig(t, `
+[general]
+basefolder = "`+strings.ReplaceAll(shared, `\`, `\\`)+`"
+
+[ftp]
+basefolder = "`+strings.ReplaceAll(own, `\`, `\\`)+`"
+
+[sftp]
+enabled = true
+port = 2222
+
+[[sftp.users]]
+username = "john"
+password = "doe"
+
+[tftp]
+enabled = true
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a section that names its own folder keeps it
+	if cfg.FTP.Basefolder != own {
+		t.Errorf("ftp.basefolder = %q, want its own %q", cfg.FTP.Basefolder, own)
+	}
+	// the others fall back
+	if cfg.SFTP.Basefolder != shared || cfg.TFTP.Basefolder != shared {
+		t.Errorf("sftp %q and tftp %q should both be the general %q",
+			cfg.SFTP.Basefolder, cfg.TFTP.Basefolder, shared)
+	}
+}
+
+func TestGeneralBasefolderHasToBeAbsolute(t *testing.T) {
+	cfg := Default()
+	cfg.General.Basefolder = "relative/path"
+	cfg.FTP.Basefolder = t.TempDir()
+	cfg.TFTP.Basefolder = cfg.FTP.Basefolder
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "absolute path") {
+		t.Errorf("error = %v, want one about an absolute path", err)
 	}
 }

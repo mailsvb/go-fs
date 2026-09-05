@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/crypto/ssh"
 )
 
 //go:embed template.toml
@@ -26,11 +28,22 @@ func Template() []byte {
 
 // Config is the whole configuration file.
 type Config struct {
-	Log  Log  `toml:"log"`
-	FTP  FTP  `toml:"ftp"`
-	FTPS FTPS `toml:"ftps"`
-	SFTP SFTP `toml:"sftp"`
-	TFTP TFTP `toml:"tftp"`
+	General General `toml:"general"`
+	Log     Log     `toml:"log"`
+	FTP     FTP     `toml:"ftp"`
+	FTPS    FTPS    `toml:"ftps"`
+	SFTP    SFTP    `toml:"sftp"`
+	HTTP    HTTP    `toml:"http"`
+	HTTPS   HTTPS   `toml:"https"`
+	TFTP    TFTP    `toml:"tftp"`
+}
+
+// General holds what every server shares.
+type General struct {
+	// Basefolder is the folder the servers fall back to when their own
+	// section does not name one, so that a configuration where they all serve
+	// the same tree says it once. It has to be an absolute path.
+	Basefolder string `toml:"basefolder"`
 }
 
 // Log controls the diagnostics the servers produce. The original emitted
@@ -168,6 +181,95 @@ type SFTP struct {
 	Users []User `toml:"users"`
 }
 
+// HTTP configures the HTTP file server: browsing and downloading with GET,
+// uploading with PUT and removing with DELETE.
+//
+// Access has two layers. A request is public unless its method is in
+// MethodsRequireAuth or its path matches one of PathsRequireAuth; when it is
+// not public it has to be answered by one of Users, and that account's own
+// paths and rights then decide what it may do.
+type HTTP struct {
+	// Enabled serves the plain port. The TLS listener has its own switch in
+	// [https]; the rest of this section applies to both.
+	Enabled    bool   `toml:"enabled"`
+	Port       int    `toml:"port"`
+	Basefolder string `toml:"basefolder"`
+
+	// Realm is what clients are challenged with and, because it is hashed into
+	// the digest response, changing it invalidates saved credentials.
+	Realm string `toml:"realm"`
+
+	MaxConnections int `toml:"maxConnections"`
+	// ReadTimeout, WriteTimeout and IdleTimeout are seconds, 0 disables one.
+	// WriteTimeout is off by default: it would cap the duration of a download.
+	ReadTimeout  int `toml:"readTimeout"`
+	WriteTimeout int `toml:"writeTimeout"`
+	IdleTimeout  int `toml:"idleTimeout"`
+	// MaxUploadSize is the largest accepted body in bytes, 0 means no limit.
+	MaxUploadSize int64 `toml:"maxUploadSize"`
+	// SessionTimeout is how long a session cookie stays valid, in seconds.
+	SessionTimeout int `toml:"sessionTimeout"`
+	// LoginFailureDelay is the delay in seconds before a rejected request is
+	// answered, which slows down guessing.
+	LoginFailureDelay int `toml:"loginFailureDelay"`
+
+	// MethodsRequireAuth are the methods that always need an account.
+	MethodsRequireAuth []string `toml:"methodsRequireAuth"`
+	// PathsRequireAuth are regular expressions; a request whose path matches
+	// one of them needs an account whatever its method.
+	PathsRequireAuth []string `toml:"pathsRequireAuth"`
+
+	Cleanup []Cleanup  `toml:"cleanup"`
+	Users   []HTTPUser `toml:"users"`
+}
+
+// HTTPS configures the TLS interface of the HTTP server. It is a section of
+// its own because TOML tables are top level; the folder, accounts and limits
+// of [http] apply to this listener too.
+type HTTPS struct {
+	// Enabled makes the server listen on Port. It is independent of
+	// HTTP.Enabled: with that one off the server serves HTTPS only.
+	Enabled bool `toml:"enabled"`
+	Port    int  `toml:"port"`
+	// Cert and Key are PEM file paths. When both are empty a self-signed
+	// certificate is generated at startup.
+	Cert string `toml:"cert"`
+	Key  string `toml:"key"`
+}
+
+// Cleanup keeps a folder from growing without bound: everything but the Keep
+// newest files in it is deleted, once an hour.
+type Cleanup struct {
+	Path string `toml:"path"`
+	Keep int    `toml:"keep"`
+}
+
+// HTTPUser is one entry of http.users. It is not the User of the other servers:
+// an HTTP account is scoped by path patterns rather than by a base folder, and
+// the operations it can be granted are different ones.
+type HTTPUser struct {
+	Username string `toml:"username"`
+	Password string `toml:"password"`
+
+	// Paths are regular expressions matched against the request path, after it
+	// has been normalized, so that ".." cannot be used to slip past one. An
+	// account with no pattern can reach nothing.
+	Paths []string `toml:"paths"`
+
+	// Both default to false, as the permissions of the other servers do.
+	AllowUserFileUpload bool `toml:"allowUserFileUpload"`
+	AllowUserFileDelete bool `toml:"allowUserFileDelete"`
+
+	// Cookie hands the client a session cookie once it has authenticated, so
+	// that a browser does not repeat the credentials on every request. The
+	// session is bound to this account and carries exactly these rights.
+	Cookie bool `toml:"cookie"`
+	// CookiePath is the URL prefix the browser sends the cookie back for, "/"
+	// when it is not set. It is a hint to the browser, not a permission: the
+	// paths above are checked on every request either way.
+	CookiePath string `toml:"cookiePath,omitempty"`
+}
+
 // TFTP configures the TFTP server.
 type TFTP struct {
 	Enabled    bool   `toml:"enabled"`
@@ -222,6 +324,19 @@ func Default() Config {
 			IdleTimeout:       600,
 			LoginFailureDelay: 1,
 		},
+		HTTP: HTTP{
+			Port:               9080,
+			Realm:              "go-fs",
+			MaxConnections:     100,
+			ReadTimeout:        120,
+			IdleTimeout:        120,
+			SessionTimeout:     86400,
+			LoginFailureDelay:  1,
+			MethodsRequireAuth: []string{"PUT", "DELETE", "POST"},
+		},
+		HTTPS: HTTPS{
+			Port: 9443,
+		},
 		TFTP: TFTP{
 			Enabled:               true,
 			Port:                  69,
@@ -249,10 +364,30 @@ func Load(path string) (Config, error) {
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("%s: %w", path, err)
 	}
+	cfg.applyGeneral()
 	if err := cfg.Validate(); err != nil {
 		return cfg, fmt.Errorf("%s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// applyGeneral hands general.basefolder to every server that did not name one
+// of its own. It runs before validation, so an error names the section the
+// folder ended up in rather than the one it came from.
+func (c *Config) applyGeneral() {
+	if c.General.Basefolder == "" {
+		return
+	}
+	for _, folder := range []*string{
+		&c.FTP.Basefolder,
+		&c.SFTP.Basefolder,
+		&c.HTTP.Basefolder,
+		&c.TFTP.Basefolder,
+	} {
+		if *folder == "" {
+			*folder = c.General.Basefolder
+		}
+	}
 }
 
 // Save writes the configuration back as TOML.
@@ -281,8 +416,18 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("log.format %q is not one of text, json", c.Log.Format)
 	}
-	if !c.FTP.Enabled && !c.FTPS.Enabled && !c.SFTP.Enabled && !c.TFTP.Enabled {
-		return errors.New("neither ftp, ftps, sftp nor tftp is enabled, nothing to do")
+	if c.General.Basefolder != "" {
+		if !filepath.IsAbs(c.General.Basefolder) {
+			return fmt.Errorf("general.basefolder %q has to be an absolute path",
+				c.General.Basefolder)
+		}
+		if err := checkFolder("general.basefolder", c.General.Basefolder); err != nil {
+			return err
+		}
+	}
+	if !c.FTP.Enabled && !c.FTPS.Enabled && !c.SFTP.Enabled &&
+		!c.HTTP.Enabled && !c.HTTPS.Enabled && !c.TFTP.Enabled {
+		return errors.New("no server is enabled, nothing to do")
 	}
 	if c.FTP.Enabled || c.FTPS.Enabled {
 		if err := c.validateFTP(); err != nil {
@@ -294,12 +439,72 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
+	if c.HTTP.Enabled || c.HTTPS.Enabled {
+		if err := c.validateHTTP(); err != nil {
+			return err
+		}
+	}
 	if c.TFTP.Enabled {
 		if err := c.TFTP.validate(); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// validateHTTP checks the HTTP service, whose settings straddle [http] and
+// [https] the way the FTP ones straddle [ftp] and [ftps].
+func (c Config) validateHTTP() error {
+	if c.HTTP.Enabled {
+		if err := checkPort("http.port", c.HTTP.Port); err != nil {
+			return err
+		}
+	}
+	if c.HTTPS.Enabled {
+		if err := checkPort("https.port", c.HTTPS.Port); err != nil {
+			return err
+		}
+		if (c.HTTPS.Cert == "") != (c.HTTPS.Key == "") {
+			return errors.New("https.cert and https.key have to be set together")
+		}
+	}
+	h := c.HTTP
+	if h.MaxConnections < 1 {
+		return errors.New("http.maxConnections has to be at least 1")
+	}
+	if h.MaxUploadSize < 0 {
+		return errors.New("http.maxUploadSize cannot be negative")
+	}
+	if h.Realm == "" {
+		return errors.New("http.realm is not set")
+	}
+	for i, pattern := range h.PathsRequireAuth {
+		if _, err := regexp.Compile(pattern); err != nil {
+			return fmt.Errorf("http.pathsRequireAuth[%d]: %w", i, err)
+		}
+	}
+	for i, entry := range h.Cleanup {
+		if entry.Path == "" {
+			return fmt.Errorf("http.cleanup[%d] has no path", i)
+		}
+		if entry.Keep < 0 {
+			return fmt.Errorf("http.cleanup[%d].keep cannot be negative", i)
+		}
+	}
+	for i, user := range h.Users {
+		if user.Username == "" {
+			return fmt.Errorf("http.users[%d] has no username", i)
+		}
+		if user.Password == "" {
+			return fmt.Errorf("http.users[%d] %q has no password", i, user.Username)
+		}
+		for k, pattern := range user.Paths {
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fmt.Errorf("http.users[%d].paths[%d]: %w", i, k, err)
+			}
+		}
+	}
+	return checkFolder("http.basefolder", h.Basefolder)
 }
 
 // validateFTP checks the FTP service, whose settings straddle [ftp] and [ftps].
@@ -373,6 +578,17 @@ func (s SFTP) validate() error {
 			if err := checkFolder(fmt.Sprintf("sftp.users[%d].basefolder", i), user.Basefolder); err != nil {
 				return err
 			}
+		}
+		// the keys are parsed here as well as at startup, so that -check
+		// reports a key that would stop the server rather than passing it
+		for k, entry := range user.AuthorizedKeys {
+			if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(entry)); err != nil {
+				return fmt.Errorf("sftp.users[%d].authorizedKeys[%d]: %w", i, k, err)
+			}
+		}
+		if user.Password == "" && len(user.AuthorizedKeys) == 0 {
+			return fmt.Errorf("sftp.users[%d] %q has neither a password nor an authorized key, "+
+				"so it could never log in", i, user.Username)
 		}
 	}
 	return nil

@@ -1,8 +1,9 @@
 # go-fs
 
-go-fileserver: FTP, FTPS, SFTP and TFTP in a single statically linked binary,
-configured from one TOML file. The FTP and TFTP servers are a port of the
-Node.js [jsftpd](https://github.com/svenbeisiegel/jsftpd).
+go-fileserver: FTP, FTPS, SFTP, HTTP, HTTPS and TFTP in a single statically
+linked binary, configured from one TOML file. The FTP and TFTP servers are a
+port of the Node.js [jsftpd](https://github.com/svenbeisiegel/jsftpd); the HTTP
+server is a port of an Express one.
 
 ## Build
 
@@ -68,14 +69,17 @@ them for you, or run on high ports behind a redirect.
 
 ## Configuration
 
-One TOML file with a `[log]`, an `[ftp]`, an `[ftps]`, an `[sftp]` and a
-`[tftp]` section. Every key is optional and keeps the documented default when
-absent, so a working file can be this short:
+One TOML file with a `[general]`, a `[log]`, an `[ftp]`, an `[ftps]`, an
+`[sftp]`, an `[http]`, an `[https]` and a `[tftp]` section. Every key is
+optional and keeps the documented default when absent, so a working file can be
+this short:
 
 ```toml
+[general]
+basefolder = "/srv/files"
+
 [ftp]
 port = 2121
-basefolder = "/srv/ftp"
 
 [[ftp.users]]
 username = "john"
@@ -83,9 +87,14 @@ password = "doe"
 
 [tftp]
 port = 6969
-basefolder = "/srv/tftp"
 allowWrite = true
 ```
+
+`general.basefolder` is the folder every server falls back to when its own
+section does not name one, which is usually what you want — they all serve the
+same tree. It has to be an absolute path and it has to exist. A section that
+sets its own `basefolder` keeps it, so one server can be pointed somewhere else
+without repeating the folder for the rest.
 
 `go-fs.example.toml` is the fully commented version, and the same file
 `-init` writes. Accounts are one `[[ftp.users]]` table each; there is no default
@@ -123,7 +132,8 @@ out of it.
 | `ftp.idleTimeout` | `600` | an idle control connection does not hold a slot forever |
 | `ftp.loginFailureDelay` | `1` | a wrong password is answered after a second, which slows guessing |
 | `ftp.users[].allowUser*` | `false` | an account is granted only the rights its table lists |
-| `sftp.enabled` | `false` | the only server that is off by default, so an upgrade never opens an SSH port on its own |
+| `sftp.enabled`, `http.enabled` | `false` | both are off by default, so an upgrade never opens a port on its own |
+| `http.users[].allowUser*` | `false` | an account is granted only the rights its table lists |
 | `tftp.allowWrite` | `false` | read only unless switched on |
 | `tftp.maxBlockSize` | `1468` | keeps a block inside a typical ethernet MTU so datagrams are not IP fragmented |
 | `tftp.maxTimeout` | `60` | a client cannot negotiate a retransmit interval that pins a transfer slot |
@@ -185,6 +195,57 @@ set it for anything but a first look:
 ssh-keygen -q -t ed25519 -N "" -f hostkey && base64 < hostkey | tr -d "\n"
 ```
 
+## HTTP
+
+`[http]` serves the folder over HTTP: `GET` browses and downloads, `PUT`
+uploads, `DELETE` removes. `[https]` is the same server on a TLS port, with
+`cert` and `key` as in `[ftps]`, and the two `enabled` switches are independent.
+
+Access has two layers, which is what the Express server it replaces did:
+
+```toml
+[http]
+enabled = true
+port = 9080
+basefolder = "/srv/http"
+methodsRequireAuth = ["PUT", "DELETE", "POST"]
+pathsRequireAuth = ["^/private/.*"]
+
+[[http.users]]
+username = "john"
+password = "doe"
+paths = ["^/private/.*"]
+allowUserFileUpload = true
+allowUserFileDelete = true
+cookie = true
+```
+
+A request is **public** unless its method is in `methodsRequireAuth` or its path
+matches one of `pathsRequireAuth`. Anything else has to be answered by an
+account, and that account's own `paths` then decide what it may reach:
+`allowUserFileUpload` for `PUT`, `allowUserFileDelete` for `DELETE`, both false
+unless set. A path an account may not reach is `403`, not another challenge.
+
+`paths` are matched against the request path **after** it has been normalized,
+so `/private/../secret` is tested as `/secret` and cannot be used to slip past a
+pattern.
+
+Both Digest and Basic authentication are accepted. The challenge offers Digest,
+with SHA-256 for Chromium and Firefox and MD5 for everything else, which is what
+those clients handle; `realm` is hashed into the response, so changing it makes
+browsers ask again.
+
+With `cookie = true` an account is handed a session cookie once it has
+authenticated, so a browser stops repeating the credentials. The session names
+the account, and its `paths` and rights are checked again on every request — a
+session can never reach further than the account behind it. `cookiePath` only
+tells the browser which URLs to send it back for. A client that sends
+`X-Disable-Session` is never given one.
+
+`[[http.cleanup]]` keeps a folder from growing without bound: once an hour
+everything but the newest `keep` files in it is removed. It is the one thing in
+go-fs that deletes without a client asking, so every removal is logged.
+
 ## What is implemented
 
 **FTP** — RFC 959 with RFC 2228 (`AUTH`, `PBSZ`, `PROT`), RFC 2389 (`FEAT`,
@@ -205,6 +266,12 @@ XPWD XRMD
 truncate, directory listing, stat, rename, remove, mkdir, rmdir and setstat.
 Creating symbolic links is refused, because a link is the one thing that could
 point out of the base folder.
+
+**HTTP** — `GET` for downloads and a browsable listing, `PUT` for
+`application/octet-stream` and multipart uploads, `DELETE` for a file or an
+empty folder, Basic (RFC 7617) and Digest (RFC 7616, with the RFC 2069 form)
+authentication, session cookies, and the legacy `dls_directory_reader` listing
+endpoint. Downloads answer range requests, so a large one can be resumed.
 
 **TFTP** — RFC 1350 in `octet` and `netascii` mode, with the option extension of
 RFC 2347, the `blksize`, `timeout` and `tsize` options of RFC 2348 and RFC 2349,

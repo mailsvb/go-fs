@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"go-fs/internal/config"
+	"go-fs/internal/tlsconf"
 	"go-fs/internal/vfs"
 )
 
@@ -62,7 +63,7 @@ func New(cfg config.FTP, ftps config.FTPS, logger *slog.Logger) (*Server, error)
 		conns: make(map[*conn]struct{}),
 	}
 	if ftps.Enabled {
-		server.tls, err = buildTLSConfig(ftps, logger)
+		server.tls, err = tlsconf.Build(ftps.Cert, ftps.Key, "ftps", logger)
 		if err != nil {
 			return nil, err
 		}
