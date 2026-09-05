@@ -15,6 +15,7 @@ import (
 
 	"go-fs/internal/config"
 	"go-fs/internal/ftp"
+	"go-fs/internal/sftp"
 	"go-fs/internal/tftp"
 )
 
@@ -97,6 +98,19 @@ func run() error {
 		servers = append(servers, server)
 	}
 
+	if cfg.SFTP.Enabled {
+		server, err := sftp.New(cfg.SFTP, logger)
+		if err != nil {
+			shutdownAll(servers)
+			return err
+		}
+		if err := server.Start(ctx); err != nil {
+			shutdownAll(servers)
+			return fmt.Errorf("starting the sftp server: %w", err)
+		}
+		servers = append(servers, server)
+	}
+
 	if cfg.TFTP.Enabled {
 		server, err := tftp.New(cfg.TFTP, logger)
 		if err != nil {
@@ -111,7 +125,7 @@ func run() error {
 	}
 
 	if len(servers) == 0 {
-		return errors.New("neither ftp nor tftp is enabled, nothing to do")
+		return errors.New("no server is enabled, nothing to do")
 	}
 
 	<-ctx.Done()

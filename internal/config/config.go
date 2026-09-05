@@ -29,6 +29,7 @@ type Config struct {
 	Log  Log  `toml:"log"`
 	FTP  FTP  `toml:"ftp"`
 	FTPS FTPS `toml:"ftps"`
+	SFTP SFTP `toml:"sftp"`
 	TFTP TFTP `toml:"tftp"`
 }
 
@@ -75,6 +76,11 @@ type User struct {
 	AllowUserFileDelete       *bool  `toml:"allowUserFileDelete,omitempty"`
 	AllowUserFolderDelete     *bool  `toml:"allowUserFolderDelete,omitempty"`
 	AllowUserFolderCreate     *bool  `toml:"allowUserFolderCreate,omitempty"`
+
+	// AuthorizedKeys are SSH public keys in authorized_keys format, one entry
+	// per line as ssh-keygen writes them. They are how an SFTP account logs in
+	// with a key instead of a password; the FTP server ignores them.
+	AuthorizedKeys []string `toml:"authorizedKeys,omitempty"`
 }
 
 // Permissions resolves the user entry. Every right has to be granted
@@ -134,6 +140,34 @@ type FTP struct {
 	Users []User `toml:"users"`
 }
 
+// SFTP configures the SFTP server, which is the SFTP subsystem of an SSH
+// server. It has the shape of the FTP section: a base folder and a list of
+// accounts, with the same permission flags.
+type SFTP struct {
+	Enabled    bool   `toml:"enabled"`
+	Port       int    `toml:"port"`
+	Basefolder string `toml:"basefolder"`
+
+	// HostKey is the SSH host key itself rather than a path to it, base64 of
+	// its PEM encoding, so that the whole configuration stays in one file.
+	// When it is empty a key is generated at startup, which every client will
+	// report as a changed host key after a restart.
+	HostKey string `toml:"hostkey"`
+
+	MaxConnections int `toml:"maxConnections"`
+	// IdleTimeout is the number of seconds without any traffic after which a
+	// connection is closed, 0 disables it.
+	IdleTimeout int `toml:"idleTimeout"`
+	// LoginFailureDelay is the delay in seconds before a wrong password is
+	// answered, which slows down guessing.
+	LoginFailureDelay int `toml:"loginFailureDelay"`
+
+	// Users are the accounts. Each needs a password or at least one authorized
+	// key; allowLoginWithoutPassword has no meaning here, because SSH has no
+	// equivalent of an anonymous login.
+	Users []User `toml:"users"`
+}
+
 // TFTP configures the TFTP server.
 type TFTP struct {
 	Enabled    bool   `toml:"enabled"`
@@ -178,6 +212,15 @@ func Default() Config {
 		},
 		FTPS: FTPS{
 			Port: 990,
+		},
+		// SFTP is the one server that is off by default: a configuration
+		// written for an earlier version has no [sftp] section, and starting
+		// an SSH listener on such an upgrade would be a surprise.
+		SFTP: SFTP{
+			Port:              22,
+			MaxConnections:    10,
+			IdleTimeout:       600,
+			LoginFailureDelay: 1,
 		},
 		TFTP: TFTP{
 			Enabled:               true,
@@ -238,11 +281,16 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("log.format %q is not one of text, json", c.Log.Format)
 	}
-	if !c.FTP.Enabled && !c.FTPS.Enabled && !c.TFTP.Enabled {
-		return errors.New("neither ftp, ftps nor tftp is enabled, nothing to do")
+	if !c.FTP.Enabled && !c.FTPS.Enabled && !c.SFTP.Enabled && !c.TFTP.Enabled {
+		return errors.New("neither ftp, ftps, sftp nor tftp is enabled, nothing to do")
 	}
 	if c.FTP.Enabled || c.FTPS.Enabled {
 		if err := c.validateFTP(); err != nil {
+			return err
+		}
+	}
+	if c.SFTP.Enabled {
+		if err := c.SFTP.validate(); err != nil {
 			return err
 		}
 	}
@@ -293,6 +341,36 @@ func (c Config) validateFTP() error {
 		}
 		if user.Basefolder != "" {
 			if err := checkFolder(fmt.Sprintf("ftp.users[%d].basefolder", i), user.Basefolder); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s SFTP) validate() error {
+	if err := checkPort("sftp.port", s.Port); err != nil {
+		return err
+	}
+	if s.MaxConnections < 1 {
+		return errors.New("sftp.maxConnections has to be at least 1")
+	}
+	// The host key is a value in this file, not a path, so a broken one can be
+	// reported here rather than at the first start.
+	if s.HostKey != "" {
+		if _, err := DecodeHostKey(s.HostKey); err != nil {
+			return fmt.Errorf("sftp.hostkey: %w", err)
+		}
+	}
+	if err := checkFolder("sftp.basefolder", s.Basefolder); err != nil {
+		return err
+	}
+	for i, user := range s.Users {
+		if user.Username == "" {
+			return fmt.Errorf("sftp.users[%d] has no username", i)
+		}
+		if user.Basefolder != "" {
+			if err := checkFolder(fmt.Sprintf("sftp.users[%d].basefolder", i), user.Basefolder); err != nil {
 				return err
 			}
 		}

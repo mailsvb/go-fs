@@ -1,11 +1,10 @@
 package ftp
 
 import (
-	"crypto/sha256"
-	"crypto/subtle"
 	"time"
 
 	"go-fs/internal/config"
+	"go-fs/internal/secrets"
 	"go-fs/internal/vfs"
 )
 
@@ -16,15 +15,6 @@ const (
 	loginPassword
 	loginNoPassword
 )
-
-// secretsMatch compares two secrets without leaking their content through
-// timing. Both sides are hashed first so that differing lengths stay
-// indistinguishable.
-func secretsMatch(a, b string) bool {
-	hashA := sha256.Sum256([]byte(a))
-	hashB := sha256.Sum256([]byte(b))
-	return subtle.ConstantTimeCompare(hashA[:], hashB[:]) == 1
-}
 
 // validateLoginType decides how the named user may log in. Accounts come from
 // the configured user list; a name that is not listed cannot log in. Anonymous
@@ -56,7 +46,7 @@ func (c *conn) authenticateUser(password string) bool {
 			continue
 		}
 		permissions := user.Permissions()
-		if permissions.LoginNoPassword || secretsMatch(password, user.Password) {
+		if permissions.LoginNoPassword || secrets.Match(password, user.Password) {
 			c.applyPermissions(permissions)
 			success = true
 		}

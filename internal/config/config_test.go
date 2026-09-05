@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +116,18 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"ftps port", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Port = 0 }, "ftps.port"},
 		{"half a tls pair", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Cert = "cert.pem" }, "together"},
 		{"user without name", func(c *Config) { c.FTP.Users = []User{{Password: "x"}} }, "no username"},
+		{"sftp port", func(c *Config) { c.SFTP.Enabled = true; c.SFTP.Port = 0 }, "sftp.port"},
+		{"sftp basefolder", func(c *Config) { c.SFTP.Enabled = true; c.SFTP.Basefolder = "" }, "sftp.basefolder"},
+		{"sftp host key", func(c *Config) {
+			c.SFTP.Enabled = true
+			c.SFTP.Basefolder = folder
+			c.SFTP.HostKey = "not a key"
+		}, "sftp.hostkey"},
+		{"sftp user without name", func(c *Config) {
+			c.SFTP.Enabled = true
+			c.SFTP.Basefolder = folder
+			c.SFTP.Users = []User{{Password: "x"}}
+		}, "no username"},
 		{"tftp type", func(c *Config) { c.TFTP.Type = "sctp" }, "tftp.type"},
 		{"tftp block size", func(c *Config) { c.TFTP.MaxBlockSize = 4 }, "tftp.maxBlockSize"},
 		{"tftp maxTimeout below timeout", func(c *Config) { c.TFTP.Timeout = 30; c.TFTP.MaxTimeout = 10 }, "maxTimeout"},
@@ -140,6 +153,7 @@ func TestTemplateRoundTrips(t *testing.T) {
 	folder := t.TempDir()
 	// the shipped template points at /srv, redirect it at a folder that exists
 	body := strings.ReplaceAll(string(Template()), "/srv/ftp", strings.ReplaceAll(folder, `\`, `\\`))
+	body = strings.ReplaceAll(body, "/srv/sftp", strings.ReplaceAll(folder, `\`, `\\`))
 	body = strings.ReplaceAll(body, "/srv/tftp", strings.ReplaceAll(folder, `\`, `\\`))
 
 	path := filepath.Join(t.TempDir(), "go-fs.toml")
@@ -194,5 +208,26 @@ func TestSaveKeepsExplicitUserFlags(t *testing.T) {
 	}
 	if permissions.FileCreate {
 		t.Error("an unset permission should still deny after a round trip")
+	}
+}
+
+func TestDecodeHostKey(t *testing.T) {
+	pem := "-----BEGIN OPENSSH PRIVATE KEY-----\nbody\n-----END OPENSSH PRIVATE KEY-----\n"
+	encoded := base64.StdEncoding.EncodeToString([]byte(pem))
+
+	for _, value := range []string{encoded, pem, encoded[:20] + "\n" + encoded[20:]} {
+		decoded, err := DecodeHostKey(value)
+		if err != nil {
+			t.Fatalf("%.20q: %v", value, err)
+		}
+		if string(decoded) != strings.TrimSpace(pem) && string(decoded) != pem {
+			t.Errorf("%.20q decoded to %q", value, decoded)
+		}
+	}
+
+	for _, value := range []string{"", "not base64 !!", base64.StdEncoding.EncodeToString([]byte("hello"))} {
+		if _, err := DecodeHostKey(value); err == nil {
+			t.Errorf("%q has to be refused", value)
+		}
 	}
 }

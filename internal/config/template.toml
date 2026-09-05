@@ -77,6 +77,54 @@ password = ""
 allowLoginWithoutPassword = true
 allowUserFileRetrieve = true
 
+# The SFTP server, which is the SFTP subsystem of an SSH server. It has the
+# shape of [ftp]: a base folder and a list of accounts with the same permission
+# flags. Off unless switched on, so that upgrading never opens an SSH port by
+# itself.
+[sftp]
+enabled = false
+port = 22
+# served folder, has to exist
+basefolder = "/srv/sftp"
+
+# The SSH host key, base64 of its PEM encoding, so the whole configuration
+# stays in this one file. Empty generates a key at every start, which makes
+# every client report a changed host key; produce a stable one with
+#   ssh-keygen -q -t ed25519 -N "" -f hostkey && base64 < hostkey | tr -d "\n"
+hostkey = ""
+
+# maximum simultaneous connections
+maxConnections = 10
+# seconds without any traffic after which a connection is closed, 0 disables
+idleTimeout = 600
+# seconds to wait before answering a wrong password
+loginFailureDelay = 1
+
+# One table per account, as under [ftp], with the same permission flags and the
+# same denied by default rule. Each account needs a password or at least one
+# authorized key: SSH has no anonymous login, so allowLoginWithoutPassword does
+# nothing here.
+[[sftp.users]]
+username = "john"
+password = "doe"
+# own folder for this user, defaults to sftp.basefolder
+# basefolder = "/srv/sftp/john"
+allowUserFileCreate = true
+allowUserFileRetrieve = true
+allowUserFileOverwrite = true
+allowUserFileDelete = true
+allowUserFolderDelete = true
+allowUserFolderCreate = true
+
+# An account that logs in with a key instead of a password. The entries are
+# authorized_keys lines, the content of an id_*.pub file.
+[[sftp.users]]
+username = "max"
+authorizedKeys = [
+  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample max@laptop",
+]
+allowUserFileRetrieve = true
+
 [tftp]
 enabled = true
 port = 69

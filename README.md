@@ -1,8 +1,8 @@
 # go-fs
 
-go-fileserver: FTP and TFTP server in a single statically linked binary,
-configured from one TOML file. This is a port of the Node.js
-[jsftpd](https://github.com/svenbeisiegel/jsftpd).
+go-fileserver: FTP, FTPS, SFTP and TFTP in a single statically linked binary,
+configured from one TOML file. The FTP and TFTP servers are a port of the
+Node.js [jsftpd](https://github.com/svenbeisiegel/jsftpd).
 
 ## Build
 
@@ -35,6 +35,11 @@ same five binaries into `dist/`, with checksums, after emptying it. `make build`
 appends `-dev-<YYYYmmdd-HHMMSS>`, so a locally built binary always says when it
 was built and can never be mistaken for a release.
 
+Both also copy the documented starter configuration into `dist/go-fs.toml`,
+which is the name the binary reads when `-config` is not given, so an unpacked
+`dist/` is ready to edit and run. It is the same file the binary embeds and
+`-init` writes, so the shipped configuration always matches the build.
+
 `go-fs -version` prints whichever version was stamped, and a plain `go build .`
 reports `0.9-dev`. Pass `VERSION=` to override for a single build, for example
 `make release VERSION=1.0` from a release pipeline.
@@ -63,9 +68,9 @@ them for you, or run on high ports behind a redirect.
 
 ## Configuration
 
-One TOML file with a `[log]`, an `[ftp]`, an `[ftps]` and a `[tftp]` section.
-Every key is optional and keeps the documented default when absent, so a working
-file can be this short:
+One TOML file with a `[log]`, an `[ftp]`, an `[ftps]`, an `[sftp]` and a
+`[tftp]` section. Every key is optional and keeps the documented default when
+absent, so a working file can be this short:
 
 ```toml
 [ftp]
@@ -85,7 +90,8 @@ allowWrite = true
 `go-fs.example.toml` is the fully commented version, and the same file
 `-init` writes. Accounts are one `[[ftp.users]]` table each; there is no default
 account, so a name that is not listed cannot log in. Each user may have its own
-`basefolder`.
+`basefolder`. `[sftp]` has the same shape with its own `[[sftp.users]]`, and
+its accounts follow the same rules.
 
 Every right an account has is granted explicitly — `allowUserFileCreate`,
 `allowUserFileRetrieve`, `allowUserFileOverwrite`, `allowUserFileDelete`,
@@ -117,6 +123,7 @@ out of it.
 | `ftp.idleTimeout` | `600` | an idle control connection does not hold a slot forever |
 | `ftp.loginFailureDelay` | `1` | a wrong password is answered after a second, which slows guessing |
 | `ftp.users[].allowUser*` | `false` | an account is granted only the rights its table lists |
+| `sftp.enabled` | `false` | the only server that is off by default, so an upgrade never opens an SSH port on its own |
 | `tftp.allowWrite` | `false` | read only unless switched on |
 | `tftp.maxBlockSize` | `1468` | keeps a block inside a typical ethernet MTU so datagrams are not IP fragmented |
 | `tftp.maxTimeout` | `60` | a client cannot negotiate a retransmit interval that pins a transfer slot |
@@ -138,6 +145,46 @@ startup and says so. That certificate changes on every restart and proves no
 identity; it is there so the TLS interface works out of the box for a test, not
 for production.
 
+## SFTP
+
+SFTP is the file transfer subsystem of SSH, so `[sftp]` runs an SSH server. It
+serves only that subsystem: a `shell` or `exec` request is refused, and there is
+no way to run anything on the host through it.
+
+```toml
+[sftp]
+enabled = true
+port = 2222
+basefolder = "/srv/sftp"
+hostkey = ""
+
+[[sftp.users]]
+username = "john"
+password = "doe"
+allowUserFileRetrieve = true
+
+[[sftp.users]]
+username = "max"
+authorizedKeys = ["ssh-ed25519 AAAAC3Nz... max@laptop"]
+allowUserFileRetrieve = true
+allowUserFileCreate = true
+```
+
+An account authenticates with a password, with a public key, or with either
+when both are configured. `authorizedKeys` entries are `authorized_keys` lines,
+the content of an `id_*.pub` file. `allowLoginWithoutPassword` means nothing
+here — SSH has no anonymous login — so an account needs a password or a key, and
+one with neither is refused at startup rather than left unusable.
+
+The host key lives in the configuration itself rather than in a separate file:
+`hostkey` is base64 of its PEM encoding, on one line. With it empty a key is
+generated at every start, which makes every client report a changed host key, so
+set it for anything but a first look:
+
+```shell
+ssh-keygen -q -t ed25519 -N "" -f hostkey && base64 < hostkey | tr -d "\n"
+```
+
 ## What is implemented
 
 **FTP** — RFC 959 with RFC 2228 (`AUTH`, `PBSZ`, `PROT`), RFC 2389 (`FEAT`,
@@ -152,6 +199,12 @@ XPWD XRMD
 ```
 
 `SITE CHMOD` and `SITE HELP` are the implemented `SITE` subcommands.
+
+**SFTP** — version 3 of the SFTP protocol over SSH, through
+`golang.org/x/crypto/ssh` and `github.com/pkg/sftp`: open, read, write, append,
+truncate, directory listing, stat, rename, remove, mkdir, rmdir and setstat.
+Creating symbolic links is refused, because a link is the one thing that could
+point out of the base folder.
 
 **TFTP** — RFC 1350 in `octet` and `netascii` mode, with the option extension of
 RFC 2347, the `blksize`, `timeout` and `tsize` options of RFC 2348 and RFC 2349,

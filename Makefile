@@ -1,6 +1,11 @@
 BINARY  := go-fs
 DIST    := dist
 
+# The documented starter configuration, shipped next to the binaries under the
+# name the binary looks for when -config is not given. This is the same file
+# the binary embeds and -init writes, so what ships always matches the build.
+TEMPLATE := internal/config/template.toml
+
 # VERSION is the released version and lives in ./VERSION so it is bumped in one
 # place. Override it on the command line for a one off build, e.g. from CI:
 #   make release VERSION=1.0
@@ -29,6 +34,8 @@ define crosscompile
 		GOOS=$$os GOARCH=$$arch $(BUILDENV) go build $(GOFLAGS) \
 			-ldflags "-s -w -X main.version=$(1)" -o $$out . || exit 1; \
 	done
+	@cp $(TEMPLATE) $(DIST)/$(BINARY).toml
+	@echo "copied $(DIST)/$(BINARY).toml"
 	@$(MAKE) --no-print-directory checksums
 endef
 
