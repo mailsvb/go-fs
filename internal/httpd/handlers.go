@@ -12,7 +12,7 @@ import (
 )
 
 // handleGet serves a file as a download and a folder as the browsable listing.
-func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, target vfs.Target) {
+func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target) {
 	info, err := os.Stat(target.Path)
 	if err != nil {
 		http.NotFound(w, r)
@@ -59,7 +59,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, target vfs.Ta
 // handlePut stores an uploaded file. A body of octet-stream is the file; a
 // multipart body carries it in a part. Folders above it are created, and a
 // target that already exists is refused, as in the Node implementation.
-func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, target vfs.Target) {
+func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target) {
 	if _, err := os.Stat(target.Path); err == nil {
 		// the original falls through to its not-found handler here
 		http.NotFound(w, r)
@@ -81,8 +81,8 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, target vfs.Ta
 	}
 
 	body := io.Reader(r.Body)
-	if s.cfg.MaxUploadSize > 0 {
-		body = http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadSize)
+	if set.cfg.MaxUploadSize > 0 {
+		body = http.MaxBytesReader(w, r.Body, set.cfg.MaxUploadSize)
 	}
 
 	if multipart {
@@ -148,7 +148,7 @@ type multipartFile interface {
 }
 
 // handleDelete removes a file, or a folder when it is empty.
-func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, target vfs.Target) {
+func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target) {
 	info, err := os.Stat(target.Path)
 	if err != nil {
 		http.NotFound(w, r)
@@ -185,7 +185,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, target vfs
 
 // handleDirectoryReader answers the legacy listing endpoint: a form field dir,
 // resolved against the folder the request path is in, answered as links.
-func (s *Server) handleDirectoryReader(w http.ResponseWriter, r *http.Request, target vfs.Target) {
+func (s *Server) handleDirectoryReader(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target) {
 	if err := r.ParseForm(); err != nil {
 		http.NotFound(w, r)
 		return

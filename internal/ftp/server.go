@@ -13,8 +13,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"go-fs/internal/config"
+	"go-fs/internal/service"
 	"go-fs/internal/tlsconf"
 	"go-fs/internal/vfs"
 )
@@ -22,11 +24,13 @@ import (
 // Server accepts control connections on the plain and, when configured, on the
 // implicit TLS port.
 type Server struct {
-	cfg  config.FTP
-	ftps config.FTPS
-	root *vfs.Root
-	log  *slog.Logger
-	tls  *tls.Config
+	// snapshot holds what a reload may swap. Every read goes through
+	// settings(), and a connection takes one snapshot when it is accepted, so
+	// a reload cannot change the rules under a half-finished command sequence.
+	snapshot atomic.Pointer[settings]
+	root     *vfs.Root
+	log      *slog.Logger
+	tls      *tls.Config
 
 	plain  net.Listener
 	secure net.Listener
@@ -41,27 +45,63 @@ type Server struct {
 // New prepares a server. The base folder, and any per user base folder, has to
 // exist. When TLS is enabled without a certificate one is generated, so that a
 // published private key never has to ship with the program.
-func New(cfg config.FTP, ftps config.FTPS, logger *slog.Logger) (*Server, error) {
-	root, err := vfs.New(cfg.Basefolder)
-	if err != nil {
-		return nil, fmt.Errorf("ftp.basefolder: %w", err)
+// settings is the part of the server a reload can replace.
+type settings struct {
+	cfg  config.FTP
+	ftps config.FTPS
+}
+
+func (s *Server) settings() *settings {
+	return s.snapshot.Load()
+}
+
+// Reload swaps the accounts and the limits. The ports, the folder and the
+// certificate cannot change under a running listener, so those report
+// ErrNeedsRestart.
+func (s *Server) Reload(cfg config.FTP, ftps config.FTPS) error {
+	current := s.settings()
+	if cfg.Enabled != current.cfg.Enabled || cfg.Port != current.cfg.Port ||
+		cfg.Basefolder != current.cfg.Basefolder ||
+		ftps.Enabled != current.ftps.Enabled || ftps.Port != current.ftps.Port ||
+		ftps.Cert != current.ftps.Cert || ftps.Key != current.ftps.Key {
+		return service.ErrNeedsRestart
 	}
+	if err := checkUserFolders(cfg); err != nil {
+		// a broken account leaves the running one in place
+		return err
+	}
+	s.snapshot.Store(&settings{cfg: cfg, ftps: ftps})
+	return nil
+}
+
+// checkUserFolders reports a per user base folder that cannot be served.
+func checkUserFolders(cfg config.FTP) error {
 	for i, user := range cfg.Users {
 		if user.Basefolder == "" {
 			continue
 		}
 		if _, err := vfs.New(user.Basefolder); err != nil {
-			return nil, fmt.Errorf("ftp.users[%d].basefolder: %w", i, err)
+			return fmt.Errorf("ftp.users[%d].basefolder: %w", i, err)
 		}
+	}
+	return nil
+}
+
+func New(cfg config.FTP, ftps config.FTPS, logger *slog.Logger) (*Server, error) {
+	root, err := vfs.New(cfg.Basefolder)
+	if err != nil {
+		return nil, fmt.Errorf("ftp.basefolder: %w", err)
+	}
+	if err := checkUserFolders(cfg); err != nil {
+		return nil, err
 	}
 
 	server := &Server{
-		cfg:   cfg,
-		ftps:  ftps,
 		root:  root,
 		log:   logger,
 		conns: make(map[*conn]struct{}),
 	}
+	server.snapshot.Store(&settings{cfg: cfg, ftps: ftps})
 	if ftps.Enabled {
 		server.tls, err = tlsconf.Build(ftps.Cert, ftps.Key, "ftps", logger)
 		if err != nil {
@@ -75,12 +115,13 @@ func New(cfg config.FTP, ftps config.FTPS, logger *slog.Logger) (*Server, error)
 // The two listeners are independent: ftp.enabled serves the plain control
 // port, ftps.enabled the implicit TLS one, and either may be on alone.
 func (s *Server) Start(ctx context.Context) error {
-	if !s.cfg.Enabled && !s.ftps.Enabled {
+	set := s.settings()
+	if !set.cfg.Enabled && !set.ftps.Enabled {
 		return errors.New("neither ftp nor ftps is enabled")
 	}
 
-	if s.cfg.Enabled {
-		plain, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(s.cfg.Port)))
+	if set.cfg.Enabled {
+		plain, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(set.cfg.Port)))
 		if err != nil {
 			return err
 		}
@@ -89,8 +130,8 @@ func (s *Server) Start(ctx context.Context) error {
 			"address", addressOf(plain.Addr()), "port", portOf(plain.Addr()))
 	}
 
-	if s.ftps.Enabled {
-		secure, err := tls.Listen("tcp", net.JoinHostPort("", strconv.Itoa(s.ftps.Port)), s.tls)
+	if set.ftps.Enabled {
+		secure, err := tls.Listen("tcp", net.JoinHostPort("", strconv.Itoa(set.ftps.Port)), s.tls)
 		if err != nil {
 			if s.plain != nil {
 				_ = s.plain.Close()
@@ -193,10 +234,10 @@ func (s *Server) accept(ctx context.Context, listener net.Listener, secure bool)
 			return
 		}
 		// maxConnections is a limit on control connections, as in the original
-		if len(s.conns) >= s.cfg.MaxConnections {
+		if limit := s.settings().cfg.MaxConnections; len(s.conns) >= limit {
 			s.mu.Unlock()
 			s.log.Debug("ftp connection refused, too many connections",
-				"maxConnections", s.cfg.MaxConnections)
+				"maxConnections", limit)
 			_ = raw.Close()
 			continue
 		}
@@ -225,9 +266,9 @@ func (s *Server) unregister(c *conn) {
 // listenData binds a passive data listener on the configured port range.
 // Binding the real listener directly leaves no window in which the port can be
 // taken by somebody else.
-func (s *Server) listenData() (net.Listener, int, error) {
-	maxPort := min(s.cfg.MinDataPort+s.cfg.MaxConnections, 65535)
-	for port := s.cfg.MinDataPort; port <= maxPort; port++ {
+func (s *Server) listenData(set *settings) (net.Listener, int, error) {
+	maxPort := min(set.cfg.MinDataPort+set.cfg.MaxConnections, 65535)
+	for port := set.cfg.MinDataPort; port <= maxPort; port++ {
 		listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(port)))
 		if err == nil {
 			return listener, port, nil

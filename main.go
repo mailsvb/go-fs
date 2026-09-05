@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -12,12 +11,10 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"go-fs/internal/config"
-	"go-fs/internal/ftp"
-	"go-fs/internal/httpd"
-	"go-fs/internal/sftp"
-	"go-fs/internal/tftp"
+	"go-fs/internal/supervisor"
 )
 
 // baseVersion is the released version of the tool and the one place it is
@@ -84,74 +81,22 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var servers []interface {
-		Shutdown(context.Context) error
+	sup := supervisor.New(logger)
+	defer sup.Shutdown(context.Background())
+	if err := sup.Apply(ctx, cfg); err != nil {
+		return err
 	}
 
-	if cfg.FTP.Enabled || cfg.FTPS.Enabled {
-		server, err := ftp.New(cfg.FTP, cfg.FTPS, logger)
-		if err != nil {
-			return err
-		}
-		if err := server.Start(ctx); err != nil {
-			return fmt.Errorf("starting the ftp server: %w", err)
-		}
-		servers = append(servers, server)
-	}
-
-	if cfg.SFTP.Enabled {
-		server, err := sftp.New(cfg.SFTP, logger)
-		if err != nil {
-			shutdownAll(servers)
-			return err
-		}
-		if err := server.Start(ctx); err != nil {
-			shutdownAll(servers)
-			return fmt.Errorf("starting the sftp server: %w", err)
-		}
-		servers = append(servers, server)
-	}
-
-	if cfg.HTTP.Enabled || cfg.HTTPS.Enabled {
-		server, err := httpd.New(cfg.HTTP, cfg.HTTPS, logger)
-		if err != nil {
-			shutdownAll(servers)
-			return err
-		}
-		if err := server.Start(ctx); err != nil {
-			shutdownAll(servers)
-			return fmt.Errorf("starting the http server: %w", err)
-		}
-		servers = append(servers, server)
-	}
-
-	if cfg.TFTP.Enabled {
-		server, err := tftp.New(cfg.TFTP, logger)
-		if err != nil {
-			shutdownAll(servers)
-			return err
-		}
-		if err := server.Start(ctx); err != nil {
-			shutdownAll(servers)
-			return fmt.Errorf("starting the tftp server: %w", err)
-		}
-		servers = append(servers, server)
-	}
-
-	if len(servers) == 0 {
-		return errors.New("no server is enabled, nothing to do")
+	if cfg.General.ReloadConfig {
+		interval := time.Duration(cfg.General.ReloadInterval) * time.Second
+		logger.Info("watching the configuration file", "path", *configPath, "interval", interval)
+		go sup.Watch(ctx, *configPath, interval)
 	}
 
 	<-ctx.Done()
 	logger.Info("shutting down")
-	shutdownAll(servers)
+	sup.Shutdown(context.Background())
 	return nil
-}
-
-func shutdownAll(servers []interface{ Shutdown(context.Context) error }) {
-	for _, server := range servers {
-		_ = server.Shutdown(context.Background())
-	}
 }
 
 func newLogger(cfg config.Log) *slog.Logger {

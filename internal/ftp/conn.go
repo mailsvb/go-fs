@@ -36,7 +36,10 @@ const (
 // has to reach a running transfer while the command loop is busy moving bytes.
 type conn struct {
 	server *Server
-	log    *slog.Logger
+	// set is the snapshot this connection was accepted under, so a reload
+	// cannot change the rules under a half-finished command sequence.
+	set *settings
+	log *slog.Logger
 
 	ctrl   net.Conn
 	reader *bufio.Reader
@@ -111,9 +114,11 @@ type command struct {
 }
 
 func (s *Server) serve(ctx context.Context, raw net.Conn, secure bool) {
-	cfg := s.cfg
+	set := s.settings()
+	cfg := set.cfg
 	c := &conn{
 		server:     s,
+		set:        set,
 		ctrl:       raw,
 		reader:     bufio.NewReaderSize(raw, cfg.MaxCommandLength+2),
 		remoteAddr: hostOf(raw.RemoteAddr()),
@@ -222,7 +227,7 @@ func (c *conn) readLoop(commands chan<- command) {
 // terminator fills the buffer and is refused as soon as it passes the limit,
 // rather than being allowed to grow without bound.
 func (c *conn) readLine() (string, error) {
-	limit := c.server.cfg.MaxCommandLength
+	limit := c.set.cfg.MaxCommandLength
 	var line []byte
 	for {
 		chunk, err := c.reader.ReadSlice('\n')
@@ -246,11 +251,11 @@ func (c *conn) readLine() (string, error) {
 
 // touch refreshes the idle timeout of the control connection.
 func (c *conn) touch() {
-	if c.server.cfg.IdleTimeout <= 0 {
+	if c.set.cfg.IdleTimeout <= 0 {
 		_ = c.ctrl.SetReadDeadline(time.Time{})
 		return
 	}
-	_ = c.ctrl.SetReadDeadline(time.Now().Add(time.Duration(c.server.cfg.IdleTimeout) * time.Second))
+	_ = c.ctrl.SetReadDeadline(time.Now().Add(time.Duration(c.set.cfg.IdleTimeout) * time.Second))
 }
 
 // dispatch parses and runs one command line.
@@ -343,7 +348,7 @@ func (c *conn) handleAuth(arg string) {
 	c.writeMu.Lock()
 	c.ctrl = secure
 	c.writeMu.Unlock()
-	c.reader = bufio.NewReaderSize(secure, c.server.cfg.MaxCommandLength+2)
+	c.reader = bufio.NewReaderSize(secure, c.set.cfg.MaxCommandLength+2)
 	c.secure.set(true)
 	c.log.Debug("ftp control connection is secure")
 }

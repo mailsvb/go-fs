@@ -96,6 +96,30 @@ same tree. It has to be an absolute path and it has to exist. A section that
 sets its own `basefolder` keeps it, so one server can be pointed somewhere else
 without repeating the folder for the rest.
 
+### Reloading
+
+With `general.reloadConfig` on, which it is by default, the file is checked
+every `reloadInterval` seconds and changes are applied without a restart. On
+unix `kill -HUP` reloads on demand whether or not the watch is on.
+
+What happens depends on what changed:
+
+| Changed | Effect |
+|---|---|
+| accounts, permissions, paths, limits, timeouts, the cleanup list | applied to the running server, **nothing is dropped** — a download in flight finishes |
+| a port, a `basefolder`, a TLS certificate, an SSH host key | that one server is restarted and its connections drop; the other four are untouched |
+| a server switched on or off | it is started or stopped, the others untouched |
+
+A file that does not parse or does not validate is reported at error level and
+ignored, so a half-written save cannot take a server down — the last good
+configuration keeps serving. The same goes for a change one server rejects, a
+malformed authorized key say: that server keeps running as it was while the
+others take the new file.
+
+An account is checked again on every request, so a session cookie or a live
+connection never outlives the rights it was granted by more than the request it
+is in.
+
 `go-fs.example.toml` is the fully commented version, and the same file
 `-init` writes. Accounts are one `[[ftp.users]]` table each; there is no default
 account, so a name that is not listed cannot log in. Each user may have its own

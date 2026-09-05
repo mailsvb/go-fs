@@ -21,7 +21,7 @@ const (
 // access is one of those accounts, named "anonymous" with
 // allowLoginWithoutPassword set, and gets no special treatment here.
 func (c *conn) validateLoginType() loginType {
-	cfg := c.server.cfg
+	cfg := c.set.cfg
 	for _, user := range cfg.Users {
 		if user.Username != c.username {
 			continue
@@ -38,7 +38,7 @@ func (c *conn) validateLoginType() loginType {
 
 // authenticateUser checks the password and applies the account's rights.
 func (c *conn) authenticateUser(password string) bool {
-	cfg := c.server.cfg
+	cfg := c.set.cfg
 	success := false
 
 	for _, user := range cfg.Users {
@@ -100,7 +100,7 @@ func cmdPass(c *conn, arg string) {
 	}
 	// Answer a wrong password only after a delay, so that guessing passwords
 	// costs the attacker time.
-	if delay := c.server.cfg.LoginFailureDelay; delay > 0 {
+	if delay := c.set.cfg.LoginFailureDelay; delay > 0 {
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
 	c.replyAndClose("530", "Username or password incorrect")

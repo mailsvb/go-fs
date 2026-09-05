@@ -9,6 +9,16 @@
 [general]
 basefolder = "/srv/files"
 
+# Watch this file and apply what changes in it without a restart. Accounts,
+# permissions and limits are swapped without disturbing anything in flight; a
+# port, a folder or a certificate needs the listener rebound, so that one server
+# is restarted and only its connections drop. A file that does not parse or does
+# not validate is reported and ignored, so a half-written save cannot take a
+# server down. On unix, kill -HUP also reloads, whatever this says.
+reloadConfig = true
+# seconds between two checks of the file
+reloadInterval = 5
+
 [log]
 # debug shows the protocol trace, info reports listeners, logins and transfers.
 level = "info"

@@ -44,6 +44,13 @@ type General struct {
 	// section does not name one, so that a configuration where they all serve
 	// the same tree says it once. It has to be an absolute path.
 	Basefolder string `toml:"basefolder"`
+
+	// ReloadConfig watches the configuration file and applies what changes in
+	// it without a restart. A file that does not parse or does not validate is
+	// reported and ignored, so a half-written save cannot take a server down.
+	ReloadConfig bool `toml:"reloadConfig"`
+	// ReloadInterval is how many seconds pass between two checks of the file.
+	ReloadInterval int `toml:"reloadInterval"`
 }
 
 // Log controls the diagnostics the servers produce. The original emitted
@@ -298,6 +305,10 @@ type TFTP struct {
 // values match the FTPdefaults, UserDefaults and TFTPdefaults of the original.
 func Default() Config {
 	return Config{
+		General: General{
+			ReloadConfig:   true,
+			ReloadInterval: 5,
+		},
 		Log: Log{
 			Level:  "info",
 			Format: "text",
@@ -415,6 +426,9 @@ func (c Config) Validate() error {
 	case "text", "json":
 	default:
 		return fmt.Errorf("log.format %q is not one of text, json", c.Log.Format)
+	}
+	if c.General.ReloadInterval < 1 {
+		return errors.New("general.reloadInterval has to be at least 1")
 	}
 	if c.General.Basefolder != "" {
 		if !filepath.IsAbs(c.General.Basefolder) {

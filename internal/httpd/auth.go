@@ -127,6 +127,13 @@ func (s *sessions) prune() {
 	}
 }
 
+// setLifetime changes how long a new session is good for.
+func (s *sessions) setLifetime(lifetime time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lifetime = lifetime
+}
+
 func (s *sessions) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,8 +145,8 @@ func (s *sessions) count() int {
 // The two return values are the account and whether the request may proceed. A
 // public request proceeds with no account at all; anything else has to present
 // credentials or a live session.
-func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, virtual string) (*account, bool) {
-	if !s.needsAuth(r.Method, virtual) {
+func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Request, virtual string) (*account, bool) {
+	if !s.needsAuth(set, r.Method, virtual) {
 		return nil, true
 	}
 
@@ -153,32 +160,32 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, virtual st
 	var user *account
 	switch {
 	case strings.HasPrefix(header, "Digest "):
-		user = s.checkDigest(r, header)
+		user = s.checkDigest(set, r, header)
 	case strings.HasPrefix(header, "Basic "):
-		user = s.checkBasic(header)
+		user = s.checkBasic(set, header)
 	}
 
 	if user == nil {
-		s.challenge(w, r)
+		s.challenge(set, w, r)
 		return nil, false
 	}
 
 	s.log.Info("http login", "user", user.name, "address", addressOf(r), "path", virtual)
 	if user.cookie && r.Header.Get("X-Disable-Session") == "" {
-		s.setSession(w, r, user)
+		s.setSession(set, w, r, user)
 	}
 	return user, true
 }
 
 // needsAuth decides whether credentials are required at all: because of the
 // method, or because the path is one of the protected ones.
-func (s *Server) needsAuth(method, virtual string) bool {
-	for _, protected := range s.cfg.MethodsRequireAuth {
+func (s *Server) needsAuth(set *settings, method, virtual string) bool {
+	for _, protected := range set.cfg.MethodsRequireAuth {
 		if strings.EqualFold(protected, method) {
 			return true
 		}
 	}
-	for _, pattern := range s.protectedPaths {
+	for _, pattern := range set.protectedPaths {
 		if pattern.MatchString(virtual) {
 			return true
 		}
@@ -186,7 +193,7 @@ func (s *Server) needsAuth(method, virtual string) bool {
 	return false
 }
 
-func (s *Server) setSession(w http.ResponseWriter, r *http.Request, user *account) {
+func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
 	token, err := s.sessions.issue(user)
 	if err != nil {
 		s.log.Error("http cannot create a session", "error", err)
@@ -197,7 +204,7 @@ func (s *Server) setSession(w http.ResponseWriter, r *http.Request, user *accoun
 		Name:     sessionCookie,
 		Value:    token,
 		Path:     user.cookiePath,
-		MaxAge:   s.cfg.SessionTimeout,
+		MaxAge:   set.cfg.SessionTimeout,
 		HttpOnly: true,
 		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
@@ -207,26 +214,26 @@ func (s *Server) setSession(w http.ResponseWriter, r *http.Request, user *accoun
 // challenge answers a request that could not be authenticated. Digest is what
 // is offered, as the Node implementation offers it, and Basic is accepted from
 // a client that sends it anyway.
-func (s *Server) challenge(w http.ResponseWriter, r *http.Request) {
-	if delay := s.cfg.LoginFailureDelay; delay > 0 {
+func (s *Server) challenge(set *settings, w http.ResponseWriter, r *http.Request) {
+	if delay := set.cfg.LoginFailureDelay; delay > 0 {
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
 	opaque := make([]byte, 16)
 	_, _ = rand.Read(opaque)
 	w.Header().Set("WWW-Authenticate", fmt.Sprintf(
 		`Digest realm=%q, qop="auth", opaque=%q, nonce=%q, algorithm=%s`,
-		s.cfg.Realm, hex.EncodeToString(opaque), s.nonce,
+		set.cfg.Realm, hex.EncodeToString(opaque), s.nonce,
 		defaultAlgorithm(r.Header.Get("User-Agent"))))
 	w.WriteHeader(http.StatusUnauthorized)
 }
 
 // checkBasic verifies an RFC 7617 header.
-func (s *Server) checkBasic(header string) *account {
+func (s *Server) checkBasic(set *settings, header string) *account {
 	name, password, ok := parseBasic(header)
 	if !ok {
 		return nil
 	}
-	for _, user := range s.accounts {
+	for _, user := range set.accounts {
 		if secrets.Match(name, user.name) && secrets.Match(password, user.password) {
 			return user
 		}
@@ -236,7 +243,7 @@ func (s *Server) checkBasic(header string) *account {
 
 // checkDigest verifies an RFC 7616 header, including the RFC 2069 form that
 // carries no qop.
-func (s *Server) checkDigest(r *http.Request, header string) *account {
+func (s *Server) checkDigest(set *settings, r *http.Request, header string) *account {
 	params := parseDigest(header)
 	algorithm := params["algorithm"]
 	if algorithm == "" {
@@ -256,11 +263,11 @@ func (s *Server) checkDigest(r *http.Request, header string) *account {
 	uri := params["uri"]
 	ha2 := digest(r.Method + ":" + uri)
 
-	for _, user := range s.accounts {
+	for _, user := range set.accounts {
 		if user.name != name {
 			continue
 		}
-		ha1 := digest(user.name + ":" + s.cfg.Realm + ":" + user.password)
+		ha1 := digest(user.name + ":" + set.cfg.Realm + ":" + user.password)
 
 		var expected string
 		if params["qop"] == "auth" {

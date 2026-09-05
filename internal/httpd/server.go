@@ -20,9 +20,11 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go-fs/internal/config"
+	"go-fs/internal/service"
 	"go-fs/internal/tlsconf"
 	"go-fs/internal/vfs"
 )
@@ -36,14 +38,13 @@ var readerPath = regexp.MustCompile(`/dls_directory_reader\.(php|asp)$`)
 
 // Server serves the file tree over HTTP, over TLS, or over both.
 type Server struct {
-	cfg   config.HTTP
-	https config.HTTPS
-	root  *vfs.Root
-	log   *slog.Logger
+	// snapshot holds what a reload may swap. Every request takes one snapshot
+	// at the top of ServeHTTP and is served entirely by it.
+	snapshot atomic.Pointer[settings]
+	root     *vfs.Root
+	log      *slog.Logger
 
-	accounts       []*account
-	protectedPaths []*regexp.Regexp
-	sessions       *sessions
+	sessions *sessions
 	// nonce is generated once and used for the life of the process, as the
 	// Node implementation does.
 	nonce string
@@ -61,17 +62,25 @@ type Server struct {
 // New prepares a server. The base folder has to exist and every configured
 // regular expression has to compile, so that a typo is reported at startup
 // rather than at the first request that would have matched.
-func New(cfg config.HTTP, https config.HTTPS, logger *slog.Logger) (*Server, error) {
-	root, err := vfs.New(cfg.Basefolder)
-	if err != nil {
-		return nil, fmt.Errorf("http.basefolder: %w", err)
-	}
+// settings is the part of the server a reload can replace: the section and
+// everything compiled from it.
+type settings struct {
+	cfg            config.HTTP
+	https          config.HTTPS
+	accounts       []*account
+	protectedPaths []*regexp.Regexp
+}
 
+func (s *Server) settings() *settings {
+	return s.snapshot.Load()
+}
+
+// newSettings compiles a section into what the request path needs.
+func newSettings(cfg config.HTTP, https config.HTTPS) (*settings, error) {
 	accounts, err := buildAccounts(cfg.Users)
 	if err != nil {
 		return nil, err
 	}
-
 	protected := make([]*regexp.Regexp, 0, len(cfg.PathsRequireAuth))
 	for i, pattern := range cfg.PathsRequireAuth {
 		compiled, err := regexp.Compile(pattern)
@@ -80,6 +89,44 @@ func New(cfg config.HTTP, https config.HTTPS, logger *slog.Logger) (*Server, err
 		}
 		protected = append(protected, compiled)
 	}
+	return &settings{cfg: cfg, https: https, accounts: accounts, protectedPaths: protected}, nil
+}
+
+// Reload swaps the accounts, the paths and the limits that are read per
+// request. The ports, the folder, the certificate and the settings baked into
+// the http.Server and its listener at Start report ErrNeedsRestart.
+func (s *Server) Reload(cfg config.HTTP, https config.HTTPS) error {
+	current := s.settings()
+	if cfg.Enabled != current.cfg.Enabled || cfg.Port != current.cfg.Port ||
+		cfg.Basefolder != current.cfg.Basefolder ||
+		cfg.MaxConnections != current.cfg.MaxConnections ||
+		cfg.ReadTimeout != current.cfg.ReadTimeout ||
+		cfg.WriteTimeout != current.cfg.WriteTimeout ||
+		cfg.IdleTimeout != current.cfg.IdleTimeout ||
+		https.Enabled != current.https.Enabled || https.Port != current.https.Port ||
+		https.Cert != current.https.Cert || https.Key != current.https.Key {
+		return service.ErrNeedsRestart
+	}
+	next, err := newSettings(cfg, https)
+	if err != nil {
+		// a broken account or pattern leaves the running one in place
+		return err
+	}
+	s.sessions.setLifetime(time.Duration(cfg.SessionTimeout) * time.Second)
+	s.snapshot.Store(next)
+	return nil
+}
+
+func New(cfg config.HTTP, https config.HTTPS, logger *slog.Logger) (*Server, error) {
+	root, err := vfs.New(cfg.Basefolder)
+	if err != nil {
+		return nil, fmt.Errorf("http.basefolder: %w", err)
+	}
+
+	set, err := newSettings(cfg, https)
+	if err != nil {
+		return nil, err
+	}
 
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
@@ -87,15 +134,12 @@ func New(cfg config.HTTP, https config.HTTPS, logger *slog.Logger) (*Server, err
 	}
 
 	server := &Server{
-		cfg:            cfg,
-		https:          https,
-		root:           root,
-		log:            logger,
-		accounts:       accounts,
-		protectedPaths: protected,
-		sessions:       newSessions(time.Duration(cfg.SessionTimeout) * time.Second),
-		nonce:          hex.EncodeToString(nonce),
+		root:     root,
+		log:      logger,
+		sessions: newSessions(time.Duration(cfg.SessionTimeout) * time.Second),
+		nonce:    hex.EncodeToString(nonce),
 	}
+	server.snapshot.Store(set)
 	server.server = &http.Server{
 		Handler:      server,
 		ReadTimeout:  seconds(cfg.ReadTimeout),
@@ -110,27 +154,28 @@ func New(cfg config.HTTP, https config.HTTPS, logger *slog.Logger) (*Server, err
 // listeners are independent: http.enabled serves the plain port, https.enabled
 // the TLS one, and either may be on alone.
 func (s *Server) Start(ctx context.Context) error {
-	if !s.cfg.Enabled && !s.https.Enabled {
+	set := s.settings()
+	if !set.cfg.Enabled && !set.https.Enabled {
 		return errors.New("neither http nor https is enabled")
 	}
 
-	if s.cfg.Enabled {
-		plain, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(s.cfg.Port)))
+	if set.cfg.Enabled {
+		plain, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(set.cfg.Port)))
 		if err != nil {
 			return err
 		}
-		s.plain = limited(plain, s.cfg.MaxConnections)
+		s.plain = limited(plain, set.cfg.MaxConnections)
 		s.log.Info("http listening", "protocol", "http",
 			"address", listenAddress(plain), "port", listenPort(plain))
 	}
 
-	if s.https.Enabled {
-		tlsConfig, err := tlsconf.Build(s.https.Cert, s.https.Key, "https", s.log)
+	if set.https.Enabled {
+		tlsConfig, err := tlsconf.Build(set.https.Cert, set.https.Key, "https", s.log)
 		if err != nil {
 			s.closeListeners()
 			return err
 		}
-		raw, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(s.https.Port)))
+		raw, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(set.https.Port)))
 		if err != nil {
 			s.closeListeners()
 			return err
@@ -138,7 +183,7 @@ func (s *Server) Start(ctx context.Context) error {
 		// the connection limit goes underneath the TLS listener: net/http
 		// recognises a connection as TLS by its type, so a wrapper around the
 		// *tls.Conn would leave Request.TLS empty
-		secure := tls.NewListener(limited(raw, s.cfg.MaxConnections), tlsConfig)
+		secure := tls.NewListener(limited(raw, set.cfg.MaxConnections), tlsConfig)
 		s.secure = secure
 		s.log.Info("http listening", "protocol", "https",
 			"address", listenAddress(secure), "port", listenPort(secure))
@@ -214,6 +259,9 @@ func (s *Server) closeListeners() {
 
 // ServeHTTP resolves the path once, authenticates, authorizes and dispatches.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// one snapshot for the whole request, so a reload halfway through cannot
+	// authenticate against one account list and authorize against another
+	set := s.settings()
 	s.log.Debug("http request", "method", r.Method, "url", r.URL.Path, "address", addressOf(r))
 
 	target := s.root.Resolve("/", r.URL.Path)
@@ -225,7 +273,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, ok := s.authenticate(w, r, target.Virtual)
+	user, ok := s.authenticate(set, w, r, target.Virtual)
 	if !ok {
 		return
 	}
@@ -238,25 +286,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
-		s.handleGet(w, r, target)
+		s.handleGet(set, w, r, target)
 	case http.MethodPut:
 		if user != nil && !user.upload {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
-		s.handlePut(w, r, target)
+		s.handlePut(set, w, r, target)
 	case http.MethodDelete:
 		if user != nil && !user.delete {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
-		s.handleDelete(w, r, target)
+		s.handleDelete(set, w, r, target)
 	case http.MethodPost:
 		if !readerPath.MatchString(r.URL.Path) {
 			http.NotFound(w, r)
 			return
 		}
-		s.handleDirectoryReader(w, r, target)
+		s.handleDirectoryReader(set, w, r, target)
 	default:
 		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, POST")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)

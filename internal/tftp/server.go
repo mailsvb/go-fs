@@ -14,9 +14,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go-fs/internal/config"
+	"go-fs/internal/service"
 	"go-fs/internal/vfs"
 )
 
@@ -27,10 +29,12 @@ const (
 
 // Server serves read and write requests over UDP.
 type Server struct {
-	cfg    config.TFTP
-	root   *vfs.Root
-	log    *slog.Logger
-	limits limits
+	// snapshot holds what a reload may swap. Every read goes through
+	// settings(), so a running transfer keeps the values it started under
+	// while the next one sees the new ones.
+	snapshot atomic.Pointer[settings]
+	root     *vfs.Root
+	log      *slog.Logger
 
 	conn net.PacketConn
 	wg   sync.WaitGroup
@@ -50,15 +54,22 @@ type Server struct {
 }
 
 // New prepares a server. The base folder has to exist.
-func New(cfg config.TFTP, logger *slog.Logger) (*Server, error) {
-	root, err := vfs.New(cfg.Basefolder)
-	if err != nil {
-		return nil, fmt.Errorf("tftp.basefolder: %w", err)
-	}
-	return &Server{
-		cfg:  cfg,
-		root: root,
-		log:  logger,
+// settings is the part of the server a reload can replace.
+type settings struct {
+	cfg    config.TFTP
+	limits limits
+}
+
+// settings returns the current snapshot. Callers hold on to the pointer for
+// the length of one transfer rather than reading it again mid-flight.
+func (s *Server) settings() *settings {
+	return s.snapshot.Load()
+}
+
+// newSettings derives what the server needs from a section.
+func newSettings(cfg config.TFTP) *settings {
+	return &settings{
+		cfg: cfg,
 		limits: limits{
 			timeout:       time.Duration(cfg.Timeout) * time.Second,
 			maxTimeout:    time.Duration(cfg.MaxTimeout) * time.Second,
@@ -66,10 +77,36 @@ func New(cfg config.TFTP, logger *slog.Logger) (*Server, error) {
 			maxBlockSize:  cfg.MaxBlockSize,
 			maxWindowSize: cfg.MaxWindowSize,
 		},
+	}
+}
+
+// Reload swaps what can change while the server runs. The address it is bound
+// to and the folder it serves cannot, so those report ErrNeedsRestart.
+func (s *Server) Reload(cfg config.TFTP) error {
+	current := s.settings().cfg
+	if cfg.Enabled != current.Enabled || cfg.Port != current.Port ||
+		cfg.Address != current.Address || cfg.Type != current.Type ||
+		cfg.Basefolder != current.Basefolder {
+		return service.ErrNeedsRestart
+	}
+	s.snapshot.Store(newSettings(cfg))
+	return nil
+}
+
+func New(cfg config.TFTP, logger *slog.Logger) (*Server, error) {
+	root, err := vfs.New(cfg.Basefolder)
+	if err != nil {
+		return nil, fmt.Errorf("tftp.basefolder: %w", err)
+	}
+	server := &Server{
+		root:          root,
+		log:           logger,
 		transfers:     make(map[uint64]context.CancelFunc),
 		activeClients: make(map[string]struct{}),
 		hostTransfers: make(map[string]int),
-	}, nil
+	}
+	server.snapshot.Store(newSettings(cfg))
+	return server, nil
 }
 
 // network returns the network to listen on.
@@ -77,11 +114,12 @@ func New(cfg config.TFTP, logger *slog.Logger) (*Server, error) {
 // An empty type binds dual stack, so IPv4 clients are served as well; udp4 and
 // udp6 restrict the server to that family.
 func (s *Server) network() string {
-	switch s.cfg.Type {
+	cfg := s.settings().cfg
+	switch cfg.Type {
 	case "udp4", "udp6":
-		return s.cfg.Type
+		return cfg.Type
 	}
-	if s.cfg.Address != "" && net.ParseIP(s.cfg.Address).To4() != nil {
+	if cfg.Address != "" && net.ParseIP(cfg.Address).To4() != nil {
 		return "udp4"
 	}
 	return "udp"
@@ -89,7 +127,8 @@ func (s *Server) network() string {
 
 // Start binds the request socket and serves until ctx is cancelled.
 func (s *Server) Start(ctx context.Context) error {
-	address := net.JoinHostPort(s.cfg.Address, strconv.Itoa(s.cfg.Port))
+	cfg := s.settings().cfg
+	address := net.JoinHostPort(cfg.Address, strconv.Itoa(cfg.Port))
 	conn, err := net.ListenPacket(s.network(), address)
 	if err != nil {
 		return err
@@ -165,6 +204,8 @@ func (s *Server) serve(ctx context.Context) {
 
 // dispatch answers a datagram that arrived on the request socket.
 func (s *Server) dispatch(ctx context.Context, msg []byte, from net.Addr) {
+	// one snapshot per request, so everything it is judged by is consistent
+	set := s.settings()
 	if len(msg) < 2 {
 		return
 	}
@@ -185,9 +226,9 @@ func (s *Server) dispatch(ctx context.Context, msg []byte, from net.Addr) {
 		s.log.Debug("tftp request", "client", client, "type", what,
 			"file", sanitize(req.filename), "mode", sanitize(req.mode))
 		if op == opRRQ {
-			s.handleRead(ctx, req, from)
+			s.handleRead(ctx, set, req, from)
 		} else {
-			s.handleWrite(ctx, req, from)
+			s.handleWrite(ctx, set, req, from)
 		}
 	default:
 		// An ERROR is never acknowledged (RFC 1350); answering one makes two
@@ -206,7 +247,7 @@ type admission struct {
 }
 
 // admit reserves a slot for a request, or answers why it cannot.
-func (s *Server) admit(req request, from net.Addr, what string) (admission, bool) {
+func (s *Server) admit(set *settings, req request, from net.Addr, what string) (admission, bool) {
 	client := clientKey(from)
 	host := hostKey(from)
 
@@ -231,17 +272,17 @@ func (s *Server) admit(req request, from net.Addr, what string) (admission, bool
 		s.log.Debug("tftp ignoring retransmitted request", "client", client, "type", what)
 		return admission{}, false
 	}
-	if len(s.transfers)+s.pending >= s.cfg.MaxConnections {
+	if len(s.transfers)+s.pending >= set.cfg.MaxConnections {
 		s.log.Debug("tftp rejected, server busy", "client", client, "type", what,
-			"maxConnections", s.cfg.MaxConnections)
+			"maxConnections", set.cfg.MaxConnections)
 		s.sendLocked(from, encodeError(errNotDefined, "Server busy"))
 		return admission{}, false
 	}
 	// A single host must not be able to take every slot, otherwise one client
 	// that never answers starves everybody else.
-	if s.hostTransfers[host] >= s.cfg.MaxConnectionsPerHost {
+	if s.hostTransfers[host] >= set.cfg.MaxConnectionsPerHost {
 		s.log.Debug("tftp rejected, host busy", "client", client, "type", what,
-			"maxConnectionsPerHost", s.cfg.MaxConnectionsPerHost)
+			"maxConnectionsPerHost", set.cfg.MaxConnectionsPerHost)
 		s.sendLocked(from, encodeError(errNotDefined, "Server busy"))
 		return admission{}, false
 	}
@@ -289,12 +330,12 @@ func (s *Server) ActiveTransfers() int {
 	return len(s.transfers)
 }
 
-func (s *Server) handleRead(ctx context.Context, req request, from net.Addr) {
-	if !s.cfg.AllowRead {
+func (s *Server) handleRead(ctx context.Context, set *settings, req request, from net.Addr) {
+	if !set.cfg.AllowRead {
 		s.sendTo(from, encodeError(errAccessViolation, "Access violation"))
 		return
 	}
-	slot, ok := s.admit(req, from, "RRQ")
+	slot, ok := s.admit(set, req, from, "RRQ")
 	if !ok {
 		return
 	}
@@ -321,15 +362,15 @@ func (s *Server) handleRead(ctx context.Context, req request, from net.Addr) {
 
 	s.log.Debug("tftp serving file", "client", slot.client,
 		"file", sanitize(req.filename), "size", info.Size())
-	s.startRead(ctx, slot, req, from, file, info.Size())
+	s.startRead(ctx, set, slot, req, from, file, info.Size())
 }
 
-func (s *Server) handleWrite(ctx context.Context, req request, from net.Addr) {
-	if !s.cfg.AllowWrite {
+func (s *Server) handleWrite(ctx context.Context, set *settings, req request, from net.Addr) {
+	if !set.cfg.AllowWrite {
 		s.sendTo(from, encodeError(errAccessViolation, "Access violation"))
 		return
 	}
-	slot, ok := s.admit(req, from, "WRQ")
+	slot, ok := s.admit(set, req, from, "WRQ")
 	if !ok {
 		return
 	}
@@ -340,10 +381,10 @@ func (s *Server) handleWrite(ctx context.Context, req request, from net.Addr) {
 
 	// A client that announces its size upfront can be turned away before a
 	// single byte reaches the disk.
-	if s.cfg.MaxFileSize > 0 {
+	if set.cfg.MaxFileSize > 0 {
 		if value, present := req.option("tsize"); present {
-			if announced, valid := parseNumericOption(value, true); valid && announced > s.cfg.MaxFileSize {
-				fail(errDiskFull, fmt.Sprintf("File exceeds the maximum of %d bytes", s.cfg.MaxFileSize))
+			if announced, valid := parseNumericOption(value, true); valid && announced > set.cfg.MaxFileSize {
+				fail(errDiskFull, fmt.Sprintf("File exceeds the maximum of %d bytes", set.cfg.MaxFileSize))
 				return
 			}
 		}
@@ -354,14 +395,14 @@ func (s *Server) handleWrite(ctx context.Context, req request, from net.Addr) {
 		fail(errAccessViolation, "Access violation")
 		return
 	}
-	if _, err := os.Stat(target.Path); err == nil && !s.cfg.AllowOverwrite {
+	if _, err := os.Stat(target.Path); err == nil && !set.cfg.AllowOverwrite {
 		fail(errFileExists, "File already exists")
 		return
 	}
 
 	dir := filepath.Dir(target.Path)
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		if !s.cfg.AllowCreateDirectory {
+		if !set.cfg.AllowCreateDirectory {
 			fail(errAccessViolation, "Access violation")
 			return
 		}
@@ -380,7 +421,7 @@ func (s *Server) handleWrite(ctx context.Context, req request, from net.Addr) {
 	}
 
 	s.log.Debug("tftp accepting write", "client", slot.client, "file", sanitize(req.filename))
-	s.startWrite(ctx, slot, req, from, file)
+	s.startWrite(ctx, set, slot, req, from, file)
 }
 
 // transferSocket opens the ephemeral socket a transfer runs on.

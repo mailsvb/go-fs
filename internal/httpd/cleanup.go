@@ -15,7 +15,7 @@ const cleanupInterval = time.Hour
 // the one thing in the server that deletes without a client having asked, so
 // every removal is reported.
 func (s *Server) runCleanup(ctx context.Context) {
-	if len(s.cfg.Cleanup) == 0 {
+	if len(s.settings().cfg.Cleanup) == 0 {
 		return
 	}
 
@@ -34,7 +34,7 @@ func (s *Server) runCleanup(ctx context.Context) {
 
 // cleanupOnce sweeps every configured folder once.
 func (s *Server) cleanupOnce() {
-	for _, entry := range s.cfg.Cleanup {
+	for _, entry := range s.settings().cfg.Cleanup {
 		target := s.root.Resolve("/", entry.Path)
 		if !target.Valid {
 			s.log.Error("http cleanup path is outside the served folder", "path", entry.Path)

@@ -16,11 +16,14 @@ import (
 // throttled by however fast the file system takes the data.
 type writeTransfer struct {
 	server *Server
-	slot   admission
-	req    request
-	peer   net.Addr
-	conn   *net.UDPConn
-	log    *slog.Logger
+	// set is the snapshot this transfer started under, so a reload halfway
+	// through does not change the rules it runs by.
+	set  *settings
+	slot admission
+	req  request
+	peer net.Addr
+	conn *net.UDPConn
+	log  *slog.Logger
 
 	file *os.File
 	sink io.Writer
@@ -36,7 +39,7 @@ type writeTransfer struct {
 	bytesWritten  int64
 }
 
-func (s *Server) startWrite(ctx context.Context, slot admission, req request, from net.Addr, file *os.File) {
+func (s *Server) startWrite(ctx context.Context, set *settings, slot admission, req request, from net.Addr, file *os.File) {
 	conn, err := s.transferSocket()
 	if err != nil {
 		s.log.Error("tftp cannot open a transfer socket", "error", err)
@@ -46,9 +49,10 @@ func (s *Server) startWrite(ctx context.Context, slot admission, req request, fr
 		return
 	}
 
-	opts := negotiate(req, s.limits, false, -1)
+	opts := negotiate(req, set.limits, false, -1)
 	t := &writeTransfer{
 		server:        s,
+		set:           set,
 		slot:          slot,
 		req:           req,
 		peer:          from,
@@ -57,7 +61,7 @@ func (s *Server) startWrite(ctx context.Context, slot admission, req request, fr
 		file:          file,
 		blockSize:     opts.blockSize,
 		timeout:       opts.timeout,
-		retries:       s.limits.retries,
+		retries:       set.limits.retries,
 		acked:         opts.acked,
 		expectedBlock: 1,
 	}
@@ -83,8 +87,8 @@ func (t *writeTransfer) run(ctx context.Context) {
 	defer t.cleanup()
 
 	hardDeadline := noDeadline
-	if t.server.cfg.TransferTimeout > 0 {
-		hardDeadline = time.Now().Add(time.Duration(t.server.cfg.TransferTimeout) * time.Second)
+	if t.set.cfg.TransferTimeout > 0 {
+		hardDeadline = time.Now().Add(time.Duration(t.set.cfg.TransferTimeout) * time.Second)
 	}
 	go func() {
 		<-ctx.Done()
@@ -124,7 +128,7 @@ func (t *writeTransfer) run(ctx context.Context) {
 			continue
 		}
 
-		limit := t.server.cfg.MaxFileSize
+		limit := t.set.cfg.MaxFileSize
 		if limit > 0 && t.bytesWritten+int64(len(data)) > limit {
 			t.log.Debug("tftp write exceeds the maximum size", "maxFileSize", limit)
 			t.send(encodeError(errDiskFull, fmt.Sprintf("File exceeds the maximum of %d bytes", limit)))

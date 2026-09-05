@@ -17,23 +17,26 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
 	"go-fs/internal/config"
+	"go-fs/internal/service"
 	"go-fs/internal/vfs"
 )
 
 // Server accepts SSH connections and serves the SFTP subsystem on them.
 type Server struct {
-	cfg  config.SFTP
-	root *vfs.Root
-	log  *slog.Logger
+	// snapshot holds what a reload may swap. Every read goes through
+	// settings(), so a live session keeps what it started under.
+	snapshot atomic.Pointer[settings]
+	root     *vfs.Root
+	log      *slog.Logger
 
-	ssh   *ssh.ServerConfig
-	users map[string]*account
+	ssh *ssh.ServerConfig
 
 	listener net.Listener
 
@@ -47,6 +50,33 @@ type Server struct {
 // New prepares a server. The base folder, and any per user base folder, has to
 // exist; every authorized key has to parse, so that a typo in one is reported
 // at startup rather than silently never matching.
+// settings is the part of the server a reload can replace.
+type settings struct {
+	cfg   config.SFTP
+	users map[string]*account
+}
+
+func (s *Server) settings() *settings {
+	return s.snapshot.Load()
+}
+
+// Reload swaps the accounts and the limits. The port, the folder and the host
+// key cannot change under a running listener, so those report ErrNeedsRestart.
+func (s *Server) Reload(cfg config.SFTP) error {
+	current := s.settings().cfg
+	if cfg.Enabled != current.Enabled || cfg.Port != current.Port ||
+		cfg.Basefolder != current.Basefolder || cfg.HostKey != current.HostKey {
+		return service.ErrNeedsRestart
+	}
+	users, err := buildAccounts(cfg, s.root)
+	if err != nil {
+		// a broken account leaves the running one in place
+		return err
+	}
+	s.snapshot.Store(&settings{cfg: cfg, users: users})
+	return nil
+}
+
 func New(cfg config.SFTP, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
@@ -64,12 +94,11 @@ func New(cfg config.SFTP, logger *slog.Logger) (*Server, error) {
 	}
 
 	server := &Server{
-		cfg:   cfg,
 		root:  root,
 		log:   logger,
-		users: users,
 		conns: make(map[net.Conn]struct{}),
 	}
+	server.snapshot.Store(&settings{cfg: cfg, users: users})
 	server.ssh = &ssh.ServerConfig{
 		PasswordCallback:  server.authenticatePassword,
 		PublicKeyCallback: server.authenticatePublicKey,
@@ -81,7 +110,7 @@ func New(cfg config.SFTP, logger *slog.Logger) (*Server, error) {
 
 // Start binds the listener and serves until ctx is cancelled.
 func (s *Server) Start(ctx context.Context) error {
-	listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(s.cfg.Port)))
+	listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(s.settings().cfg.Port)))
 	if err != nil {
 		return err
 	}
@@ -158,10 +187,10 @@ func (s *Server) accept(ctx context.Context) {
 			_ = raw.Close()
 			return
 		}
-		if len(s.conns) >= s.cfg.MaxConnections {
+		if len(s.conns) >= s.settings().cfg.MaxConnections {
 			s.mu.Unlock()
 			s.log.Debug("sftp connection refused, too many connections",
-				"maxConnections", s.cfg.MaxConnections)
+				"maxConnections", s.settings().cfg.MaxConnections)
 			_ = raw.Close()
 			continue
 		}
@@ -187,9 +216,13 @@ func (s *Server) serve(raw net.Conn) {
 	remote := raw.RemoteAddr().String()
 	log := s.log.With("client", remote)
 
+	// one snapshot for this connection, so a reload does not change the rules
+	// under a live session
+	set := s.settings()
+
 	conn := raw
-	if s.cfg.IdleTimeout > 0 {
-		conn = &idleConn{Conn: raw, timeout: time.Duration(s.cfg.IdleTimeout) * time.Second}
+	if set.cfg.IdleTimeout > 0 {
+		conn = &idleConn{Conn: raw, timeout: time.Duration(set.cfg.IdleTimeout) * time.Second}
 	}
 
 	handshake, chans, reqs, err := ssh.NewServerConn(conn, s.ssh)
@@ -201,7 +234,7 @@ func (s *Server) serve(raw net.Conn) {
 	}
 	defer func() { _ = handshake.Close() }()
 
-	user := s.account(handshake.User())
+	user := set.users[handshake.User()]
 	if user == nil {
 		// the callbacks refuse an unknown name, so this cannot normally happen
 		log.Error("sftp session without an account", "user", handshake.User())

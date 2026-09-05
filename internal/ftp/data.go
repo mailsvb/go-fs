@@ -17,7 +17,7 @@ var (
 )
 
 func (c *conn) dataTimeout() time.Duration {
-	return time.Duration(c.server.cfg.DataTimeout) * time.Second
+	return time.Duration(c.set.cfg.DataTimeout) * time.Second
 }
 
 // closeData drops the passive listener and any connection waiting on it.
@@ -44,7 +44,7 @@ func (c *conn) listenPassive() (int, error) {
 	c.closeData()
 	c.mode = dataNone
 
-	listener, port, err := c.server.listenData()
+	listener, port, err := c.server.listenData(c.set)
 	if err != nil {
 		return 0, err
 	}
@@ -61,7 +61,7 @@ func (c *conn) listenPassive() (int, error) {
 			}
 			// Only the client that asked for the data channel may use it,
 			// otherwise a third party could read or inject transfer data.
-			if !c.server.cfg.AllowForeignDataConnection && !c.isSamePeer(hostOf(accepted.RemoteAddr())) {
+			if !c.set.cfg.AllowForeignDataConnection && !c.isSamePeer(hostOf(accepted.RemoteAddr())) {
 				c.log.Debug("ftp rejected data connection", "from", hostOf(accepted.RemoteAddr()))
 				_ = accepted.Close()
 				continue
@@ -163,7 +163,7 @@ func (c *conn) isDataTargetAllowed(address string, port int) bool {
 	if port < 1024 || port > 65535 {
 		return false
 	}
-	return c.server.cfg.AllowFtpBounce || c.isSamePeer(address)
+	return c.set.cfg.AllowFtpBounce || c.isSamePeer(address)
 }
 
 // cmdPort handles PORT.

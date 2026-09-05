@@ -67,7 +67,7 @@ func buildAccounts(cfg config.SFTP, serverRoot *vfs.Root) (map[string]*account, 
 }
 
 func (s *Server) account(name string) *account {
-	return s.users[name]
+	return s.settings().users[name]
 }
 
 var errDenied = errors.New("authentication failed")
@@ -81,7 +81,7 @@ func (s *Server) authenticatePassword(meta ssh.ConnMetadata, password []byte) (*
 		return &ssh.Permissions{}, nil
 	}
 	s.log.Debug("sftp authentication", "user", meta.User(), "method", "password", "success", false)
-	if delay := s.cfg.LoginFailureDelay; delay > 0 {
+	if delay := s.settings().cfg.LoginFailureDelay; delay > 0 {
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
 	return nil, errDenied

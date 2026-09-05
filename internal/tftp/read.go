@@ -15,11 +15,14 @@ import (
 // exchange of RFC 1350.
 type readTransfer struct {
 	server *Server
-	slot   admission
-	req    request
-	peer   net.Addr
-	conn   *net.UDPConn
-	log    *slog.Logger
+	// set is the snapshot this transfer started under, so a reload halfway
+	// through does not change the rules it runs by.
+	set  *settings
+	slot admission
+	req  request
+	peer net.Addr
+	conn *net.UDPConn
+	log  *slog.Logger
 
 	file io.Closer
 	src  io.Reader
@@ -47,7 +50,7 @@ type readTransfer struct {
 	streamEnded bool
 }
 
-func (s *Server) startRead(ctx context.Context, slot admission, req request, from net.Addr, file *os.File, size int64) {
+func (s *Server) startRead(ctx context.Context, set *settings, slot admission, req request, from net.Addr, file *os.File, size int64) {
 	conn, err := s.transferSocket()
 	if err != nil {
 		s.log.Error("tftp cannot open a transfer socket", "error", err)
@@ -57,9 +60,10 @@ func (s *Server) startRead(ctx context.Context, slot admission, req request, fro
 		return
 	}
 
-	opts := negotiate(req, s.limits, true, size)
+	opts := negotiate(req, set.limits, true, size)
 	t := &readTransfer{
 		server:     s,
+		set:        set,
 		slot:       slot,
 		req:        req,
 		peer:       from,
@@ -69,7 +73,7 @@ func (s *Server) startRead(ctx context.Context, slot admission, req request, fro
 		blockSize:  opts.blockSize,
 		windowSize: opts.windowSize,
 		timeout:    opts.timeout,
-		retries:    s.limits.retries,
+		retries:    set.limits.retries,
 		acked:      opts.acked,
 	}
 	if req.mode == modeNetascii {
@@ -93,8 +97,8 @@ func (t *readTransfer) run(ctx context.Context) {
 	defer t.cleanup()
 
 	hardDeadline := noDeadline
-	if t.server.cfg.TransferTimeout > 0 {
-		hardDeadline = time.Now().Add(time.Duration(t.server.cfg.TransferTimeout) * time.Second)
+	if t.set.cfg.TransferTimeout > 0 {
+		hardDeadline = time.Now().Add(time.Duration(t.set.cfg.TransferTimeout) * time.Second)
 	}
 	go func() {
 		<-ctx.Done()
