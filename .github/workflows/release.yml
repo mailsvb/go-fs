@@ -23,6 +23,21 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The released version is committed to the repository, not just baked
+      # into this run's binaries, so the code matches what was released.
+      - name: bump VERSION
+        run: |
+          echo -n "${{ inputs.version }}" > VERSION
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- VERSION; then
+            echo "VERSION is already ${{ inputs.version }}"
+          else
+            git add VERSION
+            git commit -m "Release ${{ inputs.version }}"
+            git push
+          fi
+
       - name: make release
         run: make release VERSION=${{ inputs.version }}
 
