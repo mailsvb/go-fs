@@ -42,6 +42,20 @@ func (s *logStore) all(message string) []entry {
 	return out
 }
 
+// matching finds records whose message contains a fragment, for the long ones
+// that are not worth repeating in full.
+func (s *logStore) matching(fragment string) []entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []entry
+	for _, e := range s.entries {
+		if strings.Contains(e.message, fragment) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // recorder is a slog handler that keeps records, including the attributes
 // added with With.
 type recorder struct {
@@ -137,7 +151,8 @@ func newServerWith(t *testing.T, tune func(*config.FTP), tuneTLS func(*config.FT
 	cfg.Basefolder = base
 	cfg.Port = 0
 	cfg.MaxConnections = 8
-	cfg.MinDataPort = reserveDataPorts(cfg.MaxConnections)
+	cfg.PassiveMinPort = reserveDataPorts(cfg.MaxConnections)
+	cfg.PassiveMaxPort = cfg.PassiveMinPort + cfg.MaxConnections
 	cfg.LoginFailureDelay = 0
 	cfg.Users = []config.User{fullUser("john")}
 	if tune != nil {
@@ -171,7 +186,7 @@ func newServerWith(t *testing.T, tune func(*config.FTP), tuneTLS func(*config.FT
 // dataPort is the first port of the passive range, which a passive transfer
 // takes when nothing else holds it.
 func (s *testServer) dataPort() int {
-	return s.settings().cfg.MinDataPort
+	return s.settings().cfg.PassiveMinPort
 }
 
 func (s *testServer) write(t *testing.T, name, content string) string {

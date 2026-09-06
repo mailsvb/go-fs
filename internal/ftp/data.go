@@ -86,10 +86,24 @@ func (c *conn) openData() (net.Conn, error) {
 	case dataActive:
 		c.log.Debug("ftp opening active data connection",
 			"address", c.activeHost, "port", c.activePort,
+			"sourcePort", c.set.cfg.ActiveSourcePort,
 			"secure", c.secure.get(), "protected", c.protected)
 		dialer := net.Dialer{Timeout: c.dataTimeout()}
+		if source := c.set.cfg.ActiveSourcePort; source != 0 {
+			// a nil IP is the wildcard of whichever family the target is in,
+			// so one setting serves an IPv4 and an IPv6 client alike
+			dialer.LocalAddr = &net.TCPAddr{Port: source}
+			dialer.Control = reuseAddr
+		}
 		dialed, err := dialer.Dial("tcp", net.JoinHostPort(c.activeHost, strconv.Itoa(c.activePort)))
 		if err != nil {
+			if source := c.set.cfg.ActiveSourcePort; source != 0 {
+				// naming the port matters here: a privileged one the process
+				// may not bind, or one another process holds, fails the dial
+				// for a reason that has nothing to do with the client
+				return nil, fmt.Errorf("%w from ftp.activeSourcePort %d: %w",
+					errDataConnection, source, err)
+			}
 			return nil, fmt.Errorf("%w: %w", errDataConnection, err)
 		}
 		return c.secureData(dialed), nil

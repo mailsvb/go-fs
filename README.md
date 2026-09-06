@@ -210,12 +210,45 @@ the file is at startup, so the page reports what `-check` would report and a
 configuration that could not start is never written. A file that cannot be
 written says so before anything is edited.
 
+### The FTP data channel
+
+FTP carries its data on a second connection, and which end opens it is the
+client's choice. Both are always served; what the configuration decides is the
+ports each one uses, which is what a firewall in front of the server has to be
+told.
+
+```toml
+[ftp]
+# passive (PASV, EPSV): the client connects in, on a port out of this range
+passiveMinPort = 1024
+passiveMaxPort = 1034
+# active (PORT, EPRT): the server connects out, from this port
+activeSourcePort = 0
+```
+
+**Passive** takes one port out of the range for the length of a transfer, so
+the range should hold at least `maxConnections` ports; a narrower one is
+allowed and warned about at startup, and a transfer that finds none free is
+refused rather than straying outside it. Open the whole range in the firewall.
+
+**Active** leaves from `activeSourcePort`. `0`, the default, lets the system
+pick an ephemeral port, which a firewall cannot name; `20` is the port RFC 959
+uses and what a firewall written for active FTP expects, though binding it on
+unix needs the privilege for ports below 1024. The socket asks for
+`SO_REUSEADDR`, so one fixed port still serves transfers running at the same
+time and back to back, which would otherwise collide with the last connection's
+`TIME_WAIT`.
+
+All three apply to the next transfer, so changing them — in the file or in the
+web interface — never drops a connection.
+
 ### Notable defaults
 
 | Key | Default | Why |
 |---|---|---|
 | `ftp.allowFtpBounce` | `false` | `PORT`/`EPRT` may only name the connected client, otherwise the server can reach third parties on its behalf (RFC 2577) |
 | `ftp.allowForeignDataConnection` | `false` | only the client that asked for a passive port may connect to it |
+| `ftp.activeSourcePort` | `0` | the system picks the port an active data connection leaves from, since a fixed one below 1024 needs privilege |
 | `ftp.idleTimeout` | `600` | an idle control connection does not hold a slot forever |
 | `ftp.loginFailureDelay` | `1` | a wrong password is answered after a second, which slows guessing |
 | `ftp.users[].allowUser*` | `false` | an account is granted only the rights its table lists |

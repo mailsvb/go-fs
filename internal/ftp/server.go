@@ -70,8 +70,28 @@ func (s *Server) Reload(cfg config.FTP, ftps config.FTPS) error {
 		// a broken account leaves the running one in place
 		return err
 	}
+	if cfg.PassiveMinPort != current.cfg.PassiveMinPort ||
+		cfg.PassiveMaxPort != current.cfg.PassiveMaxPort ||
+		cfg.MaxConnections != current.cfg.MaxConnections {
+		warnNarrowPassiveRange(cfg, s.log)
+	}
 	s.snapshot.Store(&settings{cfg: cfg, ftps: ftps})
 	return nil
+}
+
+// warnNarrowPassiveRange reports a passive range that cannot hold one port per
+// connection. It is a legitimate setup — it caps how many transfers run at
+// once — but also an easy mistake, so it is said out loud rather than left to
+// turn up as a transfer that finds no free port. It is checked on a reload too,
+// since the web interface is a way to narrow the range without a restart.
+func warnNarrowPassiveRange(cfg config.FTP, logger *slog.Logger) {
+	width := cfg.PassiveMaxPort - cfg.PassiveMinPort + 1
+	if width >= cfg.MaxConnections {
+		return
+	}
+	logger.Warn("ftp.passiveMinPort to ftp.passiveMaxPort holds fewer ports than "+
+		"ftp.maxConnections allows connections, so a passive transfer may find none free",
+		"ports", width, "maxConnections", cfg.MaxConnections)
 }
 
 // checkUserFolders reports a per user base folder that cannot be served.
@@ -102,6 +122,7 @@ func New(cfg config.FTP, ftps config.FTPS, logger *slog.Logger) (*Server, error)
 		conns: make(map[*conn]struct{}),
 	}
 	server.snapshot.Store(&settings{cfg: cfg, ftps: ftps})
+	warnNarrowPassiveRange(cfg, logger)
 	if ftps.Enabled {
 		server.tls, err = tlsconf.Build(ftps.Cert, ftps.Key, "ftps.cert", "ftps.key", logger)
 		if err != nil {
@@ -267,14 +288,14 @@ func (s *Server) unregister(c *conn) {
 // Binding the real listener directly leaves no window in which the port can be
 // taken by somebody else.
 func (s *Server) listenData(set *settings) (net.Listener, int, error) {
-	maxPort := min(set.cfg.MinDataPort+set.cfg.MaxConnections, 65535)
-	for port := set.cfg.MinDataPort; port <= maxPort; port++ {
+	for port := set.cfg.PassiveMinPort; port <= set.cfg.PassiveMaxPort; port++ {
 		listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(port)))
 		if err == nil {
 			return listener, port, nil
 		}
 	}
-	return nil, 0, errors.New("no free data port")
+	return nil, 0, fmt.Errorf("no free data port between ftp.passiveMinPort %d and "+
+		"ftp.passiveMaxPort %d", set.cfg.PassiveMinPort, set.cfg.PassiveMaxPort)
 }
 
 // normalizeAddress strips the IPv4 mapped IPv6 prefix, so addresses compare and

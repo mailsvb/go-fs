@@ -58,8 +58,21 @@ port = 21
 
 # maximum simultaneous control connections
 maxConnections = 10
-# first port of the passive data port range, which spans maxConnections ports
-minDataPort = 1024
+
+# The data channel, which is the part a firewall has to be told about. Which
+# mode is used is the client's choice, and both are always served.
+#
+# Passive (PASV, EPSV): the client connects to the server, on a port out of this
+# range. Open the whole range in the firewall; it should hold at least
+# maxConnections ports, since a transfer takes one for as long as it runs.
+passiveMinPort = 1024
+# last port of that range, inclusive
+passiveMaxPort = 1034
+# Active (PORT, EPRT): the server connects to the client, from this port. 0
+# lets the system pick one, which means a firewall cannot name it; 20 is the
+# port RFC 959 uses and what a firewall written for active FTP expects, but on
+# unix binding it needs the privilege for ports below 1024.
+activeSourcePort = 0
 # seconds an idle control connection is kept open, 0 disables
 idleTimeout = 600
 # seconds an idle data connection is kept open

@@ -160,8 +160,20 @@ type FTP struct {
 	Port       int    `toml:"port"`
 	Basefolder string `toml:"basefolder"`
 
-	MaxConnections   int `toml:"maxConnections"`
-	MinDataPort      int `toml:"minDataPort"`
+	MaxConnections int `toml:"maxConnections"`
+
+	// PassiveMinPort and PassiveMaxPort bound the ports a passive data
+	// connection is accepted on, which is the range a firewall in front of the
+	// server has to open. It should be at least as wide as MaxConnections,
+	// since a transfer holds one port for as long as it runs.
+	PassiveMinPort int `toml:"passiveMinPort"`
+	PassiveMaxPort int `toml:"passiveMaxPort"`
+	// ActiveSourcePort is the local port an active data connection is opened
+	// from, 0 to let the system pick one. RFC 959 uses 20, which is what a
+	// firewall written for active FTP expects; on unix a port below 1024 needs
+	// the privilege to bind it.
+	ActiveSourcePort int `toml:"activeSourcePort"`
+
 	IdleTimeout      int `toml:"idleTimeout"`
 	DataTimeout      int `toml:"dataTimeout"`
 	MaxCommandLength int `toml:"maxCommandLength"`
@@ -340,7 +352,9 @@ func Default() Config {
 			Enabled:           true,
 			Port:              21,
 			MaxConnections:    10,
-			MinDataPort:       1024,
+			PassiveMinPort:    1024,
+			PassiveMaxPort:    1034,
+			ActiveSourcePort:  0,
 			IdleTimeout:       600,
 			DataTimeout:       5,
 			MaxCommandLength:  4096,
@@ -585,11 +599,22 @@ func (c Config) validateFTP() error {
 	if f.MaxConnections < 1 {
 		return errors.New("ftp.maxConnections has to be at least 1")
 	}
-	if f.MinDataPort < 1 || f.MinDataPort > 65535 {
-		return fmt.Errorf("ftp.minDataPort %d is out of range", f.MinDataPort)
+	if err := checkPort("ftp.passiveMinPort", f.PassiveMinPort); err != nil {
+		return err
 	}
-	if f.MinDataPort+f.MaxConnections > 65535 {
-		return errors.New("ftp.minDataPort plus ftp.maxConnections exceeds the port range")
+	if err := checkPort("ftp.passiveMaxPort", f.PassiveMaxPort); err != nil {
+		return err
+	}
+	if f.PassiveMinPort > f.PassiveMaxPort {
+		return fmt.Errorf("ftp.passiveMinPort %d is above ftp.passiveMaxPort %d",
+			f.PassiveMinPort, f.PassiveMaxPort)
+	}
+	// 0 is the setting that leaves the source port to the system, so it is the
+	// one value outside the port range that means something here
+	if f.ActiveSourcePort != 0 {
+		if err := checkPort("ftp.activeSourcePort", f.ActiveSourcePort); err != nil {
+			return err
+		}
 	}
 	if f.MaxCommandLength < 16 {
 		return errors.New("ftp.maxCommandLength has to be at least 16")

@@ -38,8 +38,8 @@ basefolder = "{{folder}}"
 		t.Errorf("port = %d, want 2121", cfg.FTP.Port)
 	}
 	// everything not mentioned keeps its default
-	if cfg.FTP.MinDataPort != 1024 {
-		t.Errorf("minDataPort = %d, want the default 1024", cfg.FTP.MinDataPort)
+	if cfg.FTP.PassiveMinPort != 1024 {
+		t.Errorf("passiveMinPort = %d, want the default 1024", cfg.FTP.PassiveMinPort)
 	}
 	if cfg.FTP.IdleTimeout != 600 || cfg.FTP.MaxCommandLength != 4096 {
 		t.Errorf("timeouts lost their defaults: %+v", cfg.FTP)
@@ -138,7 +138,12 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"bad log format", func(c *Config) { c.Log.Format = "xml" }, "log.format"},
 		{"nothing enabled", func(c *Config) { c.FTP.Enabled = false; c.TFTP.Enabled = false }, "nothing to do"},
 		{"ftp port", func(c *Config) { c.FTP.Port = 0 }, "ftp.port"},
-		{"data port range", func(c *Config) { c.FTP.MinDataPort = 65530; c.FTP.MaxConnections = 100 }, "port range"},
+		{"passive range reversed", func(c *Config) {
+			c.FTP.PassiveMinPort = 50100
+			c.FTP.PassiveMaxPort = 50000
+		}, "is above ftp.passiveMaxPort"},
+		{"passive port out of range", func(c *Config) { c.FTP.PassiveMaxPort = 70000 }, "ftp.passiveMaxPort"},
+		{"active source port out of range", func(c *Config) { c.FTP.ActiveSourcePort = 70000 }, "ftp.activeSourcePort"},
 		{"missing basefolder", func(c *Config) { c.FTP.Basefolder = filepath.Join(folder, "nope") }, "ftp.basefolder"},
 		{"ftps port", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Port = 0 }, "ftps.port"},
 		{"half a tls pair", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Cert = "cert.pem" }, "together"},
@@ -233,7 +238,7 @@ func TestTemplateRoundTrips(t *testing.T) {
 
 	// the template has to state the defaults it documents
 	defaults := Default()
-	if cfg.FTP.Port != defaults.FTP.Port || cfg.FTP.MinDataPort != defaults.FTP.MinDataPort ||
+	if cfg.FTP.Port != defaults.FTP.Port || cfg.FTP.PassiveMinPort != defaults.FTP.PassiveMinPort ||
 		cfg.TFTP.MaxBlockSize != defaults.TFTP.MaxBlockSize || cfg.TFTP.MaxTimeout != defaults.TFTP.MaxTimeout {
 		t.Error("the template disagrees with the built-in defaults")
 	}
