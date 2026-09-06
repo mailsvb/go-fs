@@ -390,6 +390,43 @@ func TestAdminInterfaceCanStandAlone(t *testing.T) {
 	}
 }
 
+// The admin interface is served over TLS unless the file turns that off, which
+// is a default a plain bool can carry because Parse unmarshals onto it.
+func TestAdminInterfaceUsesHTTPSUnlessTurnedOff(t *testing.T) {
+	if !Default().General.AdminInterfaceUseHTTPS {
+		t.Error("the default has to be TLS")
+	}
+
+	kept, err := Parse([]byte("[general]\nadminInterfacePort = 10443\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !kept.General.AdminInterfaceUseHTTPS {
+		t.Error("a file that does not mention the key should keep TLS")
+	}
+
+	off, err := Parse([]byte("[general]\nadminInterfaceUseHttps = false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off.General.AdminInterfaceUseHTTPS {
+		t.Error("adminInterfaceUseHttps = false was not read")
+	}
+
+	// and plain HTTP is a valid configuration, not one to be refused
+	cfg := Default()
+	cfg.General.Basefolder = t.TempDir()
+	cfg.General.AdminInterfaceEnabled = true
+	cfg.General.AdminInterfaceUseHTTPS = false
+	cfg.General.AdminUsername = "admin"
+	cfg.General.AdminPassword = "secret"
+	cfg.FTP.Enabled = false
+	cfg.TFTP.Enabled = false
+	if err := cfg.Resolved().Validate(); err != nil {
+		t.Errorf("plain HTTP was refused: %v", err)
+	}
+}
+
 // TestParseLeavesTheFallbackAlone is what the admin interface depends on:
 // Parse says what the file says, and only Resolved hands the fallback out.
 func TestParseLeavesTheFallbackAlone(t *testing.T) {

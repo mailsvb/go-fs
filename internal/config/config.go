@@ -63,6 +63,12 @@ type General struct {
 	// this file; set it to an empty string to bind every interface.
 	AdminInterfaceAddress string `toml:"adminInterfaceAddress"`
 	AdminInterfacePort    int    `toml:"adminInterfacePort"`
+	// AdminInterfaceUseHTTPS serves the interface over TLS, which is what it
+	// does unless this is turned off. Turn it off only to put a proxy that
+	// terminates TLS in front of it: the page carries every password in the
+	// file, and Basic authentication sends the admin account with every
+	// request.
+	AdminInterfaceUseHTTPS bool `toml:"adminInterfaceUseHttps"`
 	// AdminUsername and AdminPassword are the single account of the web
 	// interface. Both have to be set for it to start.
 	AdminUsername string `toml:"adminUsername"`
@@ -339,10 +345,11 @@ type TFTP struct {
 func Default() Config {
 	return Config{
 		General: General{
-			ReloadConfig:          true,
-			ReloadInterval:        5,
-			AdminInterfaceAddress: "127.0.0.1",
-			AdminInterfacePort:    10443,
+			ReloadConfig:           true,
+			ReloadInterval:         5,
+			AdminInterfaceAddress:  "127.0.0.1",
+			AdminInterfacePort:     10443,
+			AdminInterfaceUseHTTPS: true,
 		},
 		Log: Log{
 			Level:  "info",

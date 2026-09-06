@@ -66,13 +66,15 @@ func (s *Server) settings() *settings {
 	return s.snapshot.Load()
 }
 
-// Reload swaps the credentials. The address, the port and the certificate
-// cannot change under a bound listener, so those report ErrNeedsRestart.
+// Reload swaps the credentials. The address, the port, the scheme and the
+// certificate cannot change under a bound listener, so those report
+// ErrNeedsRestart.
 func (s *Server) Reload(cfg config.General) error {
 	current := s.settings()
 	if cfg.AdminInterfaceEnabled != current.cfg.AdminInterfaceEnabled ||
 		cfg.AdminInterfaceAddress != current.cfg.AdminInterfaceAddress ||
 		cfg.AdminInterfacePort != current.cfg.AdminInterfacePort ||
+		cfg.AdminInterfaceUseHTTPS != current.cfg.AdminInterfaceUseHTTPS ||
 		cfg.AdminCert != current.cfg.AdminCert || cfg.AdminKey != current.cfg.AdminKey {
 		return service.ErrNeedsRestart
 	}
@@ -101,15 +103,15 @@ func New(cfg config.General, path string, logger *slog.Logger) (*Server, error) 
 	return server, nil
 }
 
-// Start binds the listener and serves until ctx is cancelled. The interface is
-// always served over TLS: the page carries every password in the file.
+// Start binds the listener and serves until ctx is cancelled.
+//
+// The interface is served over TLS unless general.adminInterfaceUseHttps was
+// turned off, which is for putting a proxy that terminates TLS in front of it.
+// The page carries every password in the file, so plain HTTP without such a
+// proxy is warned about rather than left to be noticed.
 func (s *Server) Start(ctx context.Context) error {
 	set := s.settings()
-	tlsConfig, err := tlsconf.Build(set.cfg.AdminCert, set.cfg.AdminKey,
-		"general.adminCert", "general.adminKey", s.log)
-	if err != nil {
-		return err
-	}
+	s.warnAboutTheTransport(set.cfg)
 
 	address := net.JoinHostPort(set.cfg.AdminInterfaceAddress,
 		strconv.Itoa(set.cfg.AdminInterfacePort))
@@ -117,8 +119,23 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.listener = tls.NewListener(raw, tlsConfig)
-	s.log.Info("admin interface listening", "address", listenAddress(raw), "port", listenPort(raw))
+
+	scheme := "http"
+	s.listener = raw
+	if set.cfg.AdminInterfaceUseHTTPS {
+		// built only when it is going to be used, so that a plain HTTP setup
+		// with no certificate on purpose is not warned about missing one
+		tlsConfig, err := tlsconf.Build(set.cfg.AdminCert, set.cfg.AdminKey,
+			"general.adminCert", "general.adminKey", s.log)
+		if err != nil {
+			_ = raw.Close()
+			return err
+		}
+		scheme = "https"
+		s.listener = tls.NewListener(raw, tlsConfig)
+	}
+	s.log.Info("admin interface listening", "scheme", scheme,
+		"address", listenAddress(raw), "port", listenPort(raw))
 
 	go func() {
 		<-ctx.Done()
@@ -134,6 +151,39 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+// warnAboutTheTransport says what turning TLS off costs, at the moment the
+// listener is bound.
+//
+// Plain HTTP is not refused: a proxy that terminates TLS is the reason the
+// setting exists, and it may well be on another host. What is worth saying is
+// that without such a proxy the admin account and every password on the page
+// cross the network in the clear.
+func (s *Server) warnAboutTheTransport(cfg config.General) {
+	if cfg.AdminInterfaceUseHTTPS {
+		return
+	}
+	if !isLoopback(cfg.AdminInterfaceAddress) {
+		s.log.Warn("the admin interface is served over plain HTTP on an address that is "+
+			"not the loopback one, so the admin account and every password on the page "+
+			"cross the network in the clear unless a proxy terminates TLS in front of it",
+			"address", cfg.AdminInterfaceAddress)
+	}
+	if cfg.AdminCert != "" || cfg.AdminKey != "" {
+		s.log.Warn("general.adminCert and general.adminKey are set but not used, " +
+			"because general.adminInterfaceUseHttps is off")
+	}
+}
+
+// isLoopback reports an address that only the host itself can reach. An empty
+// address binds every interface, so it is not one.
+func isLoopback(address string) bool {
+	if address == "" {
+		return false
+	}
+	parsed := net.ParseIP(address)
+	return parsed != nil && parsed.IsLoopback()
 }
 
 // Addr reports the bound address, which is useful when port 0 was asked for.

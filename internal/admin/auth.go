@@ -18,9 +18,11 @@ const failureDelay = time.Second
 
 // authenticate checks the single account of the interface.
 //
-// Basic is enough and Digest is not offered: there is one account, the listener
-// is always TLS, and Basic is what a browser and a fetch both send without
-// help. The comparison is constant time, as everywhere else.
+// Basic is enough and Digest is not offered: there is one account, and Basic is
+// what a browser and a fetch both send without help. It relies on the transport
+// to keep the password to itself, which the listener does unless
+// general.adminInterfaceUseHttps was turned off for a proxy that terminates TLS
+// in front of it instead. The comparison is constant time, as everywhere else.
 func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Request) bool {
 	name, password, ok := parseBasic(r.Header.Get("Authorization"))
 	if ok && secrets.Match(name, set.cfg.AdminUsername) &&

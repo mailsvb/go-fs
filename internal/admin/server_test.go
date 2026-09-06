@@ -287,6 +287,7 @@ func TestReload(t *testing.T) {
 	for name, change := range map[string]config.General{
 		"port":    withPort(cfg.General, 10444),
 		"address": withAddress(cfg.General, ""),
+		"scheme":  withPlainHTTP(cfg.General),
 	} {
 		if err := server.Reload(change); err != service.ErrNeedsRestart {
 			t.Errorf("changing the %s reported %v, want a restart", name, err)
@@ -301,6 +302,11 @@ func withPort(cfg config.General, port int) config.General {
 
 func withAddress(cfg config.General, address string) config.General {
 	cfg.AdminInterfaceAddress = address
+	return cfg
+}
+
+func withPlainHTTP(cfg config.General) config.General {
+	cfg.AdminInterfaceUseHTTPS = false
 	return cfg
 }
 
@@ -344,9 +350,9 @@ func TestWriteFollowsASymlink(t *testing.T) {
 	}
 }
 
-// TestStartServesOverTLS is the one test that binds a real listener: the
-// interface carries every password in the file, so it may never be served in
-// the clear.
+// TestStartServesOverTLS binds a real listener and checks the default: the
+// interface carries every password in the file, so it is served over TLS unless
+// that is deliberately turned off, which TestStartServesPlainHTTP covers.
 func TestStartServesOverTLS(t *testing.T) {
 	path := testConfig(t)
 	cfg, err := config.Load(path)
@@ -392,5 +398,57 @@ func TestStartServesOverTLS(t *testing.T) {
 	if plain.StatusCode != http.StatusBadRequest ||
 		!strings.Contains(string(body), "HTTPS server") {
 		t.Errorf("a plain request was answered %s: %s", plain.Status, body)
+	}
+}
+
+// TestStartServesPlainHTTP covers the other transport: with
+// adminInterfaceUseHttps off the same port answers plain HTTP, for a proxy that
+// terminates TLS in front of it, and speaks no TLS of its own.
+func TestStartServesPlainHTTP(t *testing.T) {
+	path := testConfig(t)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.General.AdminInterfacePort = 0
+	cfg.General.AdminInterfaceUseHTTPS = false
+
+	server, err := New(cfg.General, path, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := server.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Shutdown(context.Background())
+
+	address := server.Addr().String()
+	request, _ := http.NewRequest(http.MethodGet, "http://"+address+"/api/config", nil)
+	request.SetBasicAuth("admin", "secret")
+	answer, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer answer.Body.Close()
+	if answer.StatusCode != http.StatusOK {
+		t.Fatalf("the interface answered %s", answer.Status)
+	}
+
+	// the account is still required, the transport is all that changed
+	plain, err := http.Get("http://" + address + "/api/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, plain.Body)
+	plain.Body.Close()
+	if plain.StatusCode != http.StatusUnauthorized {
+		t.Errorf("an unauthenticated request answered %s", plain.Status)
+	}
+
+	// and there is no TLS on this port to speak to
+	if _, err := tls.Dial("tcp", address, &tls.Config{InsecureSkipVerify: true}); err == nil {
+		t.Error("the interface completed a TLS handshake although it serves plain HTTP")
 	}
 }

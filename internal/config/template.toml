@@ -29,13 +29,19 @@ adminInterfaceEnabled = false
 # through an ssh tunnel, or set this to "" to bind every interface.
 adminInterfaceAddress = "127.0.0.1"
 adminInterfacePort = 10443
+# Serve the interface over TLS. Turn it off only to put a proxy that terminates
+# TLS in front of it, which then listens on this port instead: with nothing in
+# front, the admin password and every password on the page cross the network in
+# the clear.
+adminInterfaceUseHttps = true
 # The single account of the interface. Both have to be set for it to start.
 adminUsername = "admin"
 adminPassword = ""
-# The interface is always served over TLS. These hold the certificate and its
-# key themselves, base64 of the PEM, the way hostkey below does; when both are
-# empty a self-signed certificate is generated at startup, which changes on
-# every restart and proves no identity. Produce a value with
+# The certificate the interface serves, for as long as it serves TLS. These hold
+# the certificate and its key themselves, base64 of the PEM, the way hostkey
+# below does; when both are empty a self-signed certificate is generated at
+# startup, which changes on every restart and proves no identity. Produce a
+# value with
 #   base64 < server.crt | tr -d "\n"
 # or press Upload in the web interface, which puts the file here for you.
 adminCert = ""

@@ -180,9 +180,14 @@ Three things to know before switching it on:
   in the file, so reach it through an SSH tunnel
   (`ssh -L 10443:127.0.0.1:10443 host`) or set `adminInterfaceAddress = ""` to
   bind every interface once you have thought about it.
-* **It is always served over TLS**, with a self-signed certificate generated at
+* **It is served over TLS**, with a self-signed certificate generated at
   startup unless `adminCert` and `adminKey` hold a pair. A browser will warn
-  about that certificate, and it is right to.
+  about that certificate, and it is right to. Set
+  `adminInterfaceUseHttps = false` to serve plain HTTP on the same port
+  instead, which is for putting a reverse proxy that terminates TLS in front of
+  it — with nothing in front, the admin password and every password on the page
+  cross the network in the clear, and the server says so at startup when the
+  address is not the loopback one.
 * **The file it edits holds every private key.** That is what makes the upload
   below possible, and it is a reason to keep the file at `chmod 600`.
 
