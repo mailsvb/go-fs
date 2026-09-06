@@ -150,7 +150,7 @@ func (c *conn) withData(opening string, work func(data net.Conn) (code, message 
 		return
 	}
 
-	_ = data.SetDeadline(time.Now().Add(dataDeadline))
+	data = c.boundTransfer(data)
 	c.beginTransfer(data)
 	code, message := work(data)
 	_ = data.Close()
@@ -164,9 +164,43 @@ func (c *conn) withData(opening string, work func(data net.Conn) (code, message 
 	c.reply(code, message)
 }
 
-// dataDeadline bounds a single transfer. It is generous, the data timeout only
-// covers establishing the connection.
-const dataDeadline = 24 * time.Hour
+// boundTransfer bounds a transfer by how long it may move nothing, rather than
+// by how long it may take. A flat deadline has to be generous enough for the
+// largest file anyone will ever fetch, which makes it useless against a client
+// that opens the data connection and then stops reading: that one would hold a
+// control slot until the deadline, and with maxConnections slots in total a
+// handful of them is the whole server. An idle bound costs a legitimate
+// transfer nothing, however long it runs, as long as it keeps moving.
+//
+// The wrapper costs the sendfile path a plaintext download would otherwise
+// take, since the deadline has to be refreshed between reads rather than once
+// around a copy the kernel makes on its own. That is the trade: one buffer copy
+// against a stalled client holding a connection slot for as long as it likes.
+func (c *conn) boundTransfer(data net.Conn) net.Conn {
+	timeout := time.Duration(c.set.cfg.TransferIdleTimeout) * time.Second
+	if timeout <= 0 {
+		_ = data.SetDeadline(time.Time{})
+		return data
+	}
+	return &idleData{Conn: data, timeout: timeout}
+}
+
+// idleData pushes the deadline forward on every read and write, so it measures
+// a stall rather than the length of the transfer.
+type idleData struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (d *idleData) Read(b []byte) (int, error) {
+	_ = d.Conn.SetReadDeadline(time.Now().Add(d.timeout))
+	return d.Conn.Read(b)
+}
+
+func (d *idleData) Write(b []byte) (int, error) {
+	_ = d.Conn.SetWriteDeadline(time.Now().Add(d.timeout))
+	return d.Conn.Write(b)
+}
 
 // isDataTargetAllowed reports whether an active data connection may be opened.
 //
@@ -248,8 +282,16 @@ func cmdPasv(c *conn, _ string) {
 		c.reply("501", "EPSV ALL in effect")
 		return
 	}
+	// A PASV reply names the address the client should connect back to. That
+	// is the address the control connection arrived on, unless something
+	// translates in between and ftp.passiveAddress says what clients see.
+	advertised := c.set.cfg.PassiveAddress
+	if advertised == "" {
+		advertised = c.localAddr
+	}
 	// PASV can only name an IPv4 address, an IPv6 client has to use EPSV
-	if net.ParseIP(c.localAddr) == nil || net.ParseIP(c.localAddr).To4() == nil {
+	ip := net.ParseIP(advertised)
+	if ip == nil || ip.To4() == nil {
 		c.reply("522", "Network protocol not supported, use (2)")
 		return
 	}
@@ -259,7 +301,7 @@ func cmdPasv(c *conn, _ string) {
 		return
 	}
 	c.log.Debug("ftp listening for a data connection", "port", port)
-	octets := strings.ReplaceAll(c.localAddr, ".", ",")
+	octets := strings.ReplaceAll(ip.To4().String(), ".", ",")
 	c.reply("227", fmt.Sprintf("Entering passive mode (%s,%d,%d)", octets, port/256, port%256))
 }
 

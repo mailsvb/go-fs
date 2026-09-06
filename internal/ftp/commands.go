@@ -63,9 +63,9 @@ func init() {
 		"XCUP": cmdCdup,
 		"SIZE": cmdSize,
 		"DELE": cmdDele,
-		"RMD":  cmdRmd,
-		"RMDA": cmdRmd,
-		"XRMD": cmdRmd,
+		"RMD":  cmdRmd(false),
+		"RMDA": cmdRmd(true),
+		"XRMD": cmdRmd(false),
 		"MKD":  cmdMkd,
 		"XMKD": cmdMkd,
 		"LIST": cmdList(formatLIST),
@@ -126,6 +126,14 @@ func cmdProt(c *conn, arg string) {
 	}
 	switch arg {
 	case "C", "P":
+		// PROT P promises the data connection is protected. Answering 200 on a
+		// plaintext control connection would promise exactly what this cannot
+		// then deliver, and the client would send its data in the clear
+		// believing otherwise.
+		if arg == "P" && (!c.secure.get() || c.server.tls == nil) {
+			c.reply("534", "Protection level P needs a secure control connection")
+			return
+		}
 		c.protected = arg == "P"
 		c.reply("200", "Protection level is "+arg)
 	default:
@@ -233,21 +241,51 @@ func cmdDele(c *conn, arg string) {
 	c.reply("550", "File not found")
 }
 
-func cmdRmd(c *conn, arg string) {
-	target := c.root.Resolve(c.cwd, arg)
-	if !c.perms.FolderDelete || !target.Valid {
-		c.reply("550", "Permission denied")
-		return
+// cmdRmd handles RMD and its aliases.
+//
+// RMD and XRMD remove an empty folder, which is what rmdir does and what a
+// client sending them expects. RMDA is the extension that removes a folder with
+// everything in it, so it also needs the right that removes files: an account
+// granted only allowUserFolderDelete may drop an empty folder, never a tree of
+// files it may not delete one by one.
+func cmdRmd(recursive bool) handler {
+	return func(c *conn, arg string) {
+		target := c.root.Resolve(c.cwd, arg)
+		// the base folder itself is not the client's to remove: it would take
+		// the served tree with it and leave every path invalid
+		if !c.perms.FolderDelete || !target.Valid || target.IsRoot() {
+			c.reply("550", "Permission denied")
+			return
+		}
+		if recursive && !c.perms.FileDelete {
+			c.reply("550", "Permission denied")
+			return
+		}
+		if info, err := os.Stat(target.Path); err != nil || !info.IsDir() {
+			c.reply("550", "Folder not found")
+			return
+		}
+		if !recursive {
+			entries, err := os.ReadDir(target.Path)
+			if err != nil {
+				c.reply("550", "Folder not found")
+				return
+			}
+			if len(entries) > 0 {
+				c.reply("550", "Folder is not empty")
+				return
+			}
+		}
+		remove := os.Remove
+		if recursive {
+			remove = os.RemoveAll
+		}
+		if err := remove(target.Path); err != nil {
+			c.reply("550", "Folder not found")
+			return
+		}
+		c.reply("250", "Folder deleted successfully")
 	}
-	if info, err := os.Stat(target.Path); err != nil || !info.IsDir() {
-		c.reply("550", "Folder not found")
-		return
-	}
-	if err := os.RemoveAll(target.Path); err != nil {
-		c.reply("550", "Folder not found")
-		return
-	}
-	c.reply("250", "Folder deleted successfully")
 }
 
 func cmdMkd(c *conn, arg string) {
@@ -317,9 +355,15 @@ func cmdStru(c *conn, arg string) {
 	c.reply("504", "Only file structure is supported")
 }
 
+// cmdRnfr handles RNFR. A rename creates one name and removes another, so it
+// takes both rights, which is the rule the SFTP server follows too.
 func cmdRnfr(c *conn, arg string) {
+	if !c.perms.FileCreate || !c.perms.FileDelete {
+		c.reply("550", "Permission denied")
+		return
+	}
 	target := c.root.Resolve(c.cwd, arg)
-	if target.Valid {
+	if target.Valid && !target.IsRoot() {
 		if info, err := os.Stat(target.Path); err == nil && info.Mode().IsRegular() {
 			c.renameFrom = target.Path
 			c.reply("350", "File exists")
@@ -330,8 +374,12 @@ func cmdRnfr(c *conn, arg string) {
 }
 
 func cmdRnto(c *conn, arg string) {
+	if !c.perms.FileCreate || !c.perms.FileDelete {
+		c.reply("550", "Permission denied")
+		return
+	}
 	target := c.root.Resolve(c.cwd, arg)
-	if c.renameFrom == "" || !target.Valid {
+	if c.renameFrom == "" || !target.Valid || target.IsRoot() {
 		c.reply("550", "File already exists")
 		return
 	}
@@ -457,7 +505,7 @@ func cmdSite(c *conn, arg string) {
 		return
 	}
 	target := c.root.Resolve(c.cwd, strings.TrimSpace(name))
-	if !target.Valid {
+	if !target.Valid || target.IsRoot() {
 		c.reply("550", "File does not exist")
 		return
 	}

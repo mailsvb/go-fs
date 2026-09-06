@@ -311,3 +311,67 @@ func TestAppendAndTruncate(t *testing.T) {
 		t.Errorf("after truncate the file holds %q", got)
 	}
 }
+
+// rmdir removes an empty folder, as it does everywhere else. A folder with
+// files in it is not emptied by an account that may not delete files, and the
+// base folder itself is never removed at all.
+func TestRmdirIsNotRecursive(t *testing.T) {
+	server := newServer(t, nil)
+	server.write(t, "full/inside.txt", "inside")
+	client := login(t, server)
+
+	if err := client.RemoveDirectory("/full"); err == nil {
+		t.Error("removing a folder with a file in it has to fail")
+	}
+	if got := server.read(t, "full/inside.txt"); got != "inside" {
+		t.Errorf("the file inside holds %q", got)
+	}
+
+	if err := client.RemoveDirectory("/"); err == nil {
+		t.Error("removing the base folder has to fail")
+	}
+	if _, err := os.Stat(server.base); err != nil {
+		t.Fatalf("the base folder is gone: %v", err)
+	}
+
+	if err := client.Mkdir("/empty"); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	if err := client.RemoveDirectory("/empty"); err != nil {
+		t.Errorf("removing an empty folder: %v", err)
+	}
+}
+
+// An account is resolved per request, so a right taken away by a reload applies
+// to the next request an open session makes, and an account that is gone can do
+// nothing at all.
+func TestReloadReachesALiveSession(t *testing.T) {
+	server := newServer(t, nil)
+	server.write(t, "hello.txt", "hello")
+	client := login(t, server)
+
+	if _, err := client.Open("/hello.txt"); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	no := false
+	next := server.settings().cfg
+	user := fullUser("john", "doe")
+	user.AllowUserFileRetrieve = &no
+	next.Users = []config.User{user}
+	if err := server.Reload(next); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if _, err := client.Open("/hello.txt"); err == nil {
+		t.Error("the right was taken away, the open session has to feel it")
+	}
+
+	// and an account that is no longer configured can do nothing
+	next.Users = []config.User{fullUser("someone else", "doe")}
+	if err := server.Reload(next); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if _, err := client.ReadDir("/"); err == nil {
+		t.Error("the account is gone, its session has to be refused")
+	}
+}

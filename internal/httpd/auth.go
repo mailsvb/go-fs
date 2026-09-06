@@ -1,6 +1,7 @@
 package httpd
 
 import (
+	"crypto/hmac"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,12 +10,14 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"go-fs/internal/config"
 	"go-fs/internal/secrets"
+	"go-fs/internal/vfs"
 )
 
 // account is one resolved entry of http.users: its credentials, the paths it
@@ -33,8 +36,20 @@ type account struct {
 
 // allows reports whether this account may reach a normalized request path.
 func (a *account) allows(virtual string) bool {
-	for _, pattern := range a.paths {
-		if pattern.MatchString(virtual) {
+	return matchesPath(a.paths, virtual)
+}
+
+// matchesPath reports whether any of the patterns covers a request path.
+//
+// A folder is reached both as "/private" and as "/private/", and normalizing
+// strips the trailing slash, so both forms are tested. Otherwise the documented
+// "^/private/.*" would cover everything in the folder but not the listing of
+// the folder itself, which names every file in it — and an account scoped to
+// that pattern could read the files but not see the folder they are in.
+func matchesPath(patterns []*regexp.Regexp, virtual string) bool {
+	folder := vfs.AsFolder(virtual)
+	for _, pattern := range patterns {
+		if pattern.MatchString(virtual) || pattern.MatchString(folder) {
 			return true
 		}
 	}
@@ -43,7 +58,15 @@ func (a *account) allows(virtual string) bool {
 
 func buildAccounts(users []config.HTTPUser) ([]*account, error) {
 	accounts := make([]*account, 0, len(users))
+	seen := map[string]bool{}
 	for i, user := range users {
+		// a session names its account, and every request resolves that name
+		// again, so two entries with the same name would make which rights
+		// apply a matter of order
+		if seen[user.Username] {
+			return nil, fmt.Errorf("http.users[%d]: %q is configured twice", i, user.Username)
+		}
+		seen[user.Username] = true
 		resolved := &account{
 			name:       user.Username,
 			password:   user.Password,
@@ -78,7 +101,10 @@ type sessions struct {
 }
 
 type sessionEntry struct {
-	user    *account
+	// user is the account name rather than the account: what it may do is
+	// looked up again on every request, so a session can never outlive the
+	// rights behind it, nor the account itself.
+	user    string
 	expires time.Time
 }
 
@@ -87,7 +113,7 @@ func newSessions(lifetime time.Duration) *sessions {
 }
 
 // issue mints a token for an account.
-func (s *sessions) issue(user *account) (string, error) {
+func (s *sessions) issue(name string) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -97,23 +123,32 @@ func (s *sessions) issue(user *account) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.prune()
-	s.live[token] = &sessionEntry{user: user, expires: time.Now().Add(s.lifetime)}
+	s.live[token] = &sessionEntry{user: name, expires: time.Now().Add(s.lifetime)}
 	return token, nil
 }
 
-// lookup resolves a token, and reports nothing for one that has expired.
-func (s *sessions) lookup(token string) *account {
+// lookup resolves a token to the account name it was issued to, and reports
+// nothing for one that has expired.
+func (s *sessions) lookup(token string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	found, ok := s.live[token]
 	if !ok {
-		return nil
+		return "", false
 	}
 	if time.Now().After(found.expires) {
 		delete(s.live, token)
-		return nil
+		return "", false
 	}
-	return found.user
+	return found.user, true
+}
+
+// drop forgets a token, which is what happens to a session whose account is no
+// longer configured.
+func (s *sessions) drop(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.live, token)
 }
 
 // prune drops what has expired. The Node implementation never did, so its map
@@ -151,30 +186,49 @@ func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Requ
 	}
 
 	if cookie, err := r.Cookie(sessionCookie); err == nil {
-		if user := s.sessions.lookup(cookie.Value); user != nil {
-			return user, true
+		if name, live := s.sessions.lookup(cookie.Value); live {
+			// the session names the account and nothing more, so what it may do
+			// is whatever the account may do right now
+			if user := accountNamed(set.accounts, name); user != nil {
+				s.log.Debug("http session", "user", user.name, "address", addressOf(r))
+				return user, true
+			}
+			s.log.Info("http session dropped, the account is no longer configured",
+				"user", name, "address", addressOf(r))
+			s.sessions.drop(cookie.Value)
 		}
 	}
 
 	header := r.Header.Get("Authorization")
 	var user *account
+	stale := false
 	switch {
 	case strings.HasPrefix(header, "Digest "):
-		user = s.checkDigest(set, r, header)
+		user, stale = s.checkDigest(set, r, header)
 	case strings.HasPrefix(header, "Basic "):
 		user = s.checkBasic(set, header)
 	}
 
 	if user == nil {
-		s.challenge(set, w, r)
+		s.challenge(set, w, r, stale)
 		return nil, false
 	}
 
-	s.log.Info("http login", "user", user.name, "address", addressOf(r), "path", virtual)
+	s.log.Debug("http authenticated", "user", user.name, "address", addressOf(r), "path", virtual)
 	if user.cookie && r.Header.Get("X-Disable-Session") == "" {
 		s.setSession(set, w, r, user)
 	}
 	return user, true
+}
+
+// accountNamed finds a configured account by name.
+func accountNamed(accounts []*account, name string) *account {
+	for _, user := range accounts {
+		if user.name == name {
+			return user
+		}
+	}
+	return nil
 }
 
 // needsAuth decides whether credentials are required at all: because of the
@@ -185,21 +239,17 @@ func (s *Server) needsAuth(set *settings, method, virtual string) bool {
 			return true
 		}
 	}
-	for _, pattern := range set.protectedPaths {
-		if pattern.MatchString(virtual) {
-			return true
-		}
-	}
-	return false
+	return matchesPath(set.protectedPaths, virtual)
 }
 
 func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
-	token, err := s.sessions.issue(user)
+	token, err := s.sessions.issue(user.name)
 	if err != nil {
 		s.log.Error("http cannot create a session", "error", err)
 		return
 	}
-	s.log.Debug("http session created", "user", user.name, "path", user.cookiePath)
+	s.log.Info("http login", "user", user.name, "address", addressOf(r),
+		"path", user.cookiePath)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    token,
@@ -211,19 +261,67 @@ func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// nonceLifetime is how long a digest nonce is accepted for. It bounds how long
+// a captured Authorization header can be replayed; a client that still holds
+// the credentials answers the stale challenge without asking anyone.
+const nonceLifetime = 5 * time.Minute
+
+// newNonce issues a nonce that carries the time it was made and a signature
+// over it. Nothing has to be remembered: the timestamp says how old it is and
+// the signature is what stops a client writing its own.
+func (s *Server) newNonce() string {
+	issued := strconv.FormatInt(time.Now().Unix(), 10)
+	return issued + ":" + s.signNonce(issued)
+}
+
+func (s *Server) signNonce(issued string) string {
+	mac := hmac.New(sha256.New, s.nonceKey)
+	mac.Write([]byte(issued))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// nonceState reports whether a nonce was issued by this server, and whether it
+// is still young enough to accept. One this server did not issue is not
+// answered with a stale challenge, because there is nothing stale about it.
+func (s *Server) nonceState(nonce string) (fresh, ours bool) {
+	issued, signature, found := strings.Cut(nonce, ":")
+	if !found {
+		return false, false
+	}
+	expected := s.signNonce(issued)
+	if !hmac.Equal([]byte(signature), []byte(expected)) {
+		return false, false
+	}
+	seconds, err := strconv.ParseInt(issued, 10, 64)
+	if err != nil {
+		return false, false
+	}
+	age := time.Since(time.Unix(seconds, 0))
+	return age >= -time.Minute && age <= nonceLifetime, true
+}
+
 // challenge answers a request that could not be authenticated. Digest is what
 // is offered, as the Node implementation offers it, and Basic is accepted from
 // a client that sends it anyway.
-func (s *Server) challenge(set *settings, w http.ResponseWriter, r *http.Request) {
-	if delay := set.cfg.LoginFailureDelay; delay > 0 {
+//
+// stale says the credentials were right and only the nonce had aged out, which
+// is what lets a browser answer again by itself instead of asking for the
+// password once every nonceLifetime.
+func (s *Server) challenge(set *settings, w http.ResponseWriter, r *http.Request, stale bool) {
+	if delay := set.cfg.LoginFailureDelay; delay > 0 && !stale {
+		// a stale nonce is not a failed attempt, so it is not slowed down
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
 	opaque := make([]byte, 16)
 	_, _ = rand.Read(opaque)
-	w.Header().Set("WWW-Authenticate", fmt.Sprintf(
+	challenge := fmt.Sprintf(
 		`Digest realm=%q, qop="auth", opaque=%q, nonce=%q, algorithm=%s`,
-		set.cfg.Realm, hex.EncodeToString(opaque), s.nonce,
-		defaultAlgorithm(r.Header.Get("User-Agent"))))
+		set.cfg.Realm, hex.EncodeToString(opaque), s.newNonce(),
+		defaultAlgorithm(r.Header.Get("User-Agent")))
+	if stale {
+		challenge += ", stale=true"
+	}
+	w.Header().Set("WWW-Authenticate", challenge)
 	w.WriteHeader(http.StatusUnauthorized)
 }
 
@@ -242,8 +340,14 @@ func (s *Server) checkBasic(set *settings, header string) *account {
 }
 
 // checkDigest verifies an RFC 7616 header, including the RFC 2069 form that
-// carries no qop.
-func (s *Server) checkDigest(set *settings, r *http.Request, header string) *account {
+// carries no qop. The second result asks for a stale challenge: the credentials
+// were right and only the nonce had aged out.
+//
+// The response is computed over the uri the client puts in the header, so that
+// uri has to be the one being asked for. Without that check a header captured
+// for a public path would authorize any other path with the same method, which
+// is the whole point of taking it.
+func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*account, bool) {
 	params := parseDigest(header)
 	algorithm := params["algorithm"]
 	if algorithm == "" {
@@ -251,16 +355,20 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) *acc
 	}
 	digest, ok := hasher(algorithm)
 	if !ok {
-		return nil
+		return nil, false
 	}
-	if params["nonce"] != s.nonce {
-		// a stale nonce is a failed attempt; the challenge that follows
-		// carries the current one
-		return nil
+	// clients differ on whether the query string is part of it, so both forms
+	// are accepted; either way the path is bound to the response
+	uri := params["uri"]
+	if uri != r.URL.RequestURI() && uri != r.URL.Path {
+		return nil, false
+	}
+	fresh, ours := s.nonceState(params["nonce"])
+	if !ours {
+		return nil, false
 	}
 
 	name := params["username"]
-	uri := params["uri"]
 	ha2 := digest(r.Method + ":" + uri)
 
 	for _, user := range set.accounts {
@@ -278,10 +386,15 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) *acc
 			expected = digest(ha1 + ":" + params["nonce"] + ":" + ha2)
 		}
 		if secrets.Match(expected, params["response"]) {
-			return user
+			if !fresh {
+				// right credentials, old nonce: ask again with a new one
+				// rather than letting it through
+				return nil, true
+			}
+			return user, false
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // hasher returns the hash the named algorithm calls for. MD5 and SHA-256 are

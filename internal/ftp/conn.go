@@ -49,8 +49,10 @@ type conn struct {
 
 	writeMu sync.Mutex
 
-	// session state, owned by the command loop
-	authenticated bool
+	// session state, owned by the command loop. authenticated is the one the
+	// reader goroutine reads too, when it decides whether AUTH is still its to
+	// answer, so it is the one that has to be safe for two goroutines.
+	authenticated atomicBool
 	loggedIn      bool
 	username      string
 	perms         config.Permissions
@@ -211,7 +213,7 @@ func (c *conn) readLoop(commands chan<- command) {
 		case "AUTH":
 			// only reachable before authentication, so no transfer can be in
 			// flight and the reader may answer and upgrade on the spot
-			if !c.authenticated {
+			if !c.authenticated.get() {
 				c.handleAuth(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), name)))
 				continue
 			}
@@ -239,6 +241,16 @@ func (c *conn) readLine() (string, error) {
 			continue
 		}
 		if err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() && c.transferActive() {
+				// A client moving bytes on the data connection owes nothing on
+				// the control connection until it is done, so a transfer longer
+				// than idleTimeout must not be read as an idle session. What has
+				// been read is kept, so a command that straddles the deadline is
+				// not lost, and ABOR still reaches the transfer.
+				c.touch()
+				continue
+			}
 			return "", err
 		}
 		text := strings.TrimRight(string(line), "\r\n")
@@ -274,12 +286,19 @@ func (c *conn) dispatch(line string) {
 	c.log.Debug("ftp <", "command", logged)
 
 	table := authCommands
-	if !c.authenticated {
+	if !c.authenticated.get() {
 		table = preAuthCommands
+	} else if !c.refreshPermissions() {
+		// the account was taken out of the configuration while this session was
+		// open, so the session goes with it rather than keeping what it had
+		c.log.Info("ftp account is no longer configured, closing the session",
+			"user", c.username)
+		c.replyAndClose("421", "Account no longer available, closing control connection")
+		return
 	}
 	run, ok := table[name]
 	if !ok {
-		if c.authenticated {
+		if c.authenticated.get() {
 			c.reply("500", "Command not implemented")
 		} else {
 			c.replyAndClose("530", "Not logged in")
@@ -363,6 +382,13 @@ func (c *conn) beginTransfer(data net.Conn) context.Context {
 	c.transfer.dataConn = data
 	c.transfer.mu.Unlock()
 	return ctx
+}
+
+// transferActive reports whether a transfer is running on this connection.
+func (c *conn) transferActive() bool {
+	c.transfer.mu.Lock()
+	defer c.transfer.mu.Unlock()
+	return c.transfer.active
 }
 
 // endTransfer clears the transfer and reports whether it was aborted.

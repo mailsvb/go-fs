@@ -315,7 +315,9 @@ func TestSimpleCommands(t *testing.T) {
 		{"PROT P", "503 PBSZ missing"},
 		{"PBSZ 0", "200 PBSZ=0"},
 		{"PROT C", "200 Protection level is C"},
-		{"PROT P", "200 Protection level is P"},
+		// this control connection is plaintext, so there is no protection to
+		// promise the data connection
+		{"PROT P", "534 Protection level P needs a secure control connection"},
 		{"PROT Z", "534 Protection level must be C or P"},
 	}
 	for _, tc := range cases {
@@ -434,4 +436,26 @@ func TestProtectedDataConnection(t *testing.T) {
 	}
 	_ = data.Close()
 	c.expectCode("226")
+}
+
+// PROT P says the data connection is protected. Promising that on a plaintext
+// control connection would be a promise the server cannot keep, and the client
+// would send its data in the clear believing otherwise; over TLS it is the
+// truth and is accepted.
+func TestProtectionLevelNeedsASecureConnection(t *testing.T) {
+	server := newTLSServer(t, nil)
+
+	plain := connect(t, server)
+	plain.login()
+	plain.send("PBSZ 0")
+	plain.expect("200 PBSZ=0")
+	plain.send("PROT P")
+	plain.expect("534 Protection level P needs a secure control connection")
+
+	secure := connectTLS(t, server)
+	secure.login()
+	secure.send("PBSZ 0")
+	secure.expect("200 PBSZ=0")
+	secure.send("PROT P")
+	secure.expect("200 Protection level is P")
 }

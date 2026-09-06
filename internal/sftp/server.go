@@ -65,6 +65,7 @@ func (s *Server) settings() *settings {
 func (s *Server) Reload(cfg config.SFTP) error {
 	current := s.settings().cfg
 	if cfg.Enabled != current.Enabled || cfg.Port != current.Port ||
+		cfg.Address != current.Address ||
 		cfg.Basefolder != current.Basefolder || cfg.HostKey != current.HostKey {
 		return service.ErrNeedsRestart
 	}
@@ -110,7 +111,8 @@ func New(cfg config.SFTP, logger *slog.Logger) (*Server, error) {
 
 // Start binds the listener and serves until ctx is cancelled.
 func (s *Server) Start(ctx context.Context) error {
-	listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(s.settings().cfg.Port)))
+	set := s.settings().cfg
+	listener, err := net.Listen("tcp", net.JoinHostPort(set.Address, strconv.Itoa(set.Port)))
 	if err != nil {
 		return err
 	}
@@ -287,7 +289,7 @@ func (s *Server) serveSession(channel ssh.Channel, requests <-chan *ssh.Request,
 			continue
 		}
 
-		server := sftp.NewRequestServer(channel, s.handlers(user, log))
+		server := sftp.NewRequestServer(channel, s.handlers(user.name, log))
 		if err := server.Serve(); err != nil && !errors.Is(err, io.EOF) {
 			log.Debug("sftp session ended", "error", err)
 		}

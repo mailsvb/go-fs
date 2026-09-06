@@ -3,6 +3,7 @@ package ftp
 import (
 	"context"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -44,10 +45,13 @@ func TestLoginWithPassword(t *testing.T) {
 	c.send("PASS wrong")
 	c.expect("530 Username or password incorrect")
 
-	// and an unknown user never gets that far
+	// An unknown name is answered exactly as a known one, so that the reply
+	// does not say which accounts exist; it fails at PASS like a wrong password.
 	c = connect(t, server)
 	c.send("USER mallory")
-	c.expect("530 Not logged in")
+	c.expect("331 Password required for mallory")
+	c.send("PASS anything")
+	c.expect("530 Username or password incorrect")
 }
 
 // The user list is the only source of accounts: a name that is not listed
@@ -59,7 +63,9 @@ func TestUserListDefinesTheAccounts(t *testing.T) {
 
 	c := connect(t, server)
 	c.send("USER stranger")
-	c.expect("530 Not logged in")
+	c.expect("331 Password required for stranger")
+	c.send("PASS secret")
+	c.expect("530 Username or password incorrect")
 
 	c = connect(t, server)
 	c.send("USER jane")
@@ -75,7 +81,9 @@ func TestAnonymousLogin(t *testing.T) {
 
 	c := connect(t, server)
 	c.send("USER anonymous")
-	c.expect("530 Not logged in")
+	c.expect("331 Password required for anonymous")
+	c.send("PASS ")
+	c.expect("530 Username or password incorrect")
 
 	yes := true
 	allowed := newServer(t, func(cfg *config.FTP) {
@@ -303,4 +311,142 @@ func TestPerUserBasefolder(t *testing.T) {
 	if !strings.Contains(listing, "mine.txt") || strings.Contains(listing, "theirs.txt") {
 		t.Errorf("the user should see their own folder, got %q", listing)
 	}
+}
+
+// The base folder is not the client's to remove: RMD on it would take the
+// served tree with it and leave every path invalid.
+func TestRemoveTheRootIsRefused(t *testing.T) {
+	server := newServer(t, nil)
+	server.write(t, "keep.txt", "keep")
+	c := connect(t, server)
+	c.login()
+
+	for _, name := range []string{"/", ".", "/.."} {
+		c.send("RMD %s", name)
+		c.expect("550 Permission denied")
+	}
+	if _, err := os.Stat(server.base); err != nil {
+		t.Fatalf("the base folder is gone: %v", err)
+	}
+	if got := server.read(t, "keep.txt"); got != "keep" {
+		t.Errorf("the file below it holds %q", got)
+	}
+}
+
+// RMD removes an empty folder, the way rmdir does. A folder with files in it is
+// only removed by RMDA, which needs the right that removes files: an account
+// granted only allowUserFolderDelete must not be able to delete a tree of files
+// it may not delete one at a time.
+func TestRemoveFolderIsNotRecursive(t *testing.T) {
+	no := false
+	server := newServer(t, func(cfg *config.FTP) {
+		user := fullUser("john")
+		user.AllowUserFileDelete = &no
+		cfg.Users = []config.User{user}
+	})
+	server.write(t, "full/inside.txt", "inside")
+
+	c := connect(t, server)
+	c.login()
+	c.send("RMD full")
+	c.expect("550 Folder is not empty")
+	c.send("RMDA full")
+	c.expect("550 Permission denied")
+	if got := server.read(t, "full/inside.txt"); got != "inside" {
+		t.Errorf("the file inside holds %q", got)
+	}
+
+	// with the right to delete files, RMDA takes the tree
+	c.send("MKD empty")
+	c.expect("250 Folder created successfully")
+	c.send("RMD empty")
+	c.expect("250 Folder deleted successfully")
+}
+
+func TestRemoveFolderRecursivelyWithBothRights(t *testing.T) {
+	server := newServer(t, nil)
+	server.write(t, "full/inside.txt", "inside")
+
+	c := connect(t, server)
+	c.login()
+	c.send("RMDA full")
+	c.expect("250 Folder deleted successfully")
+	if _, err := os.Stat(filepath.Join(server.base, "full")); !os.IsNotExist(err) {
+		t.Error("the folder was not removed")
+	}
+}
+
+// A rename creates one name and removes another, so it takes both rights. An
+// account that lists none of them can look around and nothing more.
+func TestRenameNeedsCreateAndDelete(t *testing.T) {
+	no := false
+	for _, tc := range []struct {
+		name string
+		deny func(*config.User)
+	}{
+		{"without create", func(u *config.User) { u.AllowUserFileCreate = &no }},
+		{"without delete", func(u *config.User) { u.AllowUserFileDelete = &no }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newServer(t, func(cfg *config.FTP) {
+				user := fullUser("john")
+				tc.deny(&user)
+				cfg.Users = []config.User{user}
+			})
+			server.write(t, "mytestfile", "content")
+
+			c := connect(t, server)
+			c.login()
+			c.send("RNFR mytestfile")
+			c.expect("550 Permission denied")
+			c.send("RNTO renamed")
+			c.expect("550 Permission denied")
+			if got := server.read(t, "mytestfile"); got != "content" {
+				t.Errorf("the file holds %q", got)
+			}
+		})
+	}
+}
+
+// An account is checked again on every command, so a right taken away by a
+// reload reaches a session that is already open.
+func TestReloadReachesALiveSession(t *testing.T) {
+	server := newServer(t, nil)
+	server.write(t, "hello.txt", "hello")
+
+	c := connect(t, server)
+	c.login()
+	c.send("DELE hello.txt")
+	c.expect("250 File deleted successfully")
+	server.write(t, "hello.txt", "hello")
+
+	no := false
+	next := server.settings().cfg
+	user := fullUser("john")
+	user.AllowUserFileDelete = &no
+	next.Users = []config.User{user}
+	if err := server.Reload(next, server.settings().ftps); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	// the same connection, the same session, the new rights
+	c.send("DELE hello.txt")
+	c.expect("550 Permission denied")
+}
+
+// An account taken out of the configuration takes its session with it, rather
+// than keeping what it had until the client hangs up.
+func TestReloadEndsASessionWhoseAccountIsGone(t *testing.T) {
+	server := newServer(t, nil)
+	c := connect(t, server)
+	c.login()
+
+	next := server.settings().cfg
+	next.Users = []config.User{fullUser("someone else")}
+	if err := server.Reload(next, server.settings().ftps); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	c.send("PWD")
+	c.expect("421 Account no longer available, closing control connection")
 }

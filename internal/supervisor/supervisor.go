@@ -120,6 +120,10 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 	defer s.mu.Unlock()
 
 	current := env{cfg: cfg, path: s.path}
+	// a service that could not be brought up leaves the remembered
+	// configuration alone, so that the next reload sees a change and tries it
+	// again rather than deciding there is nothing to do
+	incomplete := false
 	for _, entry := range services {
 		server, running := s.running[entry.name]
 		wanted := entry.enabled(current)
@@ -130,6 +134,7 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 
 		case !running && wanted:
 			if err := s.start(ctx, entry, current); err != nil {
+				incomplete = true
 				s.log.Error("cannot start the server", "server", entry.name, "error", err)
 			}
 
@@ -147,19 +152,24 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 				_ = server.Shutdown(context.Background())
 				delete(s.running, entry.name)
 				if err := s.start(ctx, entry, current); err != nil {
-					s.log.Error("cannot restart the server", "server", entry.name, "error", err)
+					incomplete = true
+					s.log.Error("cannot restart the server, it will be tried again "+
+						"on the next reload", "server", entry.name, "error", err)
 					continue
 				}
 				s.log.Info("server restarted", "server", entry.name,
 					"reason", "a setting changed that needs the listener rebound")
 			default:
+				incomplete = true
 				s.log.Error("cannot reload the server, keeping the running configuration",
 					"server", entry.name, "error", err)
 			}
 		}
 	}
 
-	s.current = cfg
+	if !incomplete {
+		s.current = cfg
+	}
 	if len(s.running) == 0 {
 		return errors.New("no server is enabled, nothing to do")
 	}

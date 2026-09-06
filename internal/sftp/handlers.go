@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"sort"
 	"sync/atomic"
 
@@ -13,14 +14,32 @@ import (
 )
 
 // session is the state one authenticated client has while its SFTP subsystem
-// runs: the folder it sees, what it may do and where its transfers are logged.
+// runs: which account it is, and where its transfers are logged. The account
+// itself is looked up per request rather than held, see account below.
 type session struct {
-	user *account
-	log  *slog.Logger
+	server *Server
+	name   string
+	log    *slog.Logger
 }
 
-func (s *Server) handlers(user *account, log *slog.Logger) sftp.Handlers {
-	sess := &session{user: user, log: log}
+// account resolves the account this session belongs to against the
+// configuration as it stands right now.
+//
+// It is deliberately not held from the handshake: an account is checked again
+// on every request, so a right taken away by a reload applies to the next
+// request the client makes, and an account that was removed can do nothing at
+// all rather than keeping what it had until it disconnects.
+func (s *session) account() (*account, error) {
+	user := s.server.settings().users[s.name]
+	if user == nil {
+		s.log.Info("sftp account is no longer configured, refusing the request")
+		return nil, sftp.ErrSSHFxPermissionDenied
+	}
+	return user, nil
+}
+
+func (s *Server) handlers(name string, log *slog.Logger) sftp.Handlers {
+	sess := &session{server: s, name: name, log: log}
 	return sftp.Handlers{
 		FileGet:  sess,
 		FilePut:  sess,
@@ -33,10 +52,10 @@ func (s *Server) handlers(user *account, log *slog.Logger) sftp.Handlers {
 // so they are resolved against the root of the virtual filesystem; the same
 // vfs the FTP and TFTP servers use rejects ".." and symbolic links that leave
 // the base folder.
-func (s *session) resolve(path string) (vfs.Target, error) {
-	target := s.user.root.Resolve("/", path)
+func (s *session) resolve(user *account, clientPath string) (vfs.Target, error) {
+	target := user.root.Resolve("/", clientPath)
 	if !target.Valid {
-		s.log.Debug("sftp path refused", "path", path)
+		s.log.Debug("sftp path refused", "path", clientPath)
 		return target, sftp.ErrSSHFxPermissionDenied
 	}
 	return target, nil
@@ -44,10 +63,14 @@ func (s *session) resolve(path string) (vfs.Target, error) {
 
 // Fileread serves a read, which needs the retrieve right.
 func (s *session) Fileread(r *sftp.Request) (io.ReaderAt, error) {
-	if !s.user.perms.FileRetrieve {
+	user, err := s.account()
+	if err != nil {
+		return nil, err
+	}
+	if !user.perms.FileRetrieve {
 		return nil, sftp.ErrSSHFxPermissionDenied
 	}
-	target, err := s.resolve(r.Filepath)
+	target, err := s.resolve(user, r.Filepath)
 	if err != nil {
 		return nil, err
 	}
@@ -61,17 +84,21 @@ func (s *session) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 // Filewrite serves a write. A new file needs the create right and an existing
 // one the overwrite right, the same split the FTP STOR command makes.
 func (s *session) Filewrite(r *sftp.Request) (io.WriterAt, error) {
-	target, err := s.resolve(r.Filepath)
+	user, err := s.account()
+	if err != nil {
+		return nil, err
+	}
+	target, err := s.resolve(user, r.Filepath)
 	if err != nil {
 		return nil, err
 	}
 
 	_, statErr := os.Stat(target.Path)
 	exists := statErr == nil
-	if exists && !s.user.perms.FileOverwrite {
+	if exists && !user.perms.FileOverwrite {
 		return nil, sftp.ErrSSHFxPermissionDenied
 	}
-	if !exists && !s.user.perms.FileCreate {
+	if !exists && !user.perms.FileCreate {
 		return nil, sftp.ErrSSHFxPermissionDenied
 	}
 
@@ -107,14 +134,18 @@ func (s *session) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 // content. Each method needs the right that matches what it does, and a rename
 // needs both, because it creates one name and removes another.
 func (s *session) Filecmd(r *sftp.Request) error {
-	target, err := s.resolve(r.Filepath)
+	user, err := s.account()
+	if err != nil {
+		return err
+	}
+	target, err := s.resolve(user, r.Filepath)
 	if err != nil {
 		return err
 	}
 
 	switch r.Method {
 	case "Remove":
-		if !s.user.perms.FileDelete {
+		if !user.perms.FileDelete || target.IsRoot() {
 			return sftp.ErrSSHFxPermissionDenied
 		}
 		info, err := os.Stat(target.Path)
@@ -128,7 +159,9 @@ func (s *session) Filecmd(r *sftp.Request) error {
 		return os.Remove(target.Path)
 
 	case "Rmdir":
-		if !s.user.perms.FolderDelete {
+		// the base folder itself is not the client's to remove: it would take
+		// the served tree with it and leave every path invalid
+		if !user.perms.FolderDelete || target.IsRoot() {
 			return sftp.ErrSSHFxPermissionDenied
 		}
 		info, err := os.Stat(target.Path)
@@ -138,10 +171,12 @@ func (s *session) Filecmd(r *sftp.Request) error {
 		if !info.IsDir() {
 			return sftp.ErrSSHFxFailure
 		}
-		return os.RemoveAll(target.Path)
+		// rmdir removes an empty folder, here as everywhere else: a tree of
+		// files is only deleted by an account that may delete files, one by one
+		return os.Remove(target.Path)
 
 	case "Mkdir":
-		if !s.user.perms.FolderCreate {
+		if !user.perms.FolderCreate {
 			return sftp.ErrSSHFxPermissionDenied
 		}
 		if _, err := os.Stat(target.Path); err == nil {
@@ -150,12 +185,15 @@ func (s *session) Filecmd(r *sftp.Request) error {
 		return os.MkdirAll(target.Path, 0o755)
 
 	case "Rename", "PosixRename":
-		if !s.user.perms.FileCreate || !s.user.perms.FileDelete {
+		if !user.perms.FileCreate || !user.perms.FileDelete || target.IsRoot() {
 			return sftp.ErrSSHFxPermissionDenied
 		}
-		destination, err := s.resolve(r.Target)
+		destination, err := s.resolve(user, r.Target)
 		if err != nil {
 			return err
+		}
+		if destination.IsRoot() {
+			return sftp.ErrSSHFxPermissionDenied
 		}
 		if r.Method == "Rename" {
 			// plain rename must not clobber, POSIX rename may
@@ -168,7 +206,7 @@ func (s *session) Filecmd(r *sftp.Request) error {
 	case "Setstat", "Fsetstat":
 		// changing mode, times or size is a change to the file, so it needs
 		// the same right as MFMT and SITE CHMOD do over FTP
-		if !s.user.perms.FileOverwrite {
+		if !user.perms.FileOverwrite || target.IsRoot() {
 			return sftp.ErrSSHFxPermissionDenied
 		}
 		return s.setstat(target, r)
@@ -207,7 +245,11 @@ func (s *session) setstat(target vfs.Target, r *sftp.Request) error {
 // Filelist serves listing and stat, which every account may do, exactly as
 // LIST needs no right over FTP.
 func (s *session) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
-	target, err := s.resolve(r.Filepath)
+	user, err := s.account()
+	if err != nil {
+		return nil, err
+	}
+	target, err := s.resolve(user, r.Filepath)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +287,9 @@ func (s *session) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 		if err != nil {
 			return nil, err
 		}
-		resolved := s.user.root.Resolve("/", destination)
+		// a relative target is relative to the folder the link sits in; an
+		// absolute one is already a path in the served tree
+		resolved := user.root.Resolve(path.Dir(target.Virtual), destination)
 		if !resolved.Valid {
 			return nil, sftp.ErrSSHFxPermissionDenied
 		}

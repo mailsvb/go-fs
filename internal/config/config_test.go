@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -201,6 +202,40 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.HTTP.Basefolder = folder
 			c.HTTP.Cleanup = []Cleanup{{Keep: 3}}
 		}, "http.cleanup[0] has no path"},
+		{"ftp bind address", func(c *Config) { c.FTP.Address = "not-an-address" }, "ftp.address"},
+		{"ftp passive address", func(c *Config) { c.FTP.PassiveAddress = "2001:db8::1" }, "ftp.passiveAddress"},
+		{"ftp data timeout", func(c *Config) { c.FTP.DataTimeout = 0 }, "ftp.dataTimeout"},
+		{"ftp transfer idle timeout", func(c *Config) { c.FTP.TransferIdleTimeout = -1 }, "ftp.transferIdleTimeout"},
+		{"http bind address", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.Address = "nope"
+		}, "http.address"},
+		{"http session timeout", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.SessionTimeout = 0
+		}, "http.sessionTimeout"},
+		{"http cookie path", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.Users = []HTTPUser{{Username: "john", Password: "doe", CookiePath: "public"}}
+		}, "cookiePath"},
+		{"sftp bind address", func(c *Config) {
+			c.SFTP.Enabled = true
+			c.SFTP.Basefolder = folder
+			c.SFTP.Address = "nope"
+		}, "sftp.address"},
+		{"duplicate ftp account", func(c *Config) {
+			c.FTP.Users = []User{{Username: "john"}, {Username: "john"}}
+		}, "configured twice"},
+		{"duplicate http account", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.Users = []HTTPUser{
+				{Username: "john", Password: "a"}, {Username: "john", Password: "b"},
+			}
+		}, "configured twice"},
 		{"tftp type", func(c *Config) { c.TFTP.Type = "sctp" }, "tftp.type"},
 		{"tftp block size", func(c *Config) { c.TFTP.MaxBlockSize = 4 }, "tftp.maxBlockSize"},
 		{"tftp maxTimeout below timeout", func(c *Config) { c.TFTP.Timeout = 30; c.TFTP.MaxTimeout = 10 }, "maxTimeout"},
@@ -444,5 +479,52 @@ func TestParseLeavesTheFallbackAlone(t *testing.T) {
 	// the copy is not shared with the original
 	if cfg.FTP.Basefolder != "" {
 		t.Error("Resolved changed the configuration it was called on")
+	}
+}
+
+// A password out of this project's own documentation is a password anyone can
+// look up, so a configuration that still holds one says so before it serves.
+func TestDocumentedPasswordsAreReported(t *testing.T) {
+	cfg := Default()
+	cfg.FTP.Users = []User{{Username: "john", Password: "doe"}, {Username: "jane", Password: "chosen"}}
+	cfg.HTTP.Users = []HTTPUser{{Username: "max", Password: "mustermann"}}
+	cfg.General.AdminUsername = "admin"
+	cfg.General.AdminPassword = "chosen too"
+
+	found := cfg.ExampleAccounts()
+	if len(found) != 2 {
+		t.Fatalf("found %v, want the two documented ones", found)
+	}
+	if !strings.Contains(found[0], "john") || !strings.Contains(found[1], "max") {
+		t.Errorf("found %v", found)
+	}
+
+	// the shipped template has no live account at all, so it reports none
+	template, err := Parse(Template())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := template.ExampleAccounts(); len(got) != 0 {
+		t.Errorf("the shipped template still has a documented password: %v", got)
+	}
+	if len(template.FTP.Users) != 0 {
+		t.Errorf("the shipped template defines %d accounts, it should define none",
+			len(template.FTP.Users))
+	}
+}
+
+// go-fs.example.toml in the repository root is the same file the binary embeds
+// and -init writes, which is what the README says it is. Nothing copies one to
+// the other, so this is what stops them drifting apart — an example that still
+// held live accounts after the template stopped would be worse than no example
+// at all.
+func TestTheExampleFileIsTheTemplate(t *testing.T) {
+	example, err := os.ReadFile(filepath.Join("..", "..", "go-fs.example.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(example, Template()) {
+		t.Error("go-fs.example.toml and internal/config/template.toml have drifted apart; " +
+			"copy the template over the example")
 	}
 }

@@ -1,6 +1,7 @@
 package ftp
 
 import (
+	"context"
 	"io"
 	"net"
 	"regexp"
@@ -426,4 +427,81 @@ func TestTransferWithoutADataChannel(t *testing.T) {
 
 	c.send("RETR hello.txt")
 	c.expect("501 Command failed")
+}
+
+// A transfer in flight is blocked moving bytes over the data connection, which
+// closing the control connection does not reach. Shutdown has to abort it, or a
+// client that stops reading holds up the shutdown of the whole process and
+// every reload that has to rebind the listener.
+func TestShutdownAbortsARunningTransfer(t *testing.T) {
+	server := newServer(t, nil)
+	// large enough that the copy blocks once the socket buffers are full
+	server.write(t, "big.bin", strings.Repeat("x", 8<<20))
+
+	c := connect(t, server)
+	c.login()
+	data := c.passive(server)
+	defer func() { _ = data.Close() }()
+
+	c.send("RETR big.bin")
+	c.expectCode("150")
+
+	// read a little and then stop, leaving the server blocked in the copy
+	buf := make([]byte, 1024)
+	_ = data.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadFull(data, buf); err != nil {
+		t.Fatalf("reading the start of the transfer: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_ = server.Shutdown(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Shutdown did not return while a transfer was stalled")
+	}
+}
+
+// A transfer that runs longer than idleTimeout is not an idle session: the
+// client is busy on the data connection and owes nothing on the control one.
+// Before this, a download longer than the idle timeout finished and the session
+// was then closed with a 421 for having been "idle" throughout it.
+func TestATransferDoesNotTripTheIdleTimeout(t *testing.T) {
+	server := newServer(t, func(cfg *config.FTP) {
+		cfg.IdleTimeout = 1
+		cfg.TransferIdleTimeout = 30
+	})
+	// large enough that the server blocks writing it, so the transfer is still
+	// running while the control connection stays silent
+	server.write(t, "slow.bin", strings.Repeat("y", 8<<20))
+
+	c := connect(t, server)
+	c.login()
+	data := c.passive(server)
+
+	c.send("RETR slow.bin")
+	c.expectCode("150")
+
+	buf := make([]byte, 4096)
+	_ = data.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadFull(data, buf); err != nil {
+		t.Fatalf("reading the start of the transfer: %v", err)
+	}
+	// stay silent on the control connection for longer than idleTimeout while
+	// the transfer is still going
+	time.Sleep(2500 * time.Millisecond)
+
+	_ = data.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if _, err := io.Copy(io.Discard, data); err != nil {
+		t.Fatalf("draining the transfer: %v", err)
+	}
+	_ = data.Close()
+
+	// the transfer is answered, and the session it ran on is still there
+	c.expectCode("226")
+	c.send("NOOP")
+	c.expect("200 NOOP ok")
 }

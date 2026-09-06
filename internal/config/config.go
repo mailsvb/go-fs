@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/crypto/ssh"
@@ -162,8 +164,11 @@ type Permissions struct {
 type FTP struct {
 	// Enabled serves the plain control port. The TLS listener has its own
 	// switch in [ftps]; the rest of this section applies to both.
-	Enabled    bool   `toml:"enabled"`
-	Port       int    `toml:"port"`
+	Enabled bool `toml:"enabled"`
+	Port    int  `toml:"port"`
+	// Address is the interface the control ports and the passive data ports
+	// bind to. Empty binds every interface.
+	Address    string `toml:"address"`
 	Basefolder string `toml:"basefolder"`
 
 	MaxConnections int `toml:"maxConnections"`
@@ -179,10 +184,23 @@ type FTP struct {
 	// firewall written for active FTP expects; on unix a port below 1024 needs
 	// the privilege to bind it.
 	ActiveSourcePort int `toml:"activeSourcePort"`
+	// PassiveAddress is the address a PASV reply names, for a server behind
+	// NAT or in a container whose own address is not the one clients reach it
+	// at. Empty names the address the control connection arrived on, which is
+	// right whenever there is nothing translating in between. It has to be an
+	// IPv4 address, because that is all a PASV reply can carry; EPSV names no
+	// address at all and is unaffected.
+	PassiveAddress string `toml:"passiveAddress"`
 
-	IdleTimeout      int `toml:"idleTimeout"`
-	DataTimeout      int `toml:"dataTimeout"`
-	MaxCommandLength int `toml:"maxCommandLength"`
+	IdleTimeout int `toml:"idleTimeout"`
+	DataTimeout int `toml:"dataTimeout"`
+	// TransferIdleTimeout is how many seconds a running transfer may move
+	// nothing before it is dropped, 0 disables it. It bounds a transfer by how
+	// long it stalls rather than by how long it takes, so a download of any
+	// size finishes while a client that stops reading gives its slot back
+	// instead of holding one until it disconnects.
+	TransferIdleTimeout int `toml:"transferIdleTimeout"`
+	MaxCommandLength    int `toml:"maxCommandLength"`
 	// LoginFailureDelay is the delay in seconds before a wrong password is
 	// answered, which slows down guessing.
 	LoginFailureDelay int `toml:"loginFailureDelay"`
@@ -203,8 +221,10 @@ type FTP struct {
 // server. It has the shape of the FTP section: a base folder and a list of
 // accounts, with the same permission flags.
 type SFTP struct {
-	Enabled    bool   `toml:"enabled"`
-	Port       int    `toml:"port"`
+	Enabled bool `toml:"enabled"`
+	Port    int  `toml:"port"`
+	// Address is the interface the listener binds to. Empty binds every one.
+	Address    string `toml:"address"`
 	Basefolder string `toml:"basefolder"`
 
 	// HostKey is the SSH host key itself rather than a path to it, base64 of
@@ -237,8 +257,10 @@ type SFTP struct {
 type HTTP struct {
 	// Enabled serves the plain port. The TLS listener has its own switch in
 	// [https]; the rest of this section applies to both.
-	Enabled    bool   `toml:"enabled"`
-	Port       int    `toml:"port"`
+	Enabled bool `toml:"enabled"`
+	Port    int  `toml:"port"`
+	// Address is the interface both listeners bind to. Empty binds every one.
+	Address    string `toml:"address"`
 	Basefolder string `toml:"basefolder"`
 
 	// Realm is what clients are challenged with and, because it is hashed into
@@ -356,16 +378,17 @@ func Default() Config {
 			Format: "text",
 		},
 		FTP: FTP{
-			Enabled:           true,
-			Port:              21,
-			MaxConnections:    10,
-			PassiveMinPort:    1024,
-			PassiveMaxPort:    1034,
-			ActiveSourcePort:  0,
-			IdleTimeout:       600,
-			DataTimeout:       5,
-			MaxCommandLength:  4096,
-			LoginFailureDelay: 1,
+			Enabled:             true,
+			Port:                21,
+			MaxConnections:      10,
+			PassiveMinPort:      1024,
+			PassiveMaxPort:      1034,
+			ActiveSourcePort:    0,
+			IdleTimeout:         600,
+			DataTimeout:         5,
+			TransferIdleTimeout: 300,
+			MaxCommandLength:    4096,
+			LoginFailureDelay:   1,
 		},
 		FTPS: FTPS{
 			Port: 990,
@@ -473,6 +496,61 @@ func Save(path string, cfg Config) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
+// exampleSecrets are the passwords this project prints in its own README and
+// starter configuration. One of them in a live file is not a password at all:
+// it is on every page anyone reads before installing this.
+var exampleSecrets = map[string]bool{"doe": true, "mustermann": true}
+
+// ExampleAccounts names the accounts whose password is one of those, so that a
+// server never comes up quietly protected by a password anyone can look up. It
+// covers the servers that are switched off too, since the day they are switched
+// on is not the day anyone rereads the passwords.
+func (c Config) ExampleAccounts() []string {
+	var found []string
+	note := func(where, name string) {
+		found = append(found, fmt.Sprintf("%s %q", where, name))
+	}
+	for i, user := range c.FTP.Users {
+		if exampleSecrets[user.Password] {
+			note(fmt.Sprintf("ftp.users[%d]", i), user.Username)
+		}
+	}
+	for i, user := range c.SFTP.Users {
+		if exampleSecrets[user.Password] {
+			note(fmt.Sprintf("sftp.users[%d]", i), user.Username)
+		}
+	}
+	for i, user := range c.HTTP.Users {
+		if exampleSecrets[user.Password] {
+			note(fmt.Sprintf("http.users[%d]", i), user.Username)
+		}
+	}
+	if exampleSecrets[c.General.AdminPassword] {
+		note("general.adminPassword", c.General.AdminUsername)
+	}
+	return found
+}
+
+// LooseFilePermissions reports a configuration file that anyone but its owner
+// can read, and the mode it has. The file holds every password and every
+// private key in one place, so it deserves what a private key deserves. It is
+// reported rather than refused, since a container image with one owner and one
+// process is a legitimate reason not to care.
+//
+// Windows has no such bits to read: the mode the standard library reports there
+// is synthesised, so nothing is claimed about it.
+func LooseFilePermissions(path string) (os.FileMode, bool) {
+	if runtime.GOOS == "windows" {
+		return 0, false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, false
+	}
+	mode := info.Mode().Perm()
+	return mode, mode&0o077 != 0
+}
+
 // Validate reports configuration that cannot work.
 func (c Config) Validate() error {
 	switch c.Log.Level {
@@ -547,8 +625,15 @@ func (c Config) validateHTTP() error {
 		}
 	}
 	h := c.HTTP
+	if err := checkAddress("http.address", h.Address); err != nil {
+		return err
+	}
 	if h.MaxConnections < 1 {
 		return errors.New("http.maxConnections has to be at least 1")
+	}
+	// 0 would hand out cookies that have already expired
+	if h.SessionTimeout < 1 {
+		return errors.New("http.sessionTimeout has to be at least 1")
 	}
 	if h.MaxUploadSize < 0 {
 		return errors.New("http.maxUploadSize cannot be negative")
@@ -569,10 +654,17 @@ func (c Config) validateHTTP() error {
 			return fmt.Errorf("http.cleanup[%d].keep cannot be negative", i)
 		}
 	}
+	seen := map[string]bool{}
 	for i, user := range h.Users {
 		if user.Username == "" {
 			return fmt.Errorf("http.users[%d] has no username", i)
 		}
+		// an account is resolved by name on every request, so two entries with
+		// the same name would make which rights apply a matter of order
+		if seen[user.Username] {
+			return fmt.Errorf("http.users[%d]: %q is configured twice", i, user.Username)
+		}
+		seen[user.Username] = true
 		if user.Password == "" {
 			return fmt.Errorf("http.users[%d] %q has no password", i, user.Username)
 		}
@@ -580,6 +672,12 @@ func (c Config) validateHTTP() error {
 			if _, err := regexp.Compile(pattern); err != nil {
 				return fmt.Errorf("http.users[%d].paths[%d]: %w", i, k, err)
 			}
+		}
+		// a cookie path is a URL prefix; a browser silently drops a cookie
+		// whose path does not start at the root
+		if user.CookiePath != "" && !strings.HasPrefix(user.CookiePath, "/") {
+			return fmt.Errorf("http.users[%d].cookiePath %q has to start with a slash",
+				i, user.CookiePath)
 		}
 	}
 	return checkFolder("http.basefolder", h.Basefolder)
@@ -603,8 +701,19 @@ func (c Config) validateFTP() error {
 		}
 	}
 	f := c.FTP
+	if err := checkAddress("ftp.address", f.Address); err != nil {
+		return err
+	}
 	if f.MaxConnections < 1 {
 		return errors.New("ftp.maxConnections has to be at least 1")
+	}
+	// 0 would make every passive transfer fail: the wait for the data
+	// connection would time out before the client could open it
+	if f.DataTimeout < 1 {
+		return errors.New("ftp.dataTimeout has to be at least 1")
+	}
+	if f.TransferIdleTimeout < 0 {
+		return errors.New("ftp.transferIdleTimeout cannot be negative")
 	}
 	if err := checkPort("ftp.passiveMinPort", f.PassiveMinPort); err != nil {
 		return err
@@ -623,16 +732,30 @@ func (c Config) validateFTP() error {
 			return err
 		}
 	}
+	// a PASV reply carries four octets and nothing else, so the address it
+	// names has to be one that fits in them
+	if f.PassiveAddress != "" {
+		parsed := net.ParseIP(f.PassiveAddress)
+		if parsed == nil || parsed.To4() == nil {
+			return fmt.Errorf("ftp.passiveAddress %q is not an IPv4 address, "+
+				"which is the only kind a PASV reply can name", f.PassiveAddress)
+		}
+	}
 	if f.MaxCommandLength < 16 {
 		return errors.New("ftp.maxCommandLength has to be at least 16")
 	}
 	if err := checkFolder("ftp.basefolder", f.Basefolder); err != nil {
 		return err
 	}
+	seen := map[string]bool{}
 	for i, user := range f.Users {
 		if user.Username == "" {
 			return fmt.Errorf("ftp.users[%d] has no username", i)
 		}
+		if seen[user.Username] {
+			return fmt.Errorf("ftp.users[%d]: %q is configured twice", i, user.Username)
+		}
+		seen[user.Username] = true
 		if user.Basefolder != "" {
 			if err := checkFolder(fmt.Sprintf("ftp.users[%d].basefolder", i), user.Basefolder); err != nil {
 				return err
@@ -644,6 +767,9 @@ func (c Config) validateFTP() error {
 
 func (s SFTP) validate() error {
 	if err := checkPort("sftp.port", s.Port); err != nil {
+		return err
+	}
+	if err := checkAddress("sftp.address", s.Address); err != nil {
 		return err
 	}
 	if s.MaxConnections < 1 {
@@ -659,10 +785,15 @@ func (s SFTP) validate() error {
 	if err := checkFolder("sftp.basefolder", s.Basefolder); err != nil {
 		return err
 	}
+	seen := map[string]bool{}
 	for i, user := range s.Users {
 		if user.Username == "" {
 			return fmt.Errorf("sftp.users[%d] has no username", i)
 		}
+		if seen[user.Username] {
+			return fmt.Errorf("sftp.users[%d]: %q is configured twice", i, user.Username)
+		}
+		seen[user.Username] = true
 		if user.Basefolder != "" {
 			if err := checkFolder(fmt.Sprintf("sftp.users[%d].basefolder", i), user.Basefolder); err != nil {
 				return err
@@ -766,6 +897,18 @@ func checkPair(certName, cert, keyName, key string) error {
 	}
 	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
 		return fmt.Errorf("%s and %s: %w", certName, keyName, err)
+	}
+	return nil
+}
+
+// checkAddress reports an address that is not one this host could bind. An
+// empty address is every interface, which is the default everywhere.
+func checkAddress(name, address string) error {
+	if address == "" {
+		return nil
+	}
+	if net.ParseIP(address) == nil {
+		return fmt.Errorf("%s %q is not an address", name, address)
 	}
 	return nil
 }

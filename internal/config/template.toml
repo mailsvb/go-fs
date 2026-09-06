@@ -58,6 +58,9 @@ format = "text"
 # everything else in this section applies to both of them.
 enabled = true
 port = 21
+# interface the control ports and the passive data ports bind to, empty binds
+# to all
+address = ""
 # served folder. Uncomment to serve something other than
 # general.basefolder; it has to exist either way.
 # basefolder = "/srv/ftp"
@@ -79,10 +82,21 @@ passiveMaxPort = 1034
 # port RFC 959 uses and what a firewall written for active FTP expects, but on
 # unix binding it needs the privilege for ports below 1024.
 activeSourcePort = 0
+# The address a PASV reply tells the client to connect back to. Empty names the
+# address the control connection arrived on, which is right whenever nothing
+# translates in between; set it to the address clients reach this host at when
+# the server is behind NAT or in a container. It has to be IPv4, which is all a
+# PASV reply can carry, and it does not affect EPSV, which names no address.
+passiveAddress = ""
 # seconds an idle control connection is kept open, 0 disables
 idleTimeout = 600
-# seconds an idle data connection is kept open
+# seconds to wait for the data connection of a transfer to be established
 dataTimeout = 5
+# Seconds a running transfer may move nothing before it is dropped, 0 disables.
+# It bounds a stall rather than the length of a transfer, so a download of any
+# size finishes, while a client that opens the data connection and stops reading
+# gives its connection slot back instead of holding it until it disconnects.
+transferIdleTimeout = 300
 # maximum length of a single command line in bytes
 maxCommandLength = 4096
 # seconds to wait before answering a wrong password
@@ -113,30 +127,34 @@ cert = ""
 key = ""
 
 # One table per account, repeated for as many as are needed. There is no default
-# account: a name that is not listed here cannot log in.
-[[ftp.users]]
-username = "john"
-password = "doe"
+# account: a name that is not listed here cannot log in, so as this file stands
+# the server accepts nobody. The example below is commented out on purpose —
+# uncomment it and put a name and a password of your own in, rather than
+# starting with the ones printed in the documentation.
+# [[ftp.users]]
+# username = "john"
+# password = "doe"
 # own folder for this user, defaults to ftp.basefolder
 # basefolder = "/srv/ftp/john"
 # accept this user without a password, off by default
 # allowLoginWithoutPassword = false
 # What the account may do. All false when not set, so an account with none of
 # these can log in and look around and nothing more; grant what it needs.
-allowUserFileCreate = true
-allowUserFileRetrieve = true
-allowUserFileOverwrite = true
-allowUserFileDelete = true
-allowUserFolderDelete = true
-allowUserFolderCreate = true
+# allowUserFileCreate = true
+# allowUserFileRetrieve = true
+# allowUserFileOverwrite = true
+# allowUserFileDelete = true
+# allowUserFolderDelete = true
+# allowUserFolderCreate = true
 
 # Anonymous access is an ordinary account: the name clients use, with no
-# password. Below it may read, and nothing else.
-[[ftp.users]]
-username = "anonymous"
-password = ""
-allowLoginWithoutPassword = true
-allowUserFileRetrieve = true
+# password. Below it may read, and nothing else. Uncommenting this hands the
+# folder to anyone who can reach the port.
+# [[ftp.users]]
+# username = "anonymous"
+# password = ""
+# allowLoginWithoutPassword = true
+# allowUserFileRetrieve = true
 
 # The SFTP server, which is the SFTP subsystem of an SSH server. It has the
 # shape of [ftp]: a base folder and a list of accounts with the same permission
@@ -145,6 +163,8 @@ allowUserFileRetrieve = true
 [sftp]
 enabled = false
 port = 22
+# interface to bind to, empty binds to all
+address = ""
 # served folder. Uncomment to serve something other than
 # general.basefolder; it has to exist either way.
 # basefolder = "/srv/sftp"
@@ -166,17 +186,17 @@ loginFailureDelay = 1
 # same denied by default rule. Each account needs a password or at least one
 # authorized key: SSH has no anonymous login, so allowLoginWithoutPassword does
 # nothing here.
-[[sftp.users]]
-username = "john"
-password = "doe"
+# [[sftp.users]]
+# username = "john"
+# password = "doe"
 # own folder for this user, defaults to sftp.basefolder
 # basefolder = "/srv/sftp/john"
-allowUserFileCreate = true
-allowUserFileRetrieve = true
-allowUserFileOverwrite = true
-allowUserFileDelete = true
-allowUserFolderDelete = true
-allowUserFolderCreate = true
+# allowUserFileCreate = true
+# allowUserFileRetrieve = true
+# allowUserFileOverwrite = true
+# allowUserFileDelete = true
+# allowUserFolderDelete = true
+# allowUserFolderCreate = true
 
 # An account that logs in with a key instead of a password. Uncomment it and
 # put your own key in: the entries are authorized_keys lines, that is the whole
@@ -199,6 +219,8 @@ allowUserFolderCreate = true
 # everything else in this section applies to both of them.
 enabled = false
 port = 9080
+# interface both listeners bind to, empty binds to all
+address = ""
 # served folder. Uncomment to serve something other than
 # general.basefolder; it has to exist either way.
 # basefolder = "/srv/http"
@@ -251,28 +273,33 @@ key = ""
 # One table per account. paths are regular expressions matched against the
 # request path after it has been normalized, so ".." cannot be used to slip
 # past one; an account with no pattern can reach nothing. Both permissions are
-# false when not set, as everywhere else.
-[[http.users]]
-username = "john"
-password = "doe"
-paths = ["^/.*"]
-allowUserFileUpload = true
-allowUserFileDelete = true
+# false when not set, as everywhere else. As with [[ftp.users]], the examples
+# are commented out: put in a name and a password of your own.
+# [[http.users]]
+# username = "john"
+# password = "doe"
+# paths = ["^/.*"]
+# allowUserFileUpload = true
+# allowUserFileDelete = true
 # Hand this account a session cookie once it has authenticated, so that a
 # browser does not repeat the credentials on every request. The session carries
 # exactly these rights, and cookiePath only tells the browser which URLs to
 # send it back for.
-cookie = false
+# cookie = false
 # cookiePath = "/"
 
 # An account that may only read, and only below one folder.
-[[http.users]]
-username = "max"
-password = "mustermann"
-paths = ["^/public/.*"]
-cookie = true
-cookiePath = "/public/"
+# [[http.users]]
+# username = "max"
+# password = "mustermann"
+# paths = ["^/public/.*"]
+# cookie = true
+# cookiePath = "/public/"
 
+# The TFTP server. TFTP has no accounts and no passwords: the protocol has no
+# way to carry them, so anyone who can reach this port can read what allowRead
+# allows and write what allowWrite allows. Turn it off, or keep it on a network
+# where that is what you want.
 [tftp]
 enabled = true
 port = 69

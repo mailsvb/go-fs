@@ -29,8 +29,8 @@ it. The two build targets stamp it differently:
 
 | Target | Version stamped | Artifact |
 |---|---|---|
-| `make release` | `0.9` | `dist/go-fs_0.9_linux_amd64`, one per platform |
-| `make build` | `0.9-dev-20260904-222134` | `dist/go-fs_0.9-dev-20260904-222134_linux_amd64`, one per platform |
+| `make release` | `1.0.0` | `dist/go-fs_1.0.0_linux_amd64`, one per platform |
+| `make build` | `1.0.0-dev-20260904-222134` | `dist/go-fs_1.0.0-dev-20260904-222134_linux_amd64`, one per platform |
 
 The two targets differ only in the version they stamp: both cross compile the
 same five binaries into `dist/`, with checksums, after emptying it. `make build`
@@ -43,8 +43,8 @@ which is the name the binary reads when `-config` is not given, so an unpacked
 `-init` writes, so the shipped configuration always matches the build.
 
 `go-fs -version` prints whichever version was stamped, and a plain `go build .`
-reports `0.9-dev`. Pass `VERSION=` to override for a single build, for example
-`make release VERSION=1.0` from a release pipeline.
+reports `1.0.0-dev`. Pass `VERSION=` to override for a single build, for example
+`make release VERSION=1.1` from a release pipeline.
 
 ## Run
 
@@ -127,11 +127,28 @@ account, so a name that is not listed cannot log in. Each user may have its own
 `basefolder`. `[sftp]` has the same shape with its own `[[sftp.users]]`, and
 its accounts follow the same rules.
 
+**The shipped file defines no account.** The examples in it are commented out on
+purpose, so a fresh configuration serves nobody until you put a name and a
+password of your own in — rather than starting life with the ones printed on
+this page. A password that is still one of those is reported at warning level
+every time the server starts, as is a configuration file that more than its
+owner can read.
+
 Every right an account has is granted explicitly — `allowUserFileCreate`,
 `allowUserFileRetrieve`, `allowUserFileOverwrite`, `allowUserFileDelete`,
 `allowUserFolderCreate` and `allowUserFolderDelete` all deny when they are not
 set, so an account that lists none of them can log in and look around and
 nothing more.
+
+An operation that does two things needs both rights, and no right reaches
+further than its name says:
+
+| Operation | Needs |
+|---|---|
+| `RMD`, `XRMD`, SFTP `rmdir` | `allowUserFolderDelete`, and the folder has to be empty |
+| `RMDA` | `allowUserFolderDelete` **and** `allowUserFileDelete`, since what it removes is files |
+| `RNFR`/`RNTO`, SFTP rename | `allowUserFileCreate` **and** `allowUserFileDelete`: a rename makes one name and unmakes another |
+| `MFMT`, `SITE CHMOD`, SFTP setstat | `allowUserFileOverwrite`, since they change the file |
 
 Anonymous access is not a setting of its own, just an account that takes no
 password:
@@ -144,9 +161,10 @@ allowLoginWithoutPassword = true
 allowUserFileRetrieve = true
 ```
 
-Both servers confine every request to their base folder. Symbolic links are
+Every server confines every request to its base folder. Symbolic links are
 resolved before that check, so a link inside the folder cannot be used to reach
-out of it.
+out of it, and the base folder itself can never be renamed or removed by a
+client.
 
 ### The web interface
 
@@ -227,6 +245,8 @@ told.
 # passive (PASV, EPSV): the client connects in, on a port out of this range
 passiveMinPort = 1024
 passiveMaxPort = 1034
+# the address a PASV reply names, empty for the one the client connected to
+passiveAddress = ""
 # active (PORT, EPRT): the server connects out, from this port
 activeSourcePort = 0
 ```
@@ -244,8 +264,29 @@ unix needs the privilege for ports below 1024. The socket asks for
 time and back to back, which would otherwise collide with the last connection's
 `TIME_WAIT`.
 
-All three apply to the next transfer, so changing them — in the file or in the
-web interface — never drops a connection.
+**Behind NAT**, in a container or through a port forward, the address the server
+sees on its own socket is not the one clients reach it at, and a `PASV` reply
+that names it sends them nowhere. `passiveAddress` is what they are told
+instead. It has to be IPv4, which is all a `PASV` reply can carry; `EPSV` names
+no address at all and needs nothing here.
+
+All of these apply to the next transfer, so changing them — in the file or in
+the web interface — never drops a connection.
+
+### Bind addresses and stalled transfers
+
+`ftp.address`, `sftp.address` and `http.address` name the interface each server
+binds to, empty for all of them, as `tftp.address` already did. The FTP one
+covers the passive data ports too, so they follow the control port onto the same
+interface.
+
+`ftp.transferIdleTimeout`, 300 seconds by default, is how long a running
+transfer may move nothing before it is dropped. It bounds a stall rather than
+the length of a transfer, so a download of any size finishes as long as it keeps
+moving, while a client that opens the data connection and then stops reading
+gives its connection slot back instead of holding one until it disconnects.
+`idleTimeout` does not apply while a transfer is running: a client busy on the
+data connection owes nothing on the control one.
 
 ### Notable defaults
 
@@ -254,7 +295,8 @@ web interface — never drops a connection.
 | `ftp.allowFtpBounce` | `false` | `PORT`/`EPRT` may only name the connected client, otherwise the server can reach third parties on its behalf (RFC 2577) |
 | `ftp.allowForeignDataConnection` | `false` | only the client that asked for a passive port may connect to it |
 | `ftp.activeSourcePort` | `0` | the system picks the port an active data connection leaves from, since a fixed one below 1024 needs privilege |
-| `ftp.idleTimeout` | `600` | an idle control connection does not hold a slot forever |
+| `ftp.idleTimeout` | `600` | an idle control connection does not hold a slot forever, though a running transfer is never idle |
+| `ftp.transferIdleTimeout` | `300` | a transfer that stalls gives its slot back, however long a moving one takes |
 | `ftp.loginFailureDelay` | `1` | a wrong password is answered after a second, which slows guessing |
 | `ftp.users[].allowUser*` | `false` | an account is granted only the rights its table lists |
 | `sftp.enabled`, `http.enabled` | `false` | both are off by default, so an upgrade never opens a port on its own |
@@ -263,6 +305,7 @@ web interface — never drops a connection.
 | `tftp.maxBlockSize` | `1468` | keeps a block inside a typical ethernet MTU so datagrams are not IP fragmented |
 | `tftp.maxTimeout` | `60` | a client cannot negotiate a retransmit interval that pins a transfer slot |
 | `tftp.maxConnectionsPerHost` | `5` | one host cannot take every slot |
+| `ftp.users`, `http.users` in the shipped file | none | the examples are commented out, so a fresh configuration serves nobody |
 
 ## TLS
 
@@ -288,6 +331,11 @@ is not shared.
 `-check` decodes both halves and matches them against each other, so a truncated
 paste, a key put into the certificate key, or a key belonging to a different
 certificate is reported by name before the server tries to serve it.
+
+`PROT P`, which asks for the data connection to be protected, is refused on a
+plaintext control connection: answering it there would promise exactly what the
+server then cannot deliver, and the client would send its data in the clear
+believing otherwise.
 
 `[ftps]` is a section of its own only because TOML tables are top level: it
 configures the same server, which serves the folders, accounts and limits of
@@ -375,12 +423,18 @@ unless set. A path an account may not reach is `403`, not another challenge.
 
 `paths` are matched against the request path **after** it has been normalized,
 so `/private/../secret` is tested as `/secret` and cannot be used to slip past a
-pattern.
+pattern. A pattern is tested against the path both with and without a trailing
+slash, so `^/private/.*` covers the listing of `/private` itself and not only
+what is inside it — a listing names every file in the folder, so it cannot be
+the one public thing about it.
 
 Both Digest and Basic authentication are accepted. The challenge offers Digest,
 with SHA-256 for Chromium and Firefox and MD5 for everything else, which is what
 those clients handle; `realm` is hashed into the response, so changing it makes
-browsers ask again.
+browsers ask again. A digest response is bound to the path it was made for and
+to a nonce that is good for five minutes, so a header captured off the wire
+cannot be turned on another path or replayed later; a client that still has the
+credentials answers the stale challenge without asking anyone.
 
 With `cookie = true` an account is handed a session cookie once it has
 authenticated, so a browser stops repeating the credentials. The session names
@@ -420,7 +474,15 @@ empty folder, Basic (RFC 7617) and Digest (RFC 7616, with the RFC 2069 form)
 authentication, session cookies, and the legacy `dls_directory_reader` listing
 endpoint. Downloads answer range requests, so a large one can be resumed.
 
-**TFTP** — RFC 1350 in `octet` and `netascii` mode, with the option extension of
+**TFTP** — the protocol has no accounts and no passwords and no way to carry
+them, so anyone who can reach `tftp.port` can read what `allowRead` allows and
+write what `allowWrite` allows. It is on by default, read only, because that is
+what the implementation it replaces did; turn it off unless the network it sits
+on is one where that is what you want. An upload is written beside its
+destination and renamed over it when it completes, so a transfer that breaks off
+leaves neither an empty file nor a truncated one.
+
+RFC 1350 in `octet` and `netascii` mode, with the option extension of
 RFC 2347, the `blksize`, `timeout` and `tsize` options of RFC 2348 and RFC 2349,
 and windowed reads per RFC 7440.
 

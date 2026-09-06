@@ -1,4 +1,5 @@
-// Command go-fs serves FTP and TFTP from a single configuration file.
+// Command go-fs serves FTP, FTPS, SFTP, HTTP, HTTPS and TFTP from a single
+// configuration file.
 package main
 
 import (
@@ -78,6 +79,7 @@ func run() error {
 	}
 
 	logger := newLogger(cfg.Log)
+	warnAboutSecrets(logger, *configPath, cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -97,6 +99,24 @@ func run() error {
 	logger.Info("shutting down")
 	sup.Shutdown(context.Background())
 	return nil
+}
+
+// warnAboutSecrets says what is worth knowing about the file before the
+// listeners come up: that an account still has a password out of the
+// documentation, and that the file holding every password and private key can
+// be read by more than its owner.
+func warnAboutSecrets(logger *slog.Logger, path string, cfg config.Config) {
+	if accounts := cfg.ExampleAccounts(); len(accounts) > 0 {
+		logger.Warn("an account still has the password this project's own documentation "+
+			"prints, so it is a password anybody can look up; change it before this "+
+			"server is reachable",
+			"accounts", strings.Join(accounts, ", "))
+	}
+	if mode, loose := config.LooseFilePermissions(path); loose {
+		logger.Warn("the configuration file can be read by more than its owner, and it "+
+			"holds every password and every private key of this server",
+			"path", path, "mode", fmt.Sprintf("%04o", mode), "suggested", "0600")
+	}
 }
 
 func newLogger(cfg config.Log) *slog.Logger {

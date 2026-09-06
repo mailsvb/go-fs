@@ -16,13 +16,23 @@ const (
 	loginNoPassword
 )
 
+// users are the accounts as they are configured right now.
+//
+// The rest of the connection runs on the snapshot it was accepted under, so a
+// reload cannot change a limit or a timeout under a half-finished command
+// sequence. The accounts are the deliberate exception: a right taken away, or
+// an account removed, has to reach a session that is already open, otherwise
+// revoking access would mean waiting for the client to hang up.
+func (c *conn) users() []config.User {
+	return c.server.settings().cfg.Users
+}
+
 // validateLoginType decides how the named user may log in. Accounts come from
 // the configured user list; a name that is not listed cannot log in. Anonymous
 // access is one of those accounts, named "anonymous" with
 // allowLoginWithoutPassword set, and gets no special treatment here.
 func (c *conn) validateLoginType() loginType {
-	cfg := c.set.cfg
-	for _, user := range cfg.Users {
+	for _, user := range c.users() {
 		if user.Username != c.username {
 			continue
 		}
@@ -38,10 +48,9 @@ func (c *conn) validateLoginType() loginType {
 
 // authenticateUser checks the password and applies the account's rights.
 func (c *conn) authenticateUser(password string) bool {
-	cfg := c.set.cfg
 	success := false
 
-	for _, user := range cfg.Users {
+	for _, user := range c.users() {
 		if user.Username != c.username {
 			continue
 		}
@@ -55,6 +64,31 @@ func (c *conn) authenticateUser(password string) bool {
 
 	c.log.Debug("ftp authentication", "user", c.username, "success", success)
 	return success
+}
+
+// refreshPermissions re-reads the rights of the logged in account and reports
+// whether it is still configured. It runs before every command of a logged in
+// session, so a permission taken away applies to the next command the client
+// sends and an account that was removed can do nothing more.
+func (c *conn) refreshPermissions() bool {
+	for _, user := range c.users() {
+		if user.Username != c.username {
+			continue
+		}
+		permissions := user.Permissions()
+		if permissions.Basefolder == c.perms.Basefolder {
+			// the folder is what costs a stat and a symlink walk, so it is only
+			// resolved again when it actually changed
+			c.perms = permissions
+			return true
+		}
+		c.applyPermissions(permissions)
+		// the folder underneath moved, so where the client stands may not exist
+		// in the new one
+		c.cwd = "/"
+		return true
+	}
+	return false
 }
 
 // applyPermissions installs the rights of an account, including its own base
@@ -79,13 +113,14 @@ func (c *conn) applyPermissions(permissions config.Permissions) {
 func cmdUser(c *conn, arg string) {
 	c.username = arg
 	switch c.validateLoginType() {
-	case loginNone:
-		c.reply("530", "Not logged in")
 	case loginNoPassword:
-		c.authenticated = true
+		c.authenticated.set(true)
 		c.reply("232", "User logged in")
 		c.markLoggedIn()
 	default:
+		// A name that is not configured is answered exactly as one that is, so
+		// that the reply does not say which accounts exist. It fails at PASS
+		// instead, after the same delay a wrong password takes.
 		c.reply("331", "Password required for "+c.username)
 	}
 }
@@ -93,7 +128,7 @@ func cmdUser(c *conn, arg string) {
 // cmdPass handles PASS.
 func cmdPass(c *conn, arg string) {
 	if c.authenticateUser(arg) {
-		c.authenticated = true
+		c.authenticated.set(true)
 		c.reply("230", "Logged on")
 		c.markLoggedIn()
 		return

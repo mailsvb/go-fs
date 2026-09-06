@@ -110,6 +110,13 @@ func Normalize(cwd, arg string) (virtual string, escaped bool) {
 	return "/" + strings.Join(stack, "/"), false
 }
 
+// IsRoot reports whether the target is the base folder itself. It is the one
+// path a client may see but must not remove, rename or change the mode of:
+// deleting it would take the served folder with it.
+func (t Target) IsRoot() bool {
+	return t.Virtual == "/"
+}
+
 // AsFolder returns virtual with a trailing slash.
 func AsFolder(virtual string) string {
 	if strings.HasSuffix(virtual, "/") {

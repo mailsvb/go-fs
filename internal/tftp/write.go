@@ -26,7 +26,13 @@ type writeTransfer struct {
 	log  *slog.Logger
 
 	file *os.File
-	sink io.Writer
+	// temporary is where the upload is written, destination is where it is
+	// renamed to once it is complete. Nothing at the destination is disturbed
+	// by a transfer that does not finish.
+	temporary   string
+	destination string
+	completed   bool
+	sink        io.Writer
 	// netascii holds the converter when one is in use, so it can be flushed.
 	netascii *netasciiWriter
 
@@ -39,11 +45,12 @@ type writeTransfer struct {
 	bytesWritten  int64
 }
 
-func (s *Server) startWrite(ctx context.Context, set *settings, slot admission, req request, from net.Addr, file *os.File) {
+func (s *Server) startWrite(ctx context.Context, set *settings, slot admission, req request, from net.Addr, file *os.File, destination string) {
 	conn, err := s.transferSocket()
 	if err != nil {
 		s.log.Error("tftp cannot open a transfer socket", "error", err)
 		_ = file.Close()
+		_ = os.Remove(file.Name())
 		s.release(slot)
 		s.sendTo(from, encodeError(errNotDefined, "Internal error"))
 		return
@@ -59,6 +66,8 @@ func (s *Server) startWrite(ctx context.Context, set *settings, slot admission, 
 		conn:          conn,
 		log:           s.log.With("client", slot.client, "file", sanitize(req.filename)),
 		file:          file,
+		temporary:     file.Name(),
+		destination:   destination,
 		blockSize:     opts.blockSize,
 		timeout:       opts.timeout,
 		retries:       set.limits.retries,
@@ -169,6 +178,18 @@ func (t *writeTransfer) finish(ctx context.Context) {
 		t.send(encodeError(errDiskFull, "Write error"))
 		return
 	}
+	// a temporary file is created private to its owner, while an upload is a
+	// file the served tree hands out like any other
+	if err := os.Chmod(t.temporary, 0o644); err != nil {
+		t.log.Debug("tftp cannot set the mode of the upload", "error", err)
+	}
+	if err := os.Rename(t.temporary, t.destination); err != nil {
+		t.log.Error("tftp cannot put the upload in place",
+			"path", t.destination, "error", err)
+		t.send(encodeError(errDiskFull, "Write error"))
+		return
+	}
+	t.completed = true
 
 	t.log.Info("tftp transfer complete",
 		"direction", "upload",
@@ -239,6 +260,12 @@ func (t *writeTransfer) cleanup() {
 	// file, an aborted one still has to.
 	if err := t.file.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 		t.log.Debug("tftp close failed", "error", err)
+	}
+	if !t.completed {
+		// nothing reached the destination, so nothing is left behind either
+		if err := os.Remove(t.temporary); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.log.Debug("tftp cannot remove the unfinished upload", "error", err)
+		}
 	}
 	_ = t.conn.Close()
 	t.server.release(t.slot)

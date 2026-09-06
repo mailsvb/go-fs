@@ -302,3 +302,132 @@ func TestCleanupKeepsTheNewest(t *testing.T) {
 		t.Errorf("the wrong files were kept: %v", kept)
 	}
 }
+
+// The limit belongs on the request body itself: the multipart parser reads the
+// body directly, so a limit put on a reader derived from it would leave a
+// multipart upload unbounded.
+func TestUploadSizeLimitCoversMultipart(t *testing.T) {
+	server := newServer(t, func(cfg *config.HTTP) { cfg.MaxUploadSize = 64 })
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "big.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte(strings.Repeat("x", 4096))); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	payload := append([]byte(nil), body.Bytes()...)
+
+	// with a declared length, which is what every ordinary client sends
+	req, _ := http.NewRequest(http.MethodPut, server.url("/private/big.txt"),
+		bytes.NewReader(payload))
+	req.SetBasicAuth("john", "doe")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if res := do(t, req); res.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", res.StatusCode)
+	}
+	if _, err := os.Stat(filepath.Join(server.base, "private", "big.txt")); !os.IsNotExist(err) {
+		t.Error("nothing has to be left behind")
+	}
+
+	// and without one: the body is cut short mid-part, which the multipart
+	// parser calls malformed. What the client did is send too much, and that is
+	// what it has to be told.
+	chunked, _ := http.NewRequest(http.MethodPut, server.url("/private/chunked.txt"),
+		io.NopCloser(bytes.NewReader(payload)))
+	chunked.ContentLength = -1
+	chunked.SetBasicAuth("john", "doe")
+	chunked.Header.Set("Content-Type", writer.FormDataContentType())
+	if res := do(t, chunked); res.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("chunked status = %d, want 413", res.StatusCode)
+	}
+}
+
+// An upload above the limit is what the client did, not a server error.
+func TestUploadTooLargeIsReportedAsSuch(t *testing.T) {
+	server := newServer(t, func(cfg *config.HTTP) { cfg.MaxUploadSize = 8 })
+
+	req, _ := http.NewRequest(http.MethodPut, server.url("/private/big.txt"),
+		strings.NewReader("far more than eight bytes"))
+	req.SetBasicAuth("john", "doe")
+	req.Header.Set("Content-Type", "application/octet-stream")
+	if res := do(t, req); res.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", res.StatusCode)
+	}
+}
+
+// The links in a listing are relative, so a folder reached without its trailing
+// slash is redirected to the form they are relative to.
+func TestFolderRedirectsToTheSlashedForm(t *testing.T) {
+	server := newServer(t, func(cfg *config.HTTP) { cfg.PathsRequireAuth = nil })
+	server.write(t, "photos/sub/inside.txt", "inside")
+
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	res, err := client.Get(server.url("/photos"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusMovedPermanently {
+		t.Fatalf("status = %d, want 301", res.StatusCode)
+	}
+	if got := res.Header.Get("Location"); got != "/photos/" {
+		t.Errorf("Location = %q, want %q", got, "/photos/")
+	}
+
+	// and the slashed form is served, with links that point inside it
+	answer, body := get(t, server, "/photos/")
+	if answer.StatusCode != http.StatusOK || !strings.Contains(body, `<a href="sub/">`) {
+		t.Errorf("status %d, body %q", answer.StatusCode, body)
+	}
+}
+
+// A name that a header cannot carry as it is keeps a readable ASCII form and
+// carries the real one beside it.
+func TestDispositionOfANonASCIIName(t *testing.T) {
+	got := disposition("Grüße.txt")
+	want := `attachment; filename="Gr__e.txt"; filename*=UTF-8''Gr%C3%BC%C3%9Fe.txt`
+	if got != want {
+		t.Errorf("disposition = %q, want %q", got, want)
+	}
+	if got := disposition(`odd"name.txt`); got != `attachment; filename="odd\"name.txt"` {
+		t.Errorf("a quote in the name is not escaped: %q", got)
+	}
+}
+
+// maxUploadSize is a limit on the file, not on the request that carries it: the
+// same file has to be accepted whether it is sent as octet-stream or wrapped in
+// a multipart form, whose boundaries and headers are not part of it.
+func TestUploadSizeLimitCountsTheFileNotTheEnvelope(t *testing.T) {
+	server := newServer(t, func(cfg *config.HTTP) { cfg.MaxUploadSize = 64 })
+	content := strings.Repeat("z", 60)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "small.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	if body.Len() <= 64 {
+		t.Fatalf("the envelope should make the body larger than the limit, it is %d", body.Len())
+	}
+
+	req, _ := http.NewRequest(http.MethodPut, server.url("/private/small.txt"), &body)
+	req.SetBasicAuth("john", "doe")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if res := do(t, req); res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if got := server.read(t, "private/small.txt"); got != content {
+		t.Errorf("stored %d bytes, want %d", len(got), len(content))
+	}
+}

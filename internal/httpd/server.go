@@ -11,7 +11,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -45,15 +44,19 @@ type Server struct {
 	log      *slog.Logger
 
 	sessions *sessions
-	// nonce is generated once and used for the life of the process, as the
-	// Node implementation does.
-	nonce string
+	// nonceKey signs the digest nonces this server hands out, so that a nonce
+	// carries its own age and needs nothing to be remembered about it.
+	nonceKey []byte
 
 	plain  net.Listener
 	secure net.Listener
 	server *http.Server
 
 	wg sync.WaitGroup
+	// done is closed by Shutdown, so that what runs on its own — the retention
+	// sweep — stops for a shutdown that was asked for directly rather than by
+	// cancelling the context Start was given.
+	done chan struct{}
 
 	mu       sync.Mutex
 	shutdown bool
@@ -98,6 +101,7 @@ func newSettings(cfg config.HTTP, https config.HTTPS) (*settings, error) {
 func (s *Server) Reload(cfg config.HTTP, https config.HTTPS) error {
 	current := s.settings()
 	if cfg.Enabled != current.cfg.Enabled || cfg.Port != current.cfg.Port ||
+		cfg.Address != current.cfg.Address ||
 		cfg.Basefolder != current.cfg.Basefolder ||
 		cfg.MaxConnections != current.cfg.MaxConnections ||
 		cfg.ReadTimeout != current.cfg.ReadTimeout ||
@@ -128,8 +132,8 @@ func New(cfg config.HTTP, https config.HTTPS, logger *slog.Logger) (*Server, err
 		return nil, err
 	}
 
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
+	nonceKey := make([]byte, 32)
+	if _, err := rand.Read(nonceKey); err != nil {
 		return nil, err
 	}
 
@@ -137,7 +141,8 @@ func New(cfg config.HTTP, https config.HTTPS, logger *slog.Logger) (*Server, err
 		root:     root,
 		log:      logger,
 		sessions: newSessions(time.Duration(cfg.SessionTimeout) * time.Second),
-		nonce:    hex.EncodeToString(nonce),
+		nonceKey: nonceKey,
+		done:     make(chan struct{}),
 	}
 	server.snapshot.Store(set)
 	server.server = &http.Server{
@@ -145,7 +150,10 @@ func New(cfg config.HTTP, https config.HTTPS, logger *slog.Logger) (*Server, err
 		ReadTimeout:  seconds(cfg.ReadTimeout),
 		WriteTimeout: seconds(cfg.WriteTimeout),
 		IdleTimeout:  seconds(cfg.IdleTimeout),
-		ErrorLog:     slog.NewLogLogger(logger.Handler(), slog.LevelDebug),
+		// the headers are bounded even where the body is not, so a connection
+		// that dribbles a request line forever does not hold a slot
+		ReadHeaderTimeout: headerTimeout,
+		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelDebug),
 	}
 	return server, nil
 }
@@ -160,7 +168,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	if set.cfg.Enabled {
-		plain, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(set.cfg.Port)))
+		plain, err := net.Listen("tcp",
+			net.JoinHostPort(set.cfg.Address, strconv.Itoa(set.cfg.Port)))
 		if err != nil {
 			return err
 		}
@@ -175,7 +184,8 @@ func (s *Server) Start(ctx context.Context) error {
 			s.closeListeners()
 			return err
 		}
-		raw, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(set.https.Port)))
+		raw, err := net.Listen("tcp",
+			net.JoinHostPort(set.cfg.Address, strconv.Itoa(set.https.Port)))
 		if err != nil {
 			s.closeListeners()
 			return err
@@ -241,6 +251,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	s.shutdown = true
+	close(s.done)
 	s.mu.Unlock()
 
 	_ = s.server.Close()
@@ -286,19 +297,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
-		s.handleGet(set, w, r, target)
+		s.handleGet(set, w, r, target, user)
 	case http.MethodPut:
 		if user != nil && !user.upload {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
-		s.handlePut(set, w, r, target)
+		s.handlePut(set, w, r, target, user)
 	case http.MethodDelete:
 		if user != nil && !user.delete {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
-		s.handleDelete(set, w, r, target)
+		s.handleDelete(set, w, r, target, user)
 	case http.MethodPost:
 		if !readerPath.MatchString(r.URL.Path) {
 			http.NotFound(w, r)
@@ -310,6 +321,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+// headerTimeout is how long the request line and the headers may take. The
+// body has its own limit in readTimeout, which is off for uploads that take
+// longer than that; this one is not, because no client needs a minute to send
+// its headers.
+const headerTimeout = 30 * time.Second
 
 // limited caps how many connections a listener hands out at once.
 func limited(listener net.Listener, max int) net.Listener {
@@ -365,6 +382,15 @@ func listenPort(listener net.Listener) int {
 		return tcp.Port
 	}
 	return 0
+}
+
+// nameOf is the account a request was answered for, for the transfer records. A
+// public request has none, which is what the dash says.
+func nameOf(user *account) string {
+	if user == nil {
+		return "-"
+	}
+	return user.name
 }
 
 // addressOf is the client address without its port.

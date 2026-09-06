@@ -14,17 +14,18 @@ const cleanupInterval = time.Hour
 // runCleanup keeps the configured folders from growing without bound. It is
 // the one thing in the server that deletes without a client having asked, so
 // every removal is reported.
+// The list is read at every sweep rather than at the start, so a folder added
+// to it by a reload is swept without a restart, and one taken out of it stops
+// being swept at once.
 func (s *Server) runCleanup(ctx context.Context) {
-	if len(s.settings().cfg.Cleanup) == 0 {
-		return
-	}
-
 	s.cleanupOnce()
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-s.done:
 			return
 		case <-ticker.C:
 			s.cleanupOnce()
@@ -34,7 +35,11 @@ func (s *Server) runCleanup(ctx context.Context) {
 
 // cleanupOnce sweeps every configured folder once.
 func (s *Server) cleanupOnce() {
-	for _, entry := range s.settings().cfg.Cleanup {
+	entries := s.settings().cfg.Cleanup
+	if len(entries) == 0 {
+		return
+	}
+	for _, entry := range entries {
 		target := s.root.Resolve("/", entry.Path)
 		if !target.Valid {
 			s.log.Error("http cleanup path is outside the served folder", "path", entry.Path)

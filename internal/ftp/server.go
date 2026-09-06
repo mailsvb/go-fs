@@ -61,6 +61,7 @@ func (s *Server) settings() *settings {
 func (s *Server) Reload(cfg config.FTP, ftps config.FTPS) error {
 	current := s.settings()
 	if cfg.Enabled != current.cfg.Enabled || cfg.Port != current.cfg.Port ||
+		cfg.Address != current.cfg.Address ||
 		cfg.Basefolder != current.cfg.Basefolder ||
 		ftps.Enabled != current.ftps.Enabled || ftps.Port != current.ftps.Port ||
 		ftps.Cert != current.ftps.Cert || ftps.Key != current.ftps.Key {
@@ -142,7 +143,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	if set.cfg.Enabled {
-		plain, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(set.cfg.Port)))
+		plain, err := net.Listen("tcp",
+			net.JoinHostPort(set.cfg.Address, strconv.Itoa(set.cfg.Port)))
 		if err != nil {
 			return err
 		}
@@ -152,7 +154,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	if set.ftps.Enabled {
-		secure, err := tls.Listen("tcp", net.JoinHostPort("", strconv.Itoa(set.ftps.Port)), s.tls)
+		secure, err := tls.Listen("tcp",
+			net.JoinHostPort(set.cfg.Address, strconv.Itoa(set.ftps.Port)), s.tls)
 		if err != nil {
 			if s.plain != nil {
 				_ = s.plain.Close()
@@ -224,6 +227,11 @@ func (s *Server) Shutdown(context.Context) error {
 		_ = s.secure.Close()
 	}
 	for _, c := range open {
+		// a transfer in flight is blocked moving bytes over the data
+		// connection, which closing the control connection does not reach:
+		// without this, Shutdown waits below for a client that may never read
+		// again, and with it a reload that has to rebind the listener waits too
+		c.abortTransfer()
 		c.close()
 	}
 	s.wg.Wait()
@@ -289,7 +297,9 @@ func (s *Server) unregister(c *conn) {
 // taken by somebody else.
 func (s *Server) listenData(set *settings) (net.Listener, int, error) {
 	for port := set.cfg.PassiveMinPort; port <= set.cfg.PassiveMaxPort; port++ {
-		listener, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(port)))
+		// the data ports follow the control port onto the same interface
+		listener, err := net.Listen("tcp",
+			net.JoinHostPort(set.cfg.Address, strconv.Itoa(port)))
 		if err == nil {
 			return listener, port, nil
 		}

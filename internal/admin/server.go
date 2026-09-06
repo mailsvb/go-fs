@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"go-fs/internal/config"
 	"go-fs/internal/service"
@@ -97,8 +98,14 @@ func New(cfg config.General, path string, logger *slog.Logger) (*Server, error) 
 	server := &Server{path: path, schema: schema, log: logger}
 	server.snapshot.Store(&settings{cfg: cfg})
 	server.server = &http.Server{
-		Handler:  server,
-		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelDebug),
+		Handler: server,
+		// everything this serves is a page or a few kilobytes of JSON, so a
+		// request that takes longer than this is not one worth waiting for
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelDebug),
 	}
 	return server, nil
 }

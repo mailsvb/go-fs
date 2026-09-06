@@ -441,3 +441,77 @@ func TestReadErrorIsReported(t *testing.T) {
 		t.Errorf("code = %d, want %d", code, errAccessViolation)
 	}
 }
+
+// An upload is written beside its destination and renamed over it only once it
+// is complete. A transfer that is abandoned halfway leaves neither an empty
+// file where there was none, nor a truncated one where the client was replacing
+// something that was already there.
+func TestAbandonedWriteLeavesTheDestinationAlone(t *testing.T) {
+	t.Run("nothing was there", func(t *testing.T) {
+		server := newServer(t, func(c *config.TFTP) {
+			c.AllowWrite = true
+			c.Timeout = 1
+			c.Retries = 0
+		})
+
+		client := dial(t, server.port)
+		client.request(opWRQ, "abandoned.bin", modeOctet)
+		if op := opcodeOf(client.receive(2 * time.Second)); op != opACK {
+			t.Fatalf("opcode = %d, want an ACK", op)
+		}
+		// one full block, then silence
+		client.reply(encodeDATA(1, bytes.Repeat([]byte("x"), 512)))
+		if op := opcodeOf(client.receive(2 * time.Second)); op != opACK {
+			t.Fatalf("opcode = %d, want an ACK", op)
+		}
+		waitForNoTransfers(t, server)
+
+		if _, err := os.Stat(filepath.Join(server.base, "abandoned.bin")); !os.IsNotExist(err) {
+			t.Error("an abandoned upload left a file behind")
+		}
+		leftovers, err := os.ReadDir(server.base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(leftovers) != 0 {
+			t.Errorf("the folder holds %d entries, want none", len(leftovers))
+		}
+	})
+
+	t.Run("something was there", func(t *testing.T) {
+		server := newServer(t, func(c *config.TFTP) {
+			c.AllowWrite = true
+			c.AllowOverwrite = true
+			c.Timeout = 1
+			c.Retries = 0
+		})
+		server.write(t, "exists.txt", []byte("the original"))
+
+		client := dial(t, server.port)
+		client.request(opWRQ, "exists.txt", modeOctet)
+		if op := opcodeOf(client.receive(2 * time.Second)); op != opACK {
+			t.Fatalf("opcode = %d, want an ACK", op)
+		}
+		client.reply(encodeDATA(1, bytes.Repeat([]byte("y"), 512)))
+		if op := opcodeOf(client.receive(2 * time.Second)); op != opACK {
+			t.Fatalf("opcode = %d, want an ACK", op)
+		}
+		waitForNoTransfers(t, server)
+
+		if got := server.read(t, "exists.txt"); string(got) != "the original" {
+			t.Errorf("the file that was there now holds %q", got)
+		}
+	})
+}
+
+func waitForNoTransfers(t *testing.T, server *testServer) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if server.ActiveTransfers() == 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("the transfer did not end")
+}

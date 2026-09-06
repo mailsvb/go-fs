@@ -413,7 +413,11 @@ func (s *Server) handleWrite(ctx context.Context, set *settings, req request, fr
 		}
 	}
 
-	file, err := os.Create(target.Path)
+	// The upload is written beside its destination and renamed over it when it
+	// is complete. A transfer that is abandoned halfway then leaves neither an
+	// empty file where there was none, nor a truncated one where the client was
+	// replacing something that was already there.
+	file, err := os.CreateTemp(dir, ".go-fs-upload-*")
 	if err != nil {
 		s.log.Debug("tftp cannot open file for writing", "client", slot.client, "error", err)
 		fail(errAccessViolation, "Access violation")
@@ -421,7 +425,7 @@ func (s *Server) handleWrite(ctx context.Context, set *settings, req request, fr
 	}
 
 	s.log.Debug("tftp accepting write", "client", slot.client, "file", sanitize(req.filename))
-	s.startWrite(ctx, set, slot, req, from, file)
+	s.startWrite(ctx, set, slot, req, from, file, target.Path)
 }
 
 // transferSocket opens the ephemeral socket a transfer runs on.
