@@ -5,6 +5,9 @@
 
 let schema = null;
 let values = null;
+// what each stored certificate or key actually is, keyed "ftps.cert", since
+// base64 on its own tells the reader nothing
+let summaries = {};
 // the tab that is open, kept across a reload so that Apply does not send the
 // reader back to the first one
 let selected = 0;
@@ -31,6 +34,7 @@ async function load() {
   const state = await answer.json();
   schema = state.schema;
   values = state.values;
+  summaries = state.summaries || {};
 
   document.getElementById("path").textContent = state.path;
   if (!state.writable) {
@@ -79,7 +83,7 @@ function panel(section, index) {
   if (section.help) {
     element.append(paragraph(section.help, "section-help"));
   }
-  element.append(fieldGrid(section.fields, values[section.key]));
+  element.append(fieldGrid(section.fields, values[section.key], section.key));
 
   (section.tables || []).forEach((table) => {
     element.append(tableBlock(section, table));
@@ -88,13 +92,15 @@ function panel(section, index) {
 }
 
 // fieldGrid lays out the plain keys of a section or of one record.
-function fieldGrid(fields, holder) {
+function fieldGrid(fields, holder, section) {
   const grid = document.createElement("div");
   grid.className = "fields";
   fields.forEach((field) => {
     const label = document.createElement("label");
     label.textContent = field.label;
-    const input = editor(field, holder);
+    const input = field.upload
+      ? materialEditor(field, holder, section)
+      : editor(field, holder);
     label.htmlFor = input.id;
     grid.append(label, input.element);
     if (field.help) {
@@ -145,7 +151,7 @@ function tableBlock(section, table) {
       });
       card.append(remove);
 
-      card.append(fieldGrid(table.fields, record));
+      card.append(fieldGrid(table.fields, record, ""));
       list.append(card);
     });
   };
@@ -240,6 +246,149 @@ function editor(field, holder) {
   });
   wrapper.append(input, reveal);
   return { element: wrapper, id };
+}
+
+// A certificate or a key is not typed in: it is the content of a file, held in
+// the configuration as base64. So the box comes with an Upload button that
+// posts the file for the server to validate, and a Generate button that makes
+// a real one instead of the throwaway the server makes at every start when the
+// key is empty. Both only put a value on the page; Apply writes it.
+function materialEditor(field, holder, section) {
+  const id = "field-" + ++sequence;
+  const path = section ? section + "." + field.key : field.key;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "material";
+
+  const input = document.createElement("textarea");
+  input.id = id;
+  input.className = "blob";
+  input.rows = 3;
+  input.spellcheck = false;
+  input.placeholder = "empty: generated at every start";
+  input.value = holder[field.key] ?? "";
+
+  const summary = paragraph(summaries[path] || "", "summary");
+  const problem = paragraph("", "problem");
+  const report = (text) => {
+    problem.textContent = text;
+    problem.hidden = text === "";
+  };
+  report("");
+
+  // a value typed or pasted in is not the one the server described
+  input.addEventListener("input", () => {
+    holder[field.key] = input.value.trim();
+    summary.textContent = "";
+    report("");
+  });
+
+  const buttons = document.createElement("div");
+  buttons.className = "buttons";
+
+  const picker = document.createElement("input");
+  picker.type = "file";
+  picker.hidden = true;
+  picker.accept = accepts(field.upload);
+  picker.addEventListener("change", async () => {
+    const file = picker.files[0];
+    picker.value = "";
+    if (!file) return;
+    report("");
+    try {
+      const result = await post("/api/upload", {
+        kind: field.upload,
+        filename: file.name,
+        content: await base64Of(file),
+      });
+      holder[field.key] = result.value;
+      summaries[path] = result.summary;
+      render();
+    } catch (error) {
+      report(String(error.message || error));
+    }
+  });
+
+  buttons.append(picker, plainButton("Upload\u2026", () => picker.click()));
+
+  // only a certificate and a host key can be generated: a private key on its
+  // own would not match any certificate
+  if (field.upload !== "tlskey") {
+    buttons.append(plainButton("Generate", async () => {
+      report("");
+      try {
+        const result = await post("/api/generate", { kind: field.upload });
+        holder[field.key] = result.value;
+        summaries[path] = result.summary;
+        if (field.pair) {
+          holder[field.pair] = result.pairValue;
+          summaries[section + "." + field.pair] = result.pairSummary;
+        }
+        render();
+      } catch (error) {
+        report(String(error.message || error));
+      }
+    }));
+  }
+
+  buttons.append(plainButton("Clear", () => {
+    holder[field.key] = "";
+    summaries[path] = "";
+    render();
+  }));
+
+  // a private key is not shown until it is asked for, the way the one line
+  // secrets are masked
+  if (field.kind === "secret" && input.value !== "") {
+    input.hidden = true;
+    buttons.append(plainButton("show", (event) => {
+      input.hidden = !input.hidden;
+      event.target.textContent = input.hidden ? "show" : "hide";
+    }));
+  }
+
+  wrapper.append(input, buttons, summary, problem);
+  return { element: wrapper, id };
+}
+
+function plainButton(text, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "plain";
+  button.textContent = text;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+// accepts is a hint for the file dialog only. What a file may be is decided by
+// the server, which parses it.
+function accepts(kind) {
+  if (kind === "certificate") return ".pem,.crt,.cer,.cert";
+  return ".pem,.key,.p8";
+}
+
+// base64Of reads a file the way it is posted. A data URL is the one reader
+// result that is already base64, so the prefix is all there is to strip.
+function base64Of(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("the file could not be read"));
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.readAsDataURL(file);
+  });
+}
+
+async function post(url, body) {
+  const answer = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await answer.text();
+  if (!answer.ok) {
+    throw new Error(text.trim());
+  }
+  return JSON.parse(text);
 }
 
 function paragraph(text, className) {

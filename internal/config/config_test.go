@@ -293,8 +293,16 @@ func TestSaveKeepsExplicitUserFlags(t *testing.T) {
 }
 
 func TestDecodeHostKey(t *testing.T) {
-	pem := "-----BEGIN OPENSSH PRIVATE KEY-----\nbody\n-----END OPENSSH PRIVATE KEY-----\n"
-	encoded := base64.StdEncoding.EncodeToString([]byte(pem))
+	// a real key, because the value is now parsed rather than only recognised
+	encoded, err := GenerateHostKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodedPEM, err := DecodeHostKey(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pem := string(decodedPEM)
 
 	for _, value := range []string{encoded, pem, encoded[:20] + "\n" + encoded[20:]} {
 		decoded, err := DecodeHostKey(value)

@@ -109,7 +109,7 @@ func TestParseHostKeyReportsWhatIsWrong(t *testing.T) {
 	}{
 		{"not base64", "this is not base64!!", "neither base64 nor PEM"},
 		{"base64 of something else", base64.StdEncoding.EncodeToString([]byte("hello")), "does not decode to a PEM"},
-		{"a public key", base64.StdEncoding.EncodeToString([]byte("-----BEGIN PUBLIC KEY-----\nnope\n-----END PUBLIC KEY-----\n")), "cannot be parsed"},
+		{"a public key", base64.StdEncoding.EncodeToString([]byte("-----BEGIN PUBLIC KEY-----\nnope\n-----END PUBLIC KEY-----\n")), "not a private key"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

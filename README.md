@@ -181,8 +181,29 @@ Three things to know before switching it on:
   (`ssh -L 10443:127.0.0.1:10443 host`) or set `adminInterfaceAddress = ""` to
   bind every interface once you have thought about it.
 * **It is always served over TLS**, with a self-signed certificate generated at
-  startup unless `adminCert` and `adminKey` name a pair. A browser will warn
+  startup unless `adminCert` and `adminKey` hold a pair. A browser will warn
   about that certificate, and it is right to.
+* **The file it edits holds every private key.** That is what makes the upload
+  below possible, and it is a reason to keep the file at `chmod 600`.
+
+Certificates and keys are not typed in. Each of `ftps.cert`, `ftps.key`,
+`https.cert`, `https.key`, `general.adminCert`, `general.adminKey` and
+`sftp.hostkey` comes with:
+
+* **Upload** — pick a `.pem`, `.crt` or `.key` file. The server parses it with
+  the same code it uses at startup, so a file it accepts is a file it will start
+  with, and refuses the rest by name: a key picked for a certificate box says
+  so, and a leftover file path says what to write instead.
+* **Generate** — makes a real self-signed pair, or a real host key, instead of
+  the throwaway the server makes at every start. Generating a certificate fills
+  its private key too. Because it is stored, it survives a restart, and clients
+  stop reporting that the host key changed.
+* a line under the box saying what is actually stored there — `certificate
+  CN=example, expires 2027-01-01`, `ssh-ed25519 host key, SHA256:…` — since
+  base64 on its own says nothing.
+
+Neither button writes anything: the value lands on the page, and the single
+Apply writes it.
 
 Nothing is written until it would load: what is posted is validated exactly as
 the file is at startup, so the page reports what `-check` would report and a
@@ -208,7 +229,27 @@ written says so before anything is edited.
 ## TLS
 
 Set `[ftps] enabled = true` to listen on `ftps.port` and offer `AUTH TLS` on the
-plain port. Point `cert` and `key` at your PEM files.
+plain port. `cert` and `key` hold the certificate and its private key
+themselves, base64 of the PEM, the way `sftp.hostkey` does — not paths to files:
+
+```shell
+base64 < server.crt | tr -d "\n"    # into cert
+base64 < server.key | tr -d "\n"    # into key
+```
+
+The web interface does this for you: press **Upload** beside either key and pick
+the file. A whole chain in one file is kept whole, and a key protected by a
+passphrase is refused, since there is nobody to ask for one at startup.
+
+Keeping the material in the file means the configuration is one file that can be
+copied to another host, and go-fs needs no read access outside it. It also means
+the file holds private keys as base64, which is *encoding, not encryption*: it
+deserves the permissions a private key deserves, `chmod 600` and an owner that
+is not shared.
+
+`-check` decodes both halves and matches them against each other, so a truncated
+paste, a key put into the certificate key, or a key belonging to a different
+certificate is reported by name before the server tries to serve it.
 
 `[ftps]` is a section of its own only because TOML tables are top level: it
 configures the same server, which serves the folders, accounts and limits of
@@ -252,10 +293,11 @@ the content of an `id_*.pub` file. `allowLoginWithoutPassword` means nothing
 here — SSH has no anonymous login — so an account needs a password or a key, and
 one with neither is refused at startup rather than left unusable.
 
-The host key lives in the configuration itself rather than in a separate file:
-`hostkey` is base64 of its PEM encoding, on one line. With it empty a key is
-generated at every start, which makes every client report a changed host key, so
-set it for anything but a first look:
+The host key lives in the configuration itself rather than in a separate file,
+as every certificate and key here does: `hostkey` is base64 of its PEM encoding,
+on one line. With it empty a key is generated at every start, which makes every
+client report a changed host key, so set it for anything but a first look —
+with **Generate** in the web interface, or by hand:
 
 ```shell
 ssh-keygen -q -t ed25519 -N "" -f hostkey && base64 < hostkey | tr -d "\n"
@@ -265,7 +307,8 @@ ssh-keygen -q -t ed25519 -N "" -f hostkey && base64 < hostkey | tr -d "\n"
 
 `[http]` serves the folder over HTTP: `GET` browses and downloads, `PUT`
 uploads, `DELETE` removes. `[https]` is the same server on a TLS port, with
-`cert` and `key` as in `[ftps]`, and the two `enabled` switches are independent.
+`cert` and `key` holding the material as in `[ftps]`, and the two `enabled`
+switches are independent.
 
 Access has two layers, which is what the Express server it replaces did:
 

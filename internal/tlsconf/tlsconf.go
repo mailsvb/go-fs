@@ -15,11 +15,14 @@ import (
 	"net"
 	"os"
 	"time"
+
+	"go-fs/internal/config"
 )
 
-// Build loads the configured key pair, or generates one. certName and keyName
-// are the configuration keys the messages talk about, "ftps.cert" and
-// "ftps.key" for the FTP server.
+// Build decodes the configured key pair, or generates one. cert and key are the
+// material itself, base64 of the PEM as it is held in the configuration file;
+// certName and keyName are the configuration keys the messages talk about,
+// "ftps.cert" and "ftps.key" for the FTP server.
 //
 // The Node implementation shipped a fixed certificate whose private key is
 // published with the package, which means it offers no confidentiality at all.
@@ -27,7 +30,7 @@ import (
 // while making it obvious that it proves no identity.
 func Build(cert, key, certName, keyName string, logger *slog.Logger) (*tls.Config, error) {
 	if cert != "" && key != "" {
-		certificate, err := tls.LoadX509KeyPair(cert, key)
+		certificate, err := Pair(cert, key)
 		if err != nil {
 			return nil, fmt.Errorf("%s and %s: %w", certName, keyName, err)
 		}
@@ -37,7 +40,11 @@ func Build(cert, key, certName, keyName string, logger *slog.Logger) (*tls.Confi
 		}, nil
 	}
 
-	certificate, err := selfSignedCertificate()
+	certPEM, keyPEM, err := SelfSignedPEM()
+	if err != nil {
+		return nil, fmt.Errorf("cannot generate a certificate for %s: %w", certName, err)
+	}
+	certificate, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("cannot generate a certificate for %s: %w", certName, err)
 	}
@@ -50,15 +57,33 @@ func Build(cert, key, certName, keyName string, logger *slog.Logger) (*tls.Confi
 	}, nil
 }
 
-// selfSignedCertificate creates an in-memory certificate for this run.
-func selfSignedCertificate() (tls.Certificate, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+// Pair decodes a configured certificate and private key into the certificate a
+// listener serves. It is where a pair that does not belong together is caught:
+// tls.X509KeyPair checks that the key matches the certificate.
+func Pair(cert, key string) (tls.Certificate, error) {
+	certPEM, err := config.DecodeCertificate(cert)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	keyPEM, err := config.DecodePrivateKey(key)
 	if err != nil {
 		return tls.Certificate{}, err
+	}
+	return tls.X509KeyPair(certPEM, keyPEM)
+}
+
+// SelfSignedPEM creates a certificate and its key, as the PEM they are stored
+// and served as. It is the fallback of a listener with nothing configured, and
+// what the web interface stores when Generate is pressed — the difference being
+// that a stored one survives a restart.
+func SelfSignedPEM() (certPEM, keyPEM []byte, err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, nil, err
 	}
 
 	hostname, _ := os.Hostname()
@@ -81,14 +106,13 @@ func selfSignedCertificate() (tls.Certificate, error) {
 
 	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
 	if err != nil {
-		return tls.Certificate{}, err
+		return nil, nil, err
 	}
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		return tls.Certificate{}, err
+		return nil, nil, err
 	}
 
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	return tls.X509KeyPair(certPEM, keyPEM)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), nil
 }

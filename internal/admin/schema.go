@@ -49,6 +49,14 @@ type Field struct {
 	Help  string `json:"help,omitempty"`
 	Kind  string `json:"kind"`
 
+	// Upload is the kind of key material the field holds, empty for a field
+	// that holds none. It gives the page its Upload and Generate buttons and
+	// tells the server what an uploaded file has to be.
+	Upload string `json:"upload,omitempty"`
+	// Pair is the key of the private key belonging to a certificate, which is
+	// what lets one Generate fill both halves of a pair.
+	Pair string `json:"pair,omitempty"`
+
 	// index locates the field in its struct, so that reading and writing a
 	// value walks the same path the schema was built from.
 	index int
@@ -98,6 +106,7 @@ func build() (Schema, []string) {
 				skipped = append(skipped, field.Name+"."+inner.Name)
 			}
 		}
+		pairUp(section.Fields)
 		schema.Sections = append(schema.Sections, section)
 	}
 	return schema, skipped
@@ -134,7 +143,10 @@ func newField(name, kind string, index int, path, source string) Field {
 	if kind == kindText && secret(name) {
 		kind = kindSecret
 	}
-	return Field{Key: name, Label: name, Help: help(path, source), Kind: kind, index: index}
+	return Field{
+		Key: name, Label: name, Help: help(path, source), Kind: kind,
+		Upload: material(name), index: index,
+	}
 }
 
 // kindOf reports how a field is edited, and whether it is one this can edit at
@@ -159,11 +171,50 @@ func kindOf(fieldType reflect.Type) (string, bool) {
 	return "", false
 }
 
-// secret reports the fields the page masks. A public key is not one of them,
-// and neither is the path of a certificate.
+// secret reports the fields the page masks: the passwords, and the private
+// keys now that the file holds the key itself. A certificate is public and is
+// not one of them.
 func secret(name string) bool {
-	lower := strings.ToLower(name)
-	return strings.Contains(lower, "password") || lower == "hostkey"
+	if strings.Contains(strings.ToLower(name), "password") {
+		return true
+	}
+	kind := material(name)
+	return kind == config.KindTLSKey || kind == config.KindSSHKey
+}
+
+// material reports the kind of key material a key holds, which is what gives
+// the field its Upload and Generate buttons.
+//
+// The name is matched exactly rather than by substring, so that a section added
+// later with a cert and key pair gets the buttons with nothing else to do,
+// while an unrelated future apiKey is not mistaken for a private key.
+func material(name string) string {
+	switch strings.ToLower(name) {
+	case "cert", "admincert":
+		return config.KindCertificate
+	case "key", "adminkey":
+		return config.KindTLSKey
+	case "hostkey":
+		return config.KindSSHKey
+	}
+	return ""
+}
+
+// pairUp gives every certificate in a section the name of its private key, so
+// that Generate can fill both at once. A certificate without one in the same
+// section keeps an empty Pair and generates nothing.
+func pairUp(fields []Field) {
+	var key string
+	for _, field := range fields {
+		if field.Upload == config.KindTLSKey {
+			key = field.Key
+		}
+	}
+	for i := range fields {
+		if fields[i].Upload == config.KindCertificate {
+			fields[i].Pair = key
+		}
+	}
 }
 
 // help prefers the comment in the shipped template, which is the description
@@ -195,6 +246,29 @@ func (s Schema) Values(cfg config.Config) map[string]any {
 		values[section.Key] = section.values(root.Field(i))
 	}
 	return values
+}
+
+// Summaries describes every value that holds key material, keyed "ftps.cert"
+// and the like. Base64 tells the reader nothing about what is stored, so the
+// page shows this line under the box instead.
+func (s Schema) Summaries(values map[string]any) map[string]string {
+	summaries := make(map[string]string)
+	for _, section := range s.Sections {
+		held, ok := values[section.Key].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, field := range section.Fields {
+			if field.Upload == "" {
+				continue
+			}
+			value, _ := held[field.Key].(string)
+			if text := config.Describe(field.Upload, value); text != "" {
+				summaries[section.Key+"."+field.Key] = text
+			}
+		}
+	}
+	return summaries
 }
 
 func (s Section) values(from reflect.Value) map[string]any {

@@ -32,9 +32,12 @@ adminInterfacePort = 10443
 # The single account of the interface. Both have to be set for it to start.
 adminUsername = "admin"
 adminPassword = ""
-# The interface is always served over TLS. These are PEM file paths; when both
-# are empty a self-signed certificate is generated at startup, which changes on
-# every restart and proves no identity.
+# The interface is always served over TLS. These hold the certificate and its
+# key themselves, base64 of the PEM, the way hostkey below does; when both are
+# empty a self-signed certificate is generated at startup, which changes on
+# every restart and proves no identity. Produce a value with
+#   base64 < server.crt | tr -d "\n"
+# or press Upload in the web interface, which puts the file here for you.
 adminCert = ""
 adminKey = ""
 
@@ -81,9 +84,12 @@ allowForeignDataConnection = false
 # ftp.enabled, so turning that one off serves implicit FTPS only.
 enabled = false
 port = 990
-# PEM files. When both are empty a self-signed certificate is generated at
-# startup; it changes on every restart and proves no identity, so set your own
-# for anything but a quick test.
+# The certificate and its key themselves, base64 of the PEM, not paths to them,
+# so the whole configuration stays in this one file:
+#   base64 < server.crt | tr -d "\n"
+# When both are empty a self-signed certificate is generated at startup; it
+# changes on every restart and proves no identity, so set your own for anything
+# but a quick test.
 cert = ""
 key = ""
 
@@ -207,9 +213,12 @@ pathsRequireAuth = []
 # Independent of http.enabled, so turning that one off serves HTTPS only.
 enabled = false
 port = 9443
-# PEM files. When both are empty a self-signed certificate is generated at
-# startup; it changes on every restart and proves no identity, so set your own
-# for anything but a quick test.
+# The certificate and its key themselves, base64 of the PEM, not paths to them,
+# so the whole configuration stays in this one file:
+#   base64 < server.crt | tr -d "\n"
+# When both are empty a self-signed certificate is generated at startup; it
+# changes on every restart and proves no identity, so set your own for anything
+# but a quick test.
 cert = ""
 key = ""
 

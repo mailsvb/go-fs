@@ -7,6 +7,7 @@
 package config
 
 import (
+	"crypto/tls"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -520,8 +521,8 @@ func (c Config) validateHTTP() error {
 		if err := checkPort("https.port", c.HTTPS.Port); err != nil {
 			return err
 		}
-		if (c.HTTPS.Cert == "") != (c.HTTPS.Key == "") {
-			return errors.New("https.cert and https.key have to be set together")
+		if err := checkPair("https.cert", c.HTTPS.Cert, "https.key", c.HTTPS.Key); err != nil {
+			return err
 		}
 	}
 	h := c.HTTP
@@ -576,8 +577,8 @@ func (c Config) validateFTP() error {
 		if err := checkPort("ftps.port", c.FTPS.Port); err != nil {
 			return err
 		}
-		if (c.FTPS.Cert == "") != (c.FTPS.Key == "") {
-			return errors.New("ftps.cert and ftps.key have to be set together")
+		if err := checkPair("ftps.cert", c.FTPS.Cert, "ftps.key", c.FTPS.Key); err != nil {
+			return err
 		}
 	}
 	f := c.FTP
@@ -616,8 +617,8 @@ func (s SFTP) validate() error {
 	if s.MaxConnections < 1 {
 		return errors.New("sftp.maxConnections has to be at least 1")
 	}
-	// The host key is a value in this file, not a path, so a broken one can be
-	// reported here rather than at the first start.
+	// The key material is in this file, not in files it points at, so a broken
+	// one is reported here rather than at the first start.
 	if s.HostKey != "" {
 		if _, err := DecodeHostKey(s.HostKey); err != nil {
 			return fmt.Errorf("sftp.hostkey: %w", err)
@@ -704,8 +705,35 @@ func (g General) validateAdmin() error {
 		return errors.New("general.adminPassword is not set, " +
 			"the admin interface cannot be served without a password")
 	}
-	if (g.AdminCert == "") != (g.AdminKey == "") {
-		return errors.New("general.adminCert and general.adminKey have to be set together")
+	if err := checkPair("general.adminCert", g.AdminCert,
+		"general.adminKey", g.AdminKey); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkPair reports a certificate and private key that cannot be served. Both
+// are decoded and matched against each other, so a truncated paste, a key put
+// into the certificate field or a key belonging to another certificate is
+// reported by -check and refused by the web interface, rather than stopping
+// the listener at the next start.
+func checkPair(certName, cert, keyName, key string) error {
+	if (cert == "") != (key == "") {
+		return fmt.Errorf("%s and %s have to be set together", certName, keyName)
+	}
+	if cert == "" {
+		return nil
+	}
+	certPEM, err := DecodeCertificate(cert)
+	if err != nil {
+		return fmt.Errorf("%s: %w", certName, err)
+	}
+	keyPEM, err := DecodePrivateKey(key)
+	if err != nil {
+		return fmt.Errorf("%s: %w", keyName, err)
+	}
+	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
+		return fmt.Errorf("%s and %s: %w", certName, keyName, err)
 	}
 	return nil
 }

@@ -174,6 +174,9 @@ type state struct {
 	// Reload reports whether the file is watched. When it is not, a change is
 	// written but only applies at the next restart, and the page says so.
 	Reload bool `json:"reload"`
+	// Summaries describes the values that hold key material, keyed
+	// "ftps.cert", so the page shows what a base64 blob actually is.
+	Summaries map[string]string `json:"summaries,omitempty"`
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -187,6 +190,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleState(w)
 	case r.URL.Path == "/api/config" && r.Method == http.MethodPost:
 		s.handleApply(w, r)
+	case r.URL.Path == "/api/upload" && r.Method == http.MethodPost:
+		s.handleUpload(w, r)
+	case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+		s.handleGenerate(w, r)
 	case r.Method == http.MethodGet || r.Method == http.MethodHead:
 		s.handlePage(w, r)
 	default:
@@ -223,11 +230,13 @@ func (s *Server) handleState(w http.ResponseWriter) {
 		return
 	}
 
+	values := s.schema.Values(cfg)
 	body := state{
-		Schema: s.schema,
-		Values: s.schema.Values(cfg),
-		Path:   s.path,
-		Reload: cfg.General.ReloadConfig,
+		Schema:    s.schema,
+		Values:    values,
+		Path:      s.path,
+		Reload:    cfg.General.ReloadConfig,
+		Summaries: s.schema.Summaries(values),
 	}
 	if err := s.writable(); err != nil {
 		body.WriteError = err.Error()
@@ -240,16 +249,7 @@ func (s *Server) handleState(w http.ResponseWriter) {
 // handleApply validates what was posted and writes it. Nothing is applied to a
 // running server here: the watcher does that when it sees the new file.
 func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
-	// a cross site form cannot set this content type, and a cross site fetch
-	// that sets it is stopped by a preflight this server does not answer
-	if r.Header.Get("Content-Type") != "application/json" {
-		http.Error(w, "the body has to be application/json", http.StatusUnsupportedMediaType)
-		return
-	}
-	if origin := r.Header.Get("Origin"); origin != "" && !sameHost(origin, r.Host) {
-		s.log.Warn("the admin interface refused a request from another origin",
-			"origin", origin, "address", addressOf(r))
-		http.Error(w, "Forbidden", http.StatusForbidden)
+	if !s.posted(w, r) {
 		return
 	}
 
@@ -287,6 +287,24 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		"backup": backup,
 		"reload": cfg.General.ReloadConfig,
 	})
+}
+
+// posted guards everything this server accepts a body on. A cross site form
+// cannot set this content type — which is why the uploads are JSON rather than
+// multipart — and a cross site fetch that sets it is stopped by a preflight
+// this server does not answer.
+func (s *Server) posted(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("Content-Type") != "application/json" {
+		http.Error(w, "the body has to be application/json", http.StatusUnsupportedMediaType)
+		return false
+	}
+	if origin := r.Header.Get("Origin"); origin != "" && !sameHost(origin, r.Host) {
+		s.log.Warn("the admin interface refused a request from another origin",
+			"origin", origin, "address", addressOf(r))
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // sameHost reports whether an Origin header names the host this request was
