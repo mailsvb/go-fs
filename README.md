@@ -419,19 +419,3 @@ endpoint. Downloads answer range requests, so a large one can be resumed.
 RFC 2347, the `blksize`, `timeout` and `tsize` options of RFC 2348 and RFC 2349,
 and windowed reads per RFC 7440.
 
-## Differences from the Node implementation
-
-* The programmatic handler hooks (`hdl.upload`, `hdl.download`, `hdl.list`,
-  `hdl.rename`) are gone. This is a configurable binary, not a library, so both
-  servers always work on the file system.
-* No certificate is embedded. The Node package ships one whose private key is
-  published with it; here a certificate is generated instead, see above.
-* The EventEmitter events became structured log records: `login`, `logoff`,
-  `download` and `upload` are logged at info level with their attributes, the
-  protocol trace at debug level.
-* `basefolder` has to exist. There is no auto-created default folder and no
-  `cleanup()`.
-* `tftp.type` means what it says: empty binds dual stack, `udp4` binds IPv4 only
-  and `udp6` binds IPv6 only.
-
-Everything else, down to the reply strings, matches the Node implementation.
