@@ -1,7 +1,10 @@
 package httpd
 
 import (
+	"bytes"
+	"embed"
 	"html"
+	"html/template"
 	"net/url"
 	"os"
 	"path"
@@ -21,8 +24,23 @@ type entry struct {
 	ModTime time.Time
 }
 
+// isFolder reports whether an entry is a folder. The trailing slash is what
+// says so rather than IsFile, which is also false for a socket or a device
+// node — those are files as far as the listing is concerned.
+func (e entry) isFolder() bool {
+	return strings.HasSuffix(e.Name, "/")
+}
+
+// bare is the name without the trailing slash a folder carries.
+func (e entry) bare() string {
+	return strings.TrimSuffix(e.Name, "/")
+}
+
 // readDirectory lists a folder: the folders first in the order the filesystem
 // reports them, then the files newest first.
+//
+// This order is the one the legacy dls_directory_reader endpoint answers with,
+// so it is left as it was; the browsable page sorts the result itself.
 func readDirectory(folder string) ([]entry, error) {
 	items, err := os.ReadDir(folder)
 	if err != nil {
@@ -55,57 +73,304 @@ func readDirectory(folder string) ([]entry, error) {
 	return append(folders, files...), nil
 }
 
-// favicon is the one the Node implementation embeds, a small grey square.
-const favicon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAQAAADhVxYwAAAAmklEQVR42u3BMQEAAAABIP6Pzg" +
-	"pV3U2nAlcjcPtm/hJrrfZyzwhjz6a1Im5Pjx9yzdjDZssnAAQy9drmt5EMDtntD8XgG1VYpdDzwDAwAAAABJRU5ErkJggg=="
+// The columns a listing can be ordered by. An empty key is the default, which
+// is not a column order at all: it groups the folders above the files.
+const (
+	sortName = "name"
+	sortDate = "date"
+	sortSize = "size"
+	sortType = "type"
+)
 
-const listingStyle = `<style>
-      .table { display: grid; grid-template-columns: 3fr 1fr 1fr 1fr; gap: 0px; }
-      .row { display: contents; }
-      .row:hover .cell-content { background: #e0e0e0; }
-      .cell-header { padding: 5px; text-align: left; border-bottom: 1px solid #000000; }
-      .cell-content { padding: 5px; text-align: left; border: 0px; }
-      .cell:nth-child(odd) { background: #f9f9f9; }
-    </style>`
-
-// listingPage renders the browsable directory page. The markup is the one the
-// Node implementation produces, so the pages look unchanged.
-func listingPage(virtual string, entries []entry) []byte {
-	var page strings.Builder
-	page.WriteString("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
-	page.WriteString("<meta charset=\"UTF-8\">\n")
-	page.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n")
-	page.WriteString("<link rel=\"icon\" type=\"image/png\" href=\"" + favicon + "\" />\n")
-	page.WriteString("<title>" + html.EscapeString(virtual) + "</title>\n")
-	page.WriteString(listingStyle + "\n</head>\n<body>\n")
-	page.WriteString(`<div class="table"><div class="row">` +
-		`<div class="cell-header">Name</div><div class="cell-header">Created</div>` +
-		`<div class="cell-header">Type</div><div class="cell-header">Size</div></div>` + "\n")
-
-	if parent := parentOf(virtual); parent != "" {
-		page.WriteString(row(parent, "../", "-", "dir", "-"))
-	}
-	for _, item := range entries {
-		created, kind, size := "", "Directory", "-"
-		if item.IsFile {
-			created = item.ModTime.Format("2006.01.02 - 15:04:05")
-			kind = item.Kind
-			size = readableSize(item.Size)
-		}
-		page.WriteString(row(item.Name, item.Name, created, kind, size))
-	}
-	page.WriteString("</div></body></html>\n")
-	return []byte(page.String())
+// sortOrder is what the query string asked the listing to be ordered by.
+type sortOrder struct {
+	key  string
+	desc bool
 }
 
-// row is one line of the grid: a link and three plain cells.
-func row(href, name, created, kind, size string) string {
-	link := (&url.URL{Path: href}).String()
-	return `<div class="row"><div class="cell-content"><a href="` + link + `">` +
-		html.EscapeString(name) + `</a></div>` +
-		`<div class="cell-content">` + html.EscapeString(created) + `</div>` +
-		`<div class="cell-content">` + html.EscapeString(kind) + `</div>` +
-		`<div class="cell-content">` + html.EscapeString(size) + `</div></div>` + "\n"
+// parseSort reads the order out of a query string. Anything that is not one of
+// the four columns falls back to the default rather than being an error: the
+// query string is part of a link a user can edit.
+func parseSort(query url.Values) sortOrder {
+	switch key := query.Get("sort"); key {
+	case sortName, sortDate, sortSize, sortType:
+		return sortOrder{key: key, desc: query.Get("dir") == "desc"}
+	default:
+		return sortOrder{}
+	}
+}
+
+// query is the link that asks for this order.
+func (o sortOrder) query() string {
+	if o.key == "" {
+		return "?"
+	}
+	if o.desc {
+		return "?sort=" + o.key + "&dir=desc"
+	}
+	return "?sort=" + o.key + "&dir=asc"
+}
+
+func (o sortOrder) direction() string {
+	if o.desc {
+		return "desc"
+	}
+	return "asc"
+}
+
+// nextOrder is the order a click on a column asks for: ascending, then
+// descending, then no order at all. The third step is the grouped default the
+// listing opens in, so every column has a way to turn itself off rather than
+// leaving a sort that can only be swapped for another one.
+//
+// The script does the same, so a click behaves identically whether or not it
+// ran.
+func nextOrder(current sortOrder, key string) sortOrder {
+	if current.key != key {
+		return sortOrder{key: key}
+	}
+	if !current.desc {
+		return sortOrder{key: key, desc: true}
+	}
+	return sortOrder{}
+}
+
+// sortEntries returns the entries in the asked-for order, leaving the slice it
+// was given alone. Ties break on the name so that two files of the same size
+// keep a fixed order between reloads.
+func sortEntries(entries []entry, order sortOrder) []entry {
+	sorted := make([]entry, len(entries))
+	copy(sorted, entries)
+
+	byName := func(a, b entry) bool {
+		return strings.ToLower(a.bare()) < strings.ToLower(b.bare())
+	}
+	if order.key == "" {
+		// the order a file browser opens in: folders above files, both by name
+		sort.SliceStable(sorted, func(i, j int) bool {
+			if sorted[i].isFolder() != sorted[j].isFolder() {
+				return sorted[i].isFolder()
+			}
+			return byName(sorted[i], sorted[j])
+		})
+		return sorted
+	}
+
+	sort.SliceStable(sorted, func(i, j int) bool {
+		a, b := sorted[i], sorted[j]
+		var before, after bool
+		switch order.key {
+		case sortDate:
+			before, after = a.ModTime.Before(b.ModTime), b.ModTime.Before(a.ModTime)
+		case sortSize:
+			before, after = sizeOf(a) < sizeOf(b), sizeOf(b) < sizeOf(a)
+		case sortType:
+			before, after = kindOf(a) < kindOf(b), kindOf(b) < kindOf(a)
+		default:
+			before, after = byName(a, b), byName(b, a)
+		}
+		switch {
+		case before:
+			return !order.desc
+		case after:
+			return order.desc
+		default:
+			return byName(a, b)
+		}
+	})
+	return sorted
+}
+
+// sizeOf is what a row sorts by in the size column. A folder has a size on
+// disk, but it is the size of the folder itself and says nothing about what is
+// in it, so it sorts as nothing.
+func sizeOf(item entry) int64 {
+	if item.isFolder() {
+		return 0
+	}
+	return item.Size
+}
+
+// kindOf is the word the Type column shows.
+func kindOf(item entry) string {
+	if item.isFolder() {
+		return "Folder"
+	}
+	return item.Kind
+}
+
+//go:embed assets
+var assets embed.FS
+
+// listingTemplate is parsed once: a page that cannot be built is a bug in the
+// embedded template rather than something a request can cause.
+var listingTemplate = template.Must(template.ParseFS(assets, "assets/listing.html"))
+
+// listingStyle and listingScript are inlined into every page. Keeping them out
+// of the URL space is deliberate: every path this server answers is a path in
+// the served folder, so an asset URL would shadow a real name.
+var (
+	listingStyle  = template.CSS(mustRead("assets/listing.css"))
+	listingScript = template.JS(mustRead("assets/listing.js"))
+)
+
+func mustRead(name string) string {
+	body, err := assets.ReadFile(name)
+	if err != nil {
+		panic(err)
+	}
+	return string(body)
+}
+
+// rights is what the page may offer to the account looking at it.
+type rights struct {
+	Upload bool
+	Delete bool
+	Mkdir  bool
+	Rename bool
+}
+
+// Any reports whether any per-row action is offered, which is what decides
+// whether the actions column is there at all.
+func (r rights) Any() bool {
+	return r.Rename || r.Delete
+}
+
+type crumb struct {
+	Name string
+	// Link is empty for the folder being shown, which is not a link to itself.
+	Link string
+	Sep  bool
+}
+
+type column struct {
+	Key    string
+	Label  string
+	Class  string
+	Link   string
+	Active bool
+	Order  string
+	Caret  string
+}
+
+type listingRow struct {
+	Name     string
+	Label    string
+	Link     string
+	IsDir    bool
+	Group    string
+	Bytes    int64
+	Unix     int64
+	Kind     string
+	Size     string
+	Modified string
+}
+
+type listingData struct {
+	Path    string
+	Folder  string
+	Crumbs  []crumb
+	Parent  string
+	Columns []column
+	Entries []listingRow
+	Sort    string
+	Dir     string
+	Rights  rights
+	Nonce   string
+	Style   template.CSS
+	Script  template.JS
+}
+
+// listingPage renders the browsable directory page.
+func listingPage(virtual string, entries []entry, order sortOrder, allowed rights, nonce string) ([]byte, error) {
+	rows := make([]listingRow, 0, len(entries))
+	for _, item := range sortEntries(entries, order) {
+		row := listingRow{
+			Name:     item.bare(),
+			Label:    item.Name,
+			Link:     (&url.URL{Path: item.Name}).String(),
+			IsDir:    item.isFolder(),
+			Group:    "0",
+			Bytes:    sizeOf(item),
+			Unix:     item.ModTime.Unix(),
+			Kind:     kindOf(item),
+			Size:     readableSize(item.Size),
+			Modified: item.ModTime.Format("2006-01-02 15:04"),
+		}
+		if item.isFolder() {
+			row.Group = "1"
+			// a folder has no size worth showing, but it does have a date, and
+			// without it the date column could not be sorted on
+			row.Size = "—"
+		}
+		rows = append(rows, row)
+	}
+
+	data := listingData{
+		Path:    virtual,
+		Folder:  (&url.URL{Path: virtual}).String(),
+		Crumbs:  crumbsOf(virtual),
+		Parent:  parentOf(virtual),
+		Columns: columnsOf(order),
+		Entries: rows,
+		Sort:    order.key,
+		Dir:     order.direction(),
+		Rights:  allowed,
+		Nonce:   nonce,
+		Style:   listingStyle,
+		Script:  listingScript,
+	}
+
+	var page bytes.Buffer
+	if err := listingTemplate.Execute(&page, data); err != nil {
+		return nil, err
+	}
+	return page.Bytes(), nil
+}
+
+func columnsOf(order sortOrder) []column {
+	defined := []column{
+		{Key: sortName, Label: "Name", Class: "c-name"},
+		{Key: sortDate, Label: "Modified", Class: "c-mod"},
+		{Key: sortType, Label: "Type", Class: "c-kind"},
+		{Key: sortSize, Label: "Size", Class: "c-size num"},
+	}
+	for i := range defined {
+		defined[i].Link = nextOrder(order, defined[i].Key).query()
+		if defined[i].Key != order.key || order.key == "" {
+			continue
+		}
+		defined[i].Active = true
+		if order.desc {
+			defined[i].Order, defined[i].Caret = "descending", "▼"
+		} else {
+			defined[i].Order, defined[i].Caret = "ascending", "▲"
+		}
+	}
+	return defined
+}
+
+// crumbsOf breaks the path into the links above it. The first one is the root,
+// whose name is the leading slash, so the trail reads as the path itself.
+func crumbsOf(virtual string) []crumb {
+	root := crumb{Name: "/", Link: "/"}
+	parts := strings.Split(strings.Trim(virtual, "/"), "/")
+	if len(parts) == 1 && parts[0] == "" {
+		root.Link = ""
+		return []crumb{root}
+	}
+	crumbs := make([]crumb, 0, len(parts)+1)
+	crumbs = append(crumbs, root)
+	walked := "/"
+	for i, part := range parts {
+		walked += part + "/"
+		step := crumb{Name: part, Sep: i < len(parts)-1}
+		if i < len(parts)-1 {
+			step.Link = (&url.URL{Path: walked}).String()
+		}
+		crumbs = append(crumbs, step)
+	}
+	return crumbs
 }
 
 // parentOf is the link to the folder above, empty at the root.
@@ -122,7 +387,8 @@ func parentOf(virtual string) string {
 }
 
 // readerPage is the answer of the dls_directory_reader endpoint, a plain list
-// of links rather than the browsable page.
+// of links rather than the browsable page. It is what a client that is not a
+// browser parses, so it is left exactly as the Node implementation wrote it.
 func readerPage(folder string, entries []entry) []byte {
 	var page strings.Builder
 	page.WriteString("listing directory: " + html.EscapeString(folder) + "\n")

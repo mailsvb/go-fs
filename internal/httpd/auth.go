@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -234,12 +235,87 @@ func accountNamed(accounts []*account, name string) *account {
 // needsAuth decides whether credentials are required at all: because of the
 // method, or because the path is one of the protected ones.
 func (s *Server) needsAuth(set *settings, method, virtual string) bool {
+	implied := impliedBy(method)
 	for _, protected := range set.cfg.MethodsRequireAuth {
 		if strings.EqualFold(protected, method) {
 			return true
 		}
+		for _, older := range implied {
+			if strings.EqualFold(protected, older) {
+				return true
+			}
+		}
 	}
 	return matchesPath(set.protectedPaths, virtual)
+}
+
+// impliedBy is the older methods a newer one is protected along with.
+//
+// MKCOL and MOVE arrived after methodsRequireAuth had been written into the
+// configurations that exist, so a file on disk names PUT and DELETE and not
+// them. They are the same two writes under another verb — creating something,
+// and creating it while removing what was there — so an upgrade that left them
+// to be listed by hand would quietly open them to anyone.
+func impliedBy(method string) []string {
+	switch strings.ToUpper(method) {
+	case methodMkcol:
+		return []string{http.MethodPut}
+	case methodMove:
+		return []string{http.MethodPut, http.MethodDelete}
+	default:
+		return nil
+	}
+}
+
+// rightsFor is what the account behind a request may do in a folder, which is
+// what the listing page renders its controls from.
+//
+// It cannot simply read the account flags: a public request has no account at
+// all, and the dispatch lets one through for any method needsAuth does not
+// protect. Asking the same question here is what keeps the buttons on the page
+// and the checks in ServeHTTP saying the same thing.
+func (s *Server) rightsFor(set *settings, user *account, virtual string) rights {
+	create, remove := false, false
+	if user != nil {
+		create, remove = user.upload, user.delete
+	} else {
+		create = !s.needsAuth(set, http.MethodPut, virtual)
+		remove = !s.needsAuth(set, http.MethodDelete, virtual)
+	}
+	return rights{
+		Upload: create,
+		Delete: remove,
+		Mkdir:  create,
+		// renaming leaves a name behind and takes one away, so it needs both
+		Rename: create && remove,
+	}
+}
+
+// sameOrigin guards the methods that change something. A cross site form
+// cannot issue any of them and a cross site fetch is stopped by a preflight
+// this server does not answer, so this is a second lock rather than the only
+// one; a request that names another origin outright is refused here.
+func (s *Server) sameOrigin(w http.ResponseWriter, r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" || sameHost(origin, r.Host) {
+		return true
+	}
+	s.log.Warn("http refused a request from another origin",
+		"origin", origin, "method", r.Method, "address", addressOf(r))
+	http.Error(w, "Forbidden", http.StatusForbidden)
+	return false
+}
+
+// sameHost reports whether an Origin header names the host the request was made
+// to. The host is compared rather than the whole origin, so the check still
+// holds when the server is reached through something that terminates TLS in
+// front of it.
+func sameHost(origin, host string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return parsed.Host == host
 }
 
 func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Request, user *account) {

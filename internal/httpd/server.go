@@ -1,10 +1,14 @@
 // Package httpd implements the HTTP file server: browsing and downloading with
-// GET, uploading with PUT and removing with DELETE, with Basic and Digest
-// authentication and optional session cookies.
+// GET, uploading with PUT, removing with DELETE, creating a folder with MKCOL
+// and renaming with MOVE, with Basic and Digest authentication and optional
+// session cookies.
 //
-// It is a port of an Express server, so the reply shapes, the listing page and
-// the authentication rules are the ones that server produced. The package is
-// named httpd rather than http so that it can import net/http.
+// It is a port of an Express server, so the reply shapes and the authentication
+// rules are the ones that server produced. The browsable listing is not: it is
+// this server's own page, and the assets it needs are inlined into it so that
+// every URL stays a path in the served folder. The legacy
+// dls_directory_reader endpoint still answers exactly what it always did. The
+// package is named httpd rather than http so that it can import net/http.
 package httpd
 
 import (
@@ -34,6 +38,14 @@ const sessionCookie = "session"
 
 // readerPath is the legacy listing endpoint one client asks for by name.
 var readerPath = regexp.MustCompile(`/dls_directory_reader\.(php|asp)$`)
+
+// The WebDAV verbs this server answers, which net/http has no constants for.
+// They are used rather than an endpoint of their own because every URL here is
+// a path in the served folder: a /api/ prefix would shadow a real name.
+const (
+	methodMkcol = "MKCOL"
+	methodMove  = "MOVE"
+)
 
 // Server serves the file tree over HTTP, over TLS, or over both.
 type Server struct {
@@ -299,17 +311,41 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet, http.MethodHead:
 		s.handleGet(set, w, r, target, user)
 	case http.MethodPut:
+		if !s.sameOrigin(w, r) {
+			return
+		}
 		if user != nil && !user.upload {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 		s.handlePut(set, w, r, target, user)
 	case http.MethodDelete:
+		if !s.sameOrigin(w, r) {
+			return
+		}
 		if user != nil && !user.delete {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 		s.handleDelete(set, w, r, target, user)
+	case methodMkcol:
+		if !s.sameOrigin(w, r) {
+			return
+		}
+		if !s.rightsFor(set, user, target.Virtual).Mkdir {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		s.handleMkcol(w, r, target, user)
+	case methodMove:
+		if !s.sameOrigin(w, r) {
+			return
+		}
+		if !s.rightsFor(set, user, target.Virtual).Rename {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		s.handleMove(w, r, target, user)
 	case http.MethodPost:
 		if !readerPath.MatchString(r.URL.Path) {
 			http.NotFound(w, r)
@@ -317,7 +353,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleDirectoryReader(set, w, r, target)
 	default:
-		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, POST")
+		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, POST, MKCOL, MOVE")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
 }

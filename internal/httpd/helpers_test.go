@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go-fs/internal/config"
 )
@@ -284,3 +285,74 @@ func names(entries []entry) []string {
 }
 
 var _ = url.PathEscape
+
+// publicServer makes everything public, which is what the listing tests need:
+// they are about the page rather than about who may see it.
+func publicServer(cfg *config.HTTP) {
+	cfg.MethodsRequireAuth = nil
+	cfg.PathsRequireAuth = nil
+}
+
+// readOnlyUser may reach everything and change nothing.
+func readOnlyUser(name, password string) config.HTTPUser {
+	return config.HTTPUser{
+		Username: name,
+		Password: password,
+		Paths:    []string{"^/.*"},
+	}
+}
+
+// touch dates a file, so that an order by date is something a test can set up.
+func touch(t *testing.T, server *testServer, name string, when time.Time) {
+	t.Helper()
+	path := filepath.Join(server.base, filepath.FromSlash(name))
+	if err := os.Chtimes(path, when, when); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertOrder checks that the wanted names appear in the page in that order.
+// Each is looked for after the one before it, so a name that also occurs in a
+// dialog or a script further down cannot make a wrong order look right.
+func assertOrder(t *testing.T, body string, wanted ...string) {
+	t.Helper()
+	at := 0
+	for i, want := range wanted {
+		needle := `data-name="` + strings.TrimSuffix(want, "/") + `"`
+		found := strings.Index(body[at:], needle)
+		if found < 0 {
+			t.Fatalf("%q does not come after %v", want, wanted[:i])
+		}
+		at += found + len(needle)
+	}
+}
+
+// mkcol asks for a folder as the browser page does.
+func mkcol(t *testing.T, server *testServer, path, name, password string) *http.Response {
+	t.Helper()
+	return basic(t, server, methodMkcol, path, name, password, nil)
+}
+
+// move renames, which is a MOVE whose Destination is in the same folder.
+func move(t *testing.T, server *testServer, from, to, name, password string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(methodMove, server.url(from), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Destination", to)
+	req.Header.Set("Authorization", "Basic "+
+		base64.StdEncoding.EncodeToString([]byte(name+":"+password)))
+	return do(t, req)
+}
+
+// bodyOf reads a response the caller already has, for the requests basic and
+// move answer with the response rather than with its body.
+func bodyOf(t *testing.T, res *http.Response) string {
+	t.Helper()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}

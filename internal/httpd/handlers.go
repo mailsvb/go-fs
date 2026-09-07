@@ -1,6 +1,8 @@
 package httpd
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -38,10 +40,24 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
+		nonce, err := pageNonce()
+		if err != nil {
+			s.log.Error("http cannot render the listing", "path", target.Virtual, "error", err)
+			http.Error(w, "Server Error", http.StatusInternalServerError)
+			return
+		}
+		page, err := listingPage(vfs.AsFolder(target.Virtual), entries,
+			parseSort(r.URL.Query()), s.rightsFor(set, user, target.Virtual), nonce)
+		if err != nil {
+			s.log.Error("http cannot render the listing", "path", target.Virtual, "error", err)
+			http.Error(w, "Server Error", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=UTF-8")
+		w.Header().Set("Content-Security-Policy", contentPolicy(nonce))
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
-			_, _ = w.Write(listingPage(vfs.AsFolder(target.Virtual), entries))
+			_, _ = w.Write(page)
 		}
 		return
 	}
@@ -313,6 +329,153 @@ func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Requ
 	s.log.Info("http delete", "user", nameOf(user), "path", target.Virtual,
 		"address", addressOf(r))
 	w.WriteHeader(http.StatusOK)
+}
+
+// handleMkcol creates a folder, which is the one thing PUT cannot do: it makes
+// the folders above a file, so there is no way to ask it for an empty one.
+func (s *Server) handleMkcol(w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
+	if r.ContentLength != 0 {
+		// RFC 4918: a body here describes something this server does not know
+		http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType)
+		return
+	}
+	if target.IsRoot() {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := os.Stat(target.Path); err == nil {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// deliberately not MkdirAll: a typo in the folder above should be an error
+	// rather than a tree nobody asked for
+	if err := os.Mkdir(target.Path, 0o755); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "Conflict", http.StatusConflict)
+			return
+		}
+		s.log.Error("http mkdir failed", "folder", target.Virtual, "error", err)
+		http.Error(w, "Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	s.log.Info("http mkdir", "user", nameOf(user), "folder", target.Virtual,
+		"address", addressOf(r))
+	w.WriteHeader(http.StatusCreated)
+}
+
+// handleMove renames a file or a folder in place.
+func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
+	if target.IsRoot() {
+		// renaming the served folder would take every path with it
+		http.NotFound(w, r)
+		return
+	}
+	if _, err := os.Stat(target.Path); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	destination, ok := s.destinationOf(w, r, target, user)
+	if !ok {
+		return
+	}
+	if _, err := os.Stat(destination.Path); err == nil {
+		// the same refusal PUT makes for a name that is taken, with the status
+		// that says which of the two paths was the problem — a bare 404 here
+		// cannot be told apart from a source that is not there
+		http.Error(w, "Precondition Failed", http.StatusPreconditionFailed)
+		return
+	}
+
+	if err := os.Rename(target.Path, destination.Path); err != nil {
+		s.log.Error("http rename failed", "from", target.Virtual,
+			"to", destination.Virtual, "error", err)
+		http.Error(w, "Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	s.log.Info("http rename", "user", nameOf(user), "from", target.Virtual,
+		"to", destination.Virtual, "address", addressOf(r))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// destinationOf resolves the Destination header of a MOVE.
+//
+// The header may be an absolute URL or a path, and only the path is read. The
+// result has to name something in the same folder: what this offers is a
+// rename, and accepting a destination anywhere else would quietly make it a
+// move API with a reach nothing here checks for.
+func (s *Server) destinationOf(w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) (vfs.Target, bool) {
+	header := r.Header.Get("Destination")
+	if header == "" {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return vfs.Target{}, false
+	}
+	parsed, err := url.Parse(header)
+	if err != nil || parsed.Path == "" {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return vfs.Target{}, false
+	}
+
+	destination := s.root.Resolve("/", parsed.Path)
+	if !destination.Valid || destination.IsRoot() {
+		s.log.Debug("http rename destination refused", "destination", parsed.Path)
+		http.NotFound(w, r)
+		return vfs.Target{}, false
+	}
+	if folderOf(destination.Virtual) != folderOf(target.Virtual) {
+		s.log.Debug("http rename crosses folders", "from", target.Virtual,
+			"to", destination.Virtual)
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return vfs.Target{}, false
+	}
+	// the account's paths are checked against where the name lands as well as
+	// where it came from, so a rename cannot carry a file out of its scope
+	if user != nil && !user.allows(destination.Virtual) {
+		s.log.Debug("http rename destination not allowed for the account",
+			"user", user.name, "path", destination.Virtual)
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return vfs.Target{}, false
+	}
+	return destination, true
+}
+
+// folderOf is the folder a virtual path sits in.
+func folderOf(virtual string) string {
+	return path.Dir(strings.TrimSuffix(virtual, "/"))
+}
+
+// pageNonce is the one-off value that lets the listing's own style and script
+// run under a policy that allows nothing else.
+//
+// The alphabet is the URL-safe one, which CSP accepts and which survives being
+// written into an attribute: standard base64 has a "+" in it, and html/template
+// writes that as &#43;, leaving the page and the header naming values that only
+// match once a parser has decoded one of them.
+func pageNonce() (string, error) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// contentPolicy closes the listing page off to everything it does not carry
+// itself. connect-src has to stay open to this origin: the buttons on the page
+// reach the very server that sent it.
+//
+// form-action is deliberately not set, because the dialogs submit to
+// method="dialog", which some browsers check against it even though it never
+// leaves the page.
+func contentPolicy(nonce string) string {
+	return "default-src 'none'; " +
+		"style-src 'nonce-" + nonce + "'; " +
+		"script-src 'nonce-" + nonce + "'; " +
+		"img-src 'self' data:; " +
+		"connect-src 'self'; " +
+		"base-uri 'none'"
 }
 
 // handleDirectoryReader answers the legacy listing endpoint: a form field dir,

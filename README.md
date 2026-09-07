@@ -392,9 +392,17 @@ ssh-keygen -q -t ed25519 -N "" -f hostkey && base64 < hostkey | tr -d "\n"
 ## HTTP
 
 `[http]` serves the folder over HTTP: `GET` browses and downloads, `PUT`
-uploads, `DELETE` removes. `[https]` is the same server on a TLS port, with
-`cert` and `key` holding the material as in `[ftps]`, and the two `enabled`
-switches are independent.
+uploads, `DELETE` removes, `MKCOL` creates a folder and `MOVE` renames one entry
+in place. `[https]` is the same server on a TLS port, with `cert` and `key`
+holding the material as in `[ftps]`, and the two `enabled` switches are
+independent.
+
+Browsing it in a browser gives a listing that sorts on any column, filters as you
+type, and — for an account that holds the rights — uploads by drag and drop,
+creates folders, renames and deletes. It needs no assets from anywhere: the page
+carries its own style and script, so every URL the server answers stays a path in
+`basefolder`. Without JavaScript the listing still renders and the column headers
+still sort, as ordinary links.
 
 Access has two layers, which is what the Express server it replaces did:
 
@@ -403,7 +411,7 @@ Access has two layers, which is what the Express server it replaces did:
 enabled = true
 port = 9080
 basefolder = "/srv/http"
-methodsRequireAuth = ["PUT", "DELETE", "POST"]
+methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 pathsRequireAuth = ["^/private/.*"]
 
 [[http.users]]
@@ -418,8 +426,13 @@ cookie = true
 A request is **public** unless its method is in `methodsRequireAuth` or its path
 matches one of `pathsRequireAuth`. Anything else has to be answered by an
 account, and that account's own `paths` then decide what it may reach:
-`allowUserFileUpload` for `PUT`, `allowUserFileDelete` for `DELETE`, both false
-unless set. A path an account may not reach is `403`, not another challenge.
+`allowUserFileUpload` for `PUT` and `MKCOL`, `allowUserFileDelete` for `DELETE`,
+both of them for `MOVE`, all false unless set. A path an account may not reach is
+`403`, not another challenge.
+
+`MKCOL` and `MOVE` do not have to appear in `methodsRequireAuth`: `MKCOL` is
+protected wherever `PUT` is and `MOVE` wherever `PUT` or `DELETE` is, so a
+configuration written before those methods existed still covers them.
 
 `paths` are matched against the request path **after** it has been normalized,
 so `/private/../secret` is tested as `/secret` and cannot be used to slip past a

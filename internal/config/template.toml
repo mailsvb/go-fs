@@ -242,8 +242,9 @@ sessionTimeout = 86400
 # seconds to wait before answering a request that could not be authenticated
 loginFailureDelay = 1
 
-# Methods that always need an account.
-methodsRequireAuth = ["PUT", "DELETE", "POST"]
+# Methods that always need an account. MKCOL and MOVE do not have to be listed:
+# MKCOL is protected wherever PUT is and MOVE wherever PUT or DELETE is.
+methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 # Regular expressions; a request whose path matches one of these needs an
 # account whatever its method. Everything else is public.
 pathsRequireAuth = []

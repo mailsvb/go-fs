@@ -20,9 +20,14 @@ func TestDirectoryListing(t *testing.T) {
 	})
 	server.write(t, "sub/old.txt", "old")
 	server.write(t, "sub/new.iso", "newer")
+	server.write(t, "sub/alpha.txt", "first by name, last by date")
 	server.write(t, "sub/deeper/kept.txt", "x")
 	older := time.Now().Add(-time.Hour)
 	if err := os.Chtimes(filepath.Join(server.base, "sub", "old.txt"), older, older); err != nil {
+		t.Fatal(err)
+	}
+	oldest := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(filepath.Join(server.base, "sub", "alpha.txt"), oldest, oldest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -35,57 +40,288 @@ func TestDirectoryListing(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		`<a href="/">../</a>`,       // the way back up, an absolute href as the original writes it
-		`<a href="deeper/">deeper/`, // folders carry a trailing slash
-		`<a href="new.iso">new.iso`, //
-		`<a href="old.txt">old.txt`, //
-		"Directory",                 // the folder's Type cell
-		"ISO",                       // from the extension table
-		"Document",                  //
-		`<div class="table">`,       // the grid the Node version renders
+		`<a href="/">..</a>`,            // the way back up
+		`<a href="deeper/">deeper/</a>`, // folders carry a trailing slash
+		`<a href="new.iso">new.iso</a>`, //
+		`<a href="old.txt">old.txt</a>`, //
+		"Folder",                        // the folder's Type cell
+		"ISO",                           // from the extension table
+		"Document",                      //
+		`<table id="listing"`,           // the listing this server renders
+		`data-folder="/sub/"`,           // what the script builds its requests from
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page is missing %q", want)
 		}
 	}
+}
 
-	// folders come first, then files newest first
-	deeper := strings.Index(body, "deeper/")
-	newIso := strings.Index(body, "new.iso")
-	oldTxt := strings.Index(body, "old.txt")
-	if !(deeper < newIso && newIso < oldTxt) {
-		t.Errorf("order is wrong: deeper %d, new.iso %d, old.txt %d", deeper, newIso, oldTxt)
+// Without a sort the listing opens the way a file browser does: the folders
+// above the files, both by name — not the newest first, which is the order the
+// legacy reader endpoint still answers with.
+func TestDefaultOrderIsFoldersThenNames(t *testing.T) {
+	server := newServer(t, publicServer)
+	server.write(t, "sub/old.txt", "old")
+	server.write(t, "sub/new.iso", "newer")
+	server.write(t, "sub/alpha.txt", "oldest")
+	server.write(t, "sub/deeper/kept.txt", "x")
+	touch(t, server, "sub/alpha.txt", time.Now().Add(-2*time.Hour))
+	touch(t, server, "sub/old.txt", time.Now().Add(-time.Hour))
+
+	_, body := get(t, server, "/sub/")
+	assertOrder(t, body, "deeper/", "alpha.txt", "new.iso", "old.txt")
+}
+
+// Asking for a column drops the grouping: one flat list of everything.
+func TestSortingMixesFoldersWithFiles(t *testing.T) {
+	server := newServer(t, publicServer)
+	server.write(t, "sub/big.bin", strings.Repeat("x", 4000))
+	server.write(t, "sub/small.bin", "x")
+	server.write(t, "sub/mid.bin", strings.Repeat("x", 500))
+	server.write(t, "sub/zzz/kept.txt", "x")
+	touch(t, server, "sub/big.bin", time.Now().Add(-3*time.Hour))
+	touch(t, server, "sub/mid.bin", time.Now().Add(-2*time.Hour))
+	touch(t, server, "sub/small.bin", time.Now().Add(-time.Hour))
+
+	cases := []struct {
+		query string
+		order []string
+	}{
+		// zzz/ is a folder and still sorts among the files
+		{"?sort=name&dir=asc", []string{"big.bin", "mid.bin", "small.bin", "zzz/"}},
+		{"?sort=name&dir=desc", []string{"zzz/", "small.bin", "mid.bin", "big.bin"}},
+		// a folder has no size worth showing, so it sorts as nothing
+		{"?sort=size&dir=asc", []string{"zzz/", "small.bin", "mid.bin", "big.bin"}},
+		{"?sort=size&dir=desc", []string{"big.bin", "mid.bin", "small.bin", "zzz/"}},
+		{"?sort=date&dir=asc", []string{"big.bin", "mid.bin", "small.bin"}},
+		{"?sort=date&dir=desc", []string{"small.bin", "mid.bin", "big.bin"}},
+	}
+	for _, item := range cases {
+		_, body := get(t, server, "/sub/"+item.query)
+		t.Run(item.query, func(t *testing.T) {
+			assertOrder(t, body, item.order...)
+		})
+	}
+}
+
+// The query string is part of a link a user can edit, so a column this server
+// does not have falls back to the grouped default rather than being an error.
+func TestUnknownSortFallsBackToTheDefault(t *testing.T) {
+	server := newServer(t, publicServer)
+	server.write(t, "sub/b.txt", "b")
+	server.write(t, "sub/a.txt", "a")
+	server.write(t, "sub/folder/kept.txt", "x")
+
+	for _, query := range []string{"?sort=nonsense", "?sort=", "?dir=desc"} {
+		_, body := get(t, server, "/sub/"+query)
+		t.Run(query, func(t *testing.T) {
+			assertOrder(t, body, "folder/", "a.txt", "b.txt")
+		})
+	}
+}
+
+// A direction that is not descending is ascending. The column still stands:
+// only the direction was unreadable, and the column is what was asked for.
+func TestUnknownDirectionIsAscending(t *testing.T) {
+	server := newServer(t, publicServer)
+	server.write(t, "sub/b.txt", "b")
+	server.write(t, "sub/a.txt", "a")
+	server.write(t, "sub/folder/kept.txt", "x")
+
+	_, body := get(t, server, "/sub/?sort=name&dir=sideways")
+	assertOrder(t, body, "a.txt", "b.txt", "folder/")
+}
+
+// The active column says so, so that a reader is told what it is looking at
+// and the script has somewhere to carry on from.
+func TestSortedListingMarksTheColumn(t *testing.T) {
+	server := newServer(t, publicServer)
+	server.write(t, "sub/a.txt", "a")
+
+	_, body := get(t, server, "/sub/?sort=size&dir=desc")
+	for _, want := range []string{`aria-sort="descending"`, `data-sort="size"`, `data-dir="desc"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+	if strings.Contains(body, `aria-sort="ascending"`) {
+		t.Error("only the sorted column should be marked")
+	}
+}
+
+// Every column turns itself off on the third click rather than only being
+// swappable for another one, and the header links say so without the script.
+func TestEveryColumnCyclesBackToTheDefault(t *testing.T) {
+	for _, key := range []string{sortName, sortDate, sortSize, sortType} {
+		t.Run(key, func(t *testing.T) {
+			want := []sortOrder{{key: key}, {key: key, desc: true}, {}}
+			current := sortOrder{}
+			for step, expected := range want {
+				current = nextOrder(current, key)
+				if current != expected {
+					t.Fatalf("click %d = %+v, want %+v", step+1, current, expected)
+				}
+			}
+			// and round again, so the cycle repeats rather than sticking
+			if got := nextOrder(current, key); got != (sortOrder{key: key}) {
+				t.Errorf("click 4 = %+v, want ascending again", got)
+			}
+		})
+	}
+}
+
+// The link a header carries is the next step of that cycle, so a browser with
+// no script walks the same three states.
+func TestHeaderLinksCarryTheCycle(t *testing.T) {
+	server := newServer(t, publicServer)
+	server.write(t, "sub/a.txt", "a")
+
+	cases := map[string]string{
+		"/sub/":                    `href="?sort=size&amp;dir=asc"`,
+		"/sub/?sort=size&dir=asc":  `href="?sort=size&amp;dir=desc"`,
+		"/sub/?sort=size&dir=desc": `href="?"`,
+	}
+	for path, want := range cases {
+		_, body := get(t, server, path)
+		t.Run(path, func(t *testing.T) {
+			if !strings.Contains(body, want) {
+				t.Errorf("the size header does not link to %q", want)
+			}
+		})
+	}
+}
+
+// The script remembers the order for the whole server, which is what carries it
+// between folders: the links from one folder to another are relative and have
+// no query string to carry.
+func TestScriptRemembersTheOrder(t *testing.T) {
+	for _, want := range []string{"localStorage", "go-fs.listing.order"} {
+		if !strings.Contains(string(listingScript), want) {
+			t.Errorf("listing.js does not use %q", want)
+		}
+	}
+}
+
+// The style and the script are carried by the page, so that no URL this server
+// answers is anything but a path in the served folder.
+func TestListingCarriesItsOwnAssets(t *testing.T) {
+	server := newServer(t, publicServer)
+	server.write(t, "sub/a.txt", "a")
+
+	res, body := get(t, server, "/sub/")
+	for _, want := range []string{"<style nonce=", "<script nonce=", "--ground:", "XMLHttpRequest"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+	policy := res.Header.Get("Content-Security-Policy")
+	for _, want := range []string{"default-src 'none'", "connect-src 'self'", "'nonce-"} {
+		if !strings.Contains(policy, want) {
+			t.Errorf("Content-Security-Policy = %q, missing %q", policy, want)
+		}
+	}
+	// the nonce in the header has to be the one the page carries
+	nonce := strings.SplitN(strings.SplitN(policy, "'nonce-", 2)[1], "'", 2)[0]
+	if !strings.Contains(body, `<style nonce="`+nonce+`"`) {
+		t.Error("the page and the policy name different nonces")
+	}
+}
+
+// The script is inlined, so a closing tag anywhere in it would end the block
+// early and spill the rest of it into the page.
+func TestScriptCanBeInlined(t *testing.T) {
+	if strings.Contains(string(listingScript), "</script") {
+		t.Error("listing.js cannot contain a closing script tag")
 	}
 }
 
 // The root has no way back up.
 func TestListingRootHasNoParentLink(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.MethodsRequireAuth = nil
-		cfg.PathsRequireAuth = nil
-	})
+	server := newServer(t, publicServer)
 	server.write(t, "hello.txt", "hello")
 
 	_, body := get(t, server, "/")
-	if strings.Contains(body, `<a href="../">`) {
+	if strings.Contains(body, `>..</a>`) {
 		t.Error("the root should not link to a parent")
 	}
 }
 
-// A name with characters that mean something in HTML or in a URL is escaped.
+// A name with characters that mean something in HTML or in a URL is escaped,
+// in the link, in the text and in the attributes the script reads it back from.
 func TestListingEscapesNames(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.MethodsRequireAuth = nil
-		cfg.PathsRequireAuth = nil
-	})
+	server := newServer(t, publicServer)
 	server.write(t, "a b&c<d>.txt", "x")
 
 	_, body := get(t, server, "/")
 	if strings.Contains(body, "<d>.txt") {
 		t.Error("the name was not escaped into the page")
 	}
-	if !strings.Contains(body, "a%20b&amp;c&lt;d&gt;.txt") && !strings.Contains(body, "a%20b&c%3Cd%3E.txt") {
-		t.Errorf("the link was not escaped: %s", body)
+	for _, want := range []string{
+		`href="a%20b&amp;c%3Cd%3E.txt"`,      // escaped for a URL, then for the attribute
+		`data-name="a b&amp;c&lt;d&gt;.txt"`, // what the script renames and deletes by
+		`a b&amp;c&lt;d&gt;.txt</a>`,         // the text of the link
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page is missing %q\ngot: %s", want, body)
+		}
+	}
+}
+
+// The legacy reader is what a client that is not a browser parses, so its
+// bytes are the one answer this server must keep exactly as it was: the whole
+// page is pinned rather than looked through for substrings.
+func TestReaderPageBytesAreUnchanged(t *testing.T) {
+	folder := t.TempDir()
+	for _, name := range []string{"older.txt", "newer.iso"} {
+		if err := os.WriteFile(filepath.Join(folder, name), []byte("xyz"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	older := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(folder, "older.txt"), older, older); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := readDirectory(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "listing directory: listed\n" +
+		`<a href="newer.iso">newer.iso</a> - filetype: file filesize: 3<br/>` + "\n" +
+		`<a href="older.txt">older.txt</a> - filetype: file filesize: 3<br/>` + "\n"
+	if got := string(readerPage("listed", entries)); got != want {
+		t.Errorf("the reader answer changed\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// readDirectory still reports what the reader endpoint expects — the folders
+// first and then the files newest first — however the page chooses to sort it.
+func TestReadDirectoryKeepsTheLegacyOrder(t *testing.T) {
+	folder := t.TempDir()
+	if err := os.Mkdir(filepath.Join(folder, "zzz"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"aaa.txt", "bbb.txt"} {
+		if err := os.WriteFile(filepath.Join(folder, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	older := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(folder, "aaa.txt"), older, older); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := readDirectory(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, item := range entries {
+		names = append(names, item.Name)
+	}
+	want := []string{"zzz/", "bbb.txt", "aaa.txt"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("order = %v, want %v", names, want)
 	}
 }
 
@@ -154,8 +390,10 @@ func TestUnsupportedMethod(t *testing.T) {
 	if res.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", res.StatusCode)
 	}
-	if got := res.Header.Get("Allow"); !strings.Contains(got, "GET") {
-		t.Errorf("Allow = %q", got)
+	for _, want := range []string{"GET", "MKCOL", "MOVE"} {
+		if got := res.Header.Get("Allow"); !strings.Contains(got, want) {
+			t.Errorf("Allow = %q, missing %q", got, want)
+		}
 	}
 }
 

@@ -248,7 +248,8 @@ type SFTP struct {
 }
 
 // HTTP configures the HTTP file server: browsing and downloading with GET,
-// uploading with PUT and removing with DELETE.
+// uploading with PUT, removing with DELETE, creating a folder with MKCOL and
+// renaming with MOVE.
 //
 // Access has two layers. A request is public unless its method is in
 // MethodsRequireAuth or its path matches one of PathsRequireAuth; when it is
@@ -281,7 +282,10 @@ type HTTP struct {
 	// answered, which slows down guessing.
 	LoginFailureDelay int `toml:"loginFailureDelay"`
 
-	// MethodsRequireAuth are the methods that always need an account.
+	// MethodsRequireAuth are the methods that always need an account. MKCOL
+	// and MOVE do not have to be listed: MKCOL is protected wherever PUT is,
+	// and MOVE wherever PUT or DELETE is, so a configuration written before
+	// they existed still covers them.
 	MethodsRequireAuth []string `toml:"methodsRequireAuth"`
 	// PathsRequireAuth are regular expressions; a request whose path matches
 	// one of them needs an account whatever its method.
@@ -325,6 +329,9 @@ type HTTPUser struct {
 	Paths []string `toml:"paths"`
 
 	// Both default to false, as the permissions of the other servers do.
+	// AllowUserFileUpload also covers MKCOL, which creates a folder, and the
+	// two together cover MOVE, which renames: a rename leaves a name behind
+	// and takes one away, so it needs the right to do both.
 	AllowUserFileUpload bool `toml:"allowUserFileUpload"`
 	AllowUserFileDelete bool `toml:"allowUserFileDelete"`
 
@@ -410,7 +417,7 @@ func Default() Config {
 			IdleTimeout:        120,
 			SessionTimeout:     86400,
 			LoginFailureDelay:  1,
-			MethodsRequireAuth: []string{"PUT", "DELETE", "POST"},
+			MethodsRequireAuth: []string{"PUT", "DELETE", "POST", "MKCOL", "MOVE"},
 		},
 		HTTPS: HTTPS{
 			Port: 9443,
