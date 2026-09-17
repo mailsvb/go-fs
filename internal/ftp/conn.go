@@ -61,11 +61,13 @@ type conn struct {
 
 	asciiMode  bool
 	renameFrom string
-	restOffset int64
-	pbszDone   bool
-	protected  bool
-	epsvAll    bool
-	mlstFacts  map[string]bool
+	// renameFromVirtual is the client's view of renameFrom, for the record
+	renameFromVirtual string
+	restOffset        int64
+	pbszDone          bool
+	protected         bool
+	epsvAll           bool
+	mlstFacts         map[string]bool
 
 	// secure is set once the control connection carries TLS.
 	secure atomicBool
@@ -81,6 +83,11 @@ type conn struct {
 
 	closeOnce sync.Once
 	quit      bool
+
+	// connected and commands are for the logoff record: how long the session
+	// lasted and how much it did
+	connected time.Time
+	commands  int
 }
 
 // transferState lets ABOR reach a transfer that is already running.
@@ -128,6 +135,7 @@ func (s *Server) serve(ctx context.Context, raw net.Conn, secure bool) {
 		cwd:        "/",
 		root:       s.root,
 		mlstFacts:  defaultFacts(),
+		connected:  time.Now(),
 	}
 	c.secure.set(secure)
 	c.log = s.log.With("client", net.JoinHostPort(c.remoteAddr, strconv.Itoa(portOf(raw.RemoteAddr()))))
@@ -139,12 +147,14 @@ func (s *Server) serve(ctx context.Context, raw net.Conn, secure bool) {
 		s.unregister(c)
 		if c.loggedIn {
 			c.log.Info("ftp logoff", "user", c.username, "address", c.remoteAddr,
-				"total", s.Connections())
+				"total", s.Connections(), "commands", c.commands,
+				"duration", time.Since(c.connected).Round(time.Millisecond))
 		}
-		c.log.Debug("ftp connection closed")
+		c.log.Debug("ftp connection closed", "commands", c.commands,
+			"duration", time.Since(c.connected).Round(time.Millisecond))
 	}()
 
-	c.log.Debug("ftp connection established", "secure", secure)
+	c.log.Debug("ftp connection established", "secure", secure, "total", s.Connections())
 	c.reply("220", "Welcome")
 	c.loop(ctx)
 }
@@ -197,8 +207,17 @@ func (c *conn) readLoop(commands chan<- command) {
 				return
 			}
 			if errors.Is(err, errCommandTooLong) {
+				c.log.Debug("ftp command line too long", "limit", c.set.cfg.MaxCommandLength)
 				commands <- command{err: err}
 				return
+			}
+			switch {
+			case errors.Is(err, io.EOF):
+				c.log.Debug("ftp client closed the control connection")
+			case errors.Is(err, net.ErrClosed):
+				// closed from this side: QUIT, a shutdown or a failed login
+			default:
+				c.log.Debug("ftp control connection read failed", "error", err)
 			}
 			return
 		}
@@ -279,6 +298,7 @@ func (c *conn) dispatch(line string) {
 		return
 	}
 
+	c.commands++
 	logged := strings.TrimSpace(line)
 	if name == "PASS" {
 		logged = "PASS ***"
@@ -299,8 +319,10 @@ func (c *conn) dispatch(line string) {
 	run, ok := table[name]
 	if !ok {
 		if c.authenticated.get() {
+			c.log.Debug("ftp command not implemented", "command", name)
 			c.reply("500", "Command not implemented")
 		} else {
+			c.log.Debug("ftp command refused before login", "command", name)
 			c.replyAndClose("530", "Not logged in")
 		}
 		return
@@ -350,6 +372,7 @@ func (c *conn) handleAuth(arg string) {
 		return
 	}
 	if c.server.tls == nil {
+		c.log.Debug("ftp AUTH refused, ftps is not enabled", "type", arg)
 		c.reply("504", "Unsupported auth type "+arg)
 		return
 	}
@@ -358,7 +381,7 @@ func (c *conn) handleAuth(arg string) {
 	secure := tls.Server(c.ctrl, c.server.tls)
 	_ = secure.SetDeadline(time.Now().Add(30 * time.Second))
 	if err := secure.Handshake(); err != nil {
-		c.log.Debug("ftp tls handshake failed", "error", err)
+		c.log.Info("ftp tls handshake failed", "error", err)
 		c.close()
 		return
 	}
@@ -369,7 +392,9 @@ func (c *conn) handleAuth(arg string) {
 	c.writeMu.Unlock()
 	c.reader = bufio.NewReaderSize(secure, c.set.cfg.MaxCommandLength+2)
 	c.secure.set(true)
-	c.log.Debug("ftp control connection is secure")
+	state := secure.ConnectionState()
+	c.log.Debug("ftp control connection is secure",
+		"tls", tls.VersionName(state.Version), "cipher", tls.CipherSuiteName(state.CipherSuite))
 }
 
 // beginTransfer marks a transfer as running so that ABOR can reach it.

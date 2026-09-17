@@ -10,11 +10,13 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
 	"go-fs/internal/config"
+	"go-fs/internal/logging"
 	"go-fs/internal/supervisor"
 )
 
@@ -78,12 +80,29 @@ func run() error {
 		return nil
 	}
 
-	logger := newLogger(cfg.Log)
-	warnAboutSecrets(logger, *configPath, cfg)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	logger := logging.New(cfg.Log.Level, cfg.Log.Format)
+	// the first record says what is running, so that a log handed over for
+	// analysis carries the build it came from and the file it was configured by
+	logger.Info("go-fs starting",
+		"version", currentVersion(),
+		"go", runtime.Version(),
+		"os", runtime.GOOS,
+		"arch", runtime.GOARCH,
+		"pid", os.Getpid(),
+		"config", *configPath,
+		"logLevel", cfg.Log.Level,
+		"logFormat", cfg.Log.Format)
+	warnAboutSecrets(logger.Logger, *configPath, cfg)
 
-	sup := supervisor.New(logger, *configPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// the signal is taken by hand rather than through signal.NotifyContext, so
+	// that the shutdown record can say which one it was
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+
+	sup := supervisor.New(logger.Logger, *configPath)
+	sup.TrackLog(logger)
 	defer sup.Shutdown(context.Background())
 	if err := sup.Apply(ctx, cfg); err != nil {
 		return err
@@ -93,11 +112,20 @@ func run() error {
 		interval := time.Duration(cfg.General.ReloadInterval) * time.Second
 		logger.Info("watching the configuration file", "path", *configPath, "interval", interval)
 		go sup.Watch(ctx, *configPath, interval)
+	} else {
+		logger.Info("the configuration file is not watched, a change needs a restart",
+			"path", *configPath)
 	}
 
-	<-ctx.Done()
-	logger.Info("shutting down")
+	received := <-signals
+	// the signal is handed back to the runtime, so that a second one ends the
+	// process at once should the shutdown below hang on a client
+	signal.Stop(signals)
+	logger.Info("shutting down", "signal", received.String())
+	cancel()
+	started := time.Now()
 	sup.Shutdown(context.Background())
+	logger.Info("shutdown complete", "took", time.Since(started).Round(time.Millisecond))
 	return nil
 }
 
@@ -126,21 +154,4 @@ func warnAboutSecrets(logger *slog.Logger, path string, cfg config.Config) {
 			"holds every password and every private key of this server",
 			"path", path, "mode", fmt.Sprintf("%04o", mode), "suggested", "0600")
 	}
-}
-
-func newLogger(cfg config.Log) *slog.Logger {
-	level := slog.LevelInfo
-	switch cfg.Level {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-	options := &slog.HandlerOptions{Level: level}
-	if cfg.Format == "json" {
-		return slog.New(slog.NewJSONHandler(os.Stdout, options))
-	}
-	return slog.New(slog.NewTextHandler(os.Stdout, options))
 }

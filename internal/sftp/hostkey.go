@@ -25,6 +25,11 @@ func hostKey(cfg config.SFTP, logger *slog.Logger) (ssh.Signer, error) {
 		if err != nil {
 			return nil, fmt.Errorf("sftp.hostkey: %w", err)
 		}
+		// the fingerprint is what a client shows when it asks whether to
+		// trust the host, and what it reports when the key changed, so it is
+		// said once so that either can be checked against the log
+		logger.Info("sftp host key loaded", "type", signer.PublicKey().Type(),
+			"fingerprint", ssh.FingerprintSHA256(signer.PublicKey()))
 		return signer, nil
 	}
 
@@ -38,6 +43,7 @@ func hostKey(cfg config.SFTP, logger *slog.Logger) (ssh.Signer, error) {
 	}
 	logger.Warn("no sftp.hostkey configured, generated a temporary host key; "+
 		"it changes on every restart, so clients will report a changed host key",
+		"type", signer.PublicKey().Type(),
 		"fingerprint", ssh.FingerprintSHA256(signer.PublicKey()))
 	return signer, nil
 }

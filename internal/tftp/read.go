@@ -3,10 +3,12 @@ package tftp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -48,6 +50,12 @@ type readTransfer struct {
 	pendingResend bool
 
 	streamEnded bool
+
+	// completed is set once the last block was acknowledged; a transfer that
+	// ends any other way is reported as failed with reason saying how.
+	completed bool
+	reason    string
+	started   time.Time
 }
 
 func (s *Server) startRead(ctx context.Context, set *settings, slot admission, req request, from net.Addr, file *os.File, size int64) {
@@ -70,6 +78,7 @@ func (s *Server) startRead(ctx context.Context, set *settings, slot admission, r
 		conn:       conn,
 		log:        s.log.With("client", slot.client, "file", sanitize(req.filename)),
 		file:       file,
+		started:    time.Now(),
 		blockSize:  opts.blockSize,
 		windowSize: opts.windowSize,
 		timeout:    opts.timeout,
@@ -115,8 +124,9 @@ func (t *readTransfer) run(ctx context.Context) {
 	}
 
 	for {
-		msg, ok := t.await(ctx, hardDeadline, func() { t.sendWindow(true) })
-		if !ok {
+		msg, reason := t.await(ctx, hardDeadline, func() { t.sendWindow(true) })
+		if reason != "" {
+			t.reason = reason
 			return
 		}
 		if len(msg) < 4 {
@@ -124,10 +134,11 @@ func (t *readTransfer) run(ctx context.Context) {
 		}
 		op := opcode(uint16(msg[0])<<8 | uint16(msg[1]))
 		if op == opERROR {
-			t.log.Debug("tftp client aborted the transfer")
+			t.reason = "the client aborted: " + describeError(msg)
 			return
 		}
 		if op != opACK {
+			t.reason = fmt.Sprintf("the client sent opcode %d where an ACK was expected", op)
 			t.send(encodeError(errIllegalOperation, "Illegal TFTP operation"))
 			return
 		}
@@ -141,8 +152,9 @@ func (t *readTransfer) run(ctx context.Context) {
 func (t *readTransfer) handshake(ctx context.Context, hardDeadline time.Time) bool {
 	t.send(encodeOACK(t.acked))
 	for {
-		msg, ok := t.await(ctx, hardDeadline, func() { t.send(encodeOACK(t.acked)) })
-		if !ok {
+		msg, reason := t.await(ctx, hardDeadline, func() { t.send(encodeOACK(t.acked)) })
+		if reason != "" {
+			t.reason = reason + " during option negotiation"
 			return false
 		}
 		if len(msg) < 4 {
@@ -150,10 +162,13 @@ func (t *readTransfer) handshake(ctx context.Context, hardDeadline time.Time) bo
 		}
 		op := opcode(uint16(msg[0])<<8 | uint16(msg[1]))
 		if op == opERROR {
-			t.log.Debug("tftp client aborted the transfer")
+			// a client that rejects the options says so with an ERROR, which
+			// is how a client too old for them behaves
+			t.reason = "the client rejected the options: " + describeError(msg)
 			return false
 		}
 		if op != opACK {
+			t.reason = fmt.Sprintf("the client sent opcode %d where an ACK was expected", op)
 			t.send(encodeError(errIllegalOperation, "Illegal TFTP operation"))
 			return false
 		}
@@ -196,7 +211,7 @@ func (t *readTransfer) fillAndSend() bool {
 	for len(t.chunks) < t.windowSize && !t.streamEnded {
 		chunk, err := t.readChunk()
 		if err != nil {
-			t.log.Debug("tftp read error", "error", err)
+			t.reason = "read error: " + err.Error()
 			t.send(encodeError(errNotDefined, "Read error"))
 			return false
 		}
@@ -265,12 +280,16 @@ func (t *readTransfer) sendWindow(resend bool) {
 }
 
 func (t *readTransfer) complete() {
+	t.completed = true
 	t.log.Info("tftp transfer complete",
 		"direction", "download",
 		"bytes", t.bytesSent,
+		"blocks", t.blocksSent,
+		"resent", t.resentBlocks,
 		"blksize", t.blockSize,
 		"windowsize", t.windowSize,
-		"mode", t.req.mode)
+		"mode", t.req.mode,
+		"took", time.Since(t.started).Round(time.Millisecond))
 }
 
 func (t *readTransfer) send(packet []byte) {
@@ -280,23 +299,59 @@ func (t *readTransfer) send(packet []byte) {
 }
 
 func (t *readTransfer) cleanup() {
+	if !t.completed {
+		t.log.Info("tftp transfer failed",
+			"direction", "download",
+			"reason", reasonOr(t.reason, "the server is shutting down"),
+			"bytes", t.bytesSent,
+			"blocks", t.blocksSent,
+			"resent", t.resentBlocks,
+			"blksize", t.blockSize,
+			"windowsize", t.windowSize,
+			"mode", t.req.mode,
+			"took", time.Since(t.started).Round(time.Millisecond))
+	}
 	_ = t.file.Close()
 	_ = t.conn.Close()
 	t.server.release(t.slot)
+}
+
+// reasonOr is reason, or fallback when nothing set one: the paths that end a
+// transfer without saying why are the ones the context cancelled.
+func reasonOr(reason, fallback string) string {
+	if reason != "" {
+		return reason
+	}
+	return fallback
+}
+
+// describeError renders the code and message of an ERROR packet the client
+// sent, so the record says what the client complained about.
+func describeError(msg []byte) string {
+	if len(msg) < 4 {
+		return "malformed error packet"
+	}
+	code := uint16(msg[2])<<8 | uint16(msg[3])
+	text := sanitize(strings.TrimRight(string(msg[4:]), "\x00"))
+	return fmt.Sprintf("error %d %q", code, text)
 }
 
 // await reads the next packet from the client. On every timeout it calls resend
 // and tries again, giving up after the configured number of retries or when the
 // transfer outlives its deadline. Packets from a different address are answered
 // with an unknown transfer id and do not count as an attempt.
-func (t *readTransfer) await(ctx context.Context, hardDeadline time.Time, resend func()) ([]byte, bool) {
+func (t *readTransfer) await(ctx context.Context, hardDeadline time.Time, resend func()) ([]byte, string) {
 	return awaitPacket(ctx, t.conn, t.peer, t.log, t.timeout, t.retries, hardDeadline, resend)
 }
 
 var noDeadline = time.Time{}
 
+// awaitPacket returns the next packet, or the reason there is none: the empty
+// reason is a packet, anything else ends the transfer and is what its record
+// says. The one exception is a shutdown, which returns "" for the reason too
+// and is told apart by the context.
 func awaitPacket(ctx context.Context, conn *net.UDPConn, peer net.Addr, log *slog.Logger,
-	timeout time.Duration, retries int, hardDeadline time.Time, resend func()) ([]byte, bool) {
+	timeout time.Duration, retries int, hardDeadline time.Time, resend func()) ([]byte, string) {
 
 	buf := make([]byte, 65536)
 	for attempt := 0; attempt <= retries; attempt++ {
@@ -312,29 +367,35 @@ func awaitPacket(ctx context.Context, conn *net.UDPConn, peer net.Addr, log *slo
 				var netErr net.Error
 				if errors.As(err, &netErr) && netErr.Timeout() {
 					if ctx.Err() != nil {
-						return nil, false
+						return nil, "the server is shutting down"
 					}
 					if !hardDeadline.IsZero() && !time.Now().Before(hardDeadline) {
-						log.Debug("tftp transfer exceeded its deadline, aborting")
 						_, _ = conn.WriteTo(encodeError(errNotDefined, "Transfer took too long"), peer)
-						return nil, false
+						return nil, "the transfer exceeded tftp.transferTimeout"
 					}
 					break // retransmit and start another attempt
 				}
-				return nil, false
+				if ctx.Err() != nil {
+					return nil, "the server is shutting down"
+				}
+				return nil, "cannot read from the transfer socket: " + err.Error()
 			}
 			if !sameClient(from, peer) {
+				log.Debug("tftp packet from another address on the transfer socket",
+					"from", clientKey(from))
 				_, _ = conn.WriteTo(encodeError(errUnknownTID, "Unknown transfer ID"), from)
 				continue
 			}
 			msg := make([]byte, n)
 			copy(msg, buf[:n])
-			return msg, true
+			return msg, ""
 		}
 		if attempt < retries {
+			log.Debug("tftp no answer, retransmitting", "attempt", attempt+1, "retries", retries,
+				"timeout", timeout)
 			resend()
 		}
 	}
-	log.Debug("tftp transfer timed out", "retries", retries)
-	return nil, false
+	return nil, fmt.Sprintf("the client stopped answering, gave up after %d retries of %s",
+		retries, timeout)
 }

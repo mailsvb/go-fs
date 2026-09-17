@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"go-fs/internal/config"
+	"go-fs/internal/logging"
 	"go-fs/internal/service"
 	"go-fs/internal/tlsconf"
 )
@@ -105,7 +106,7 @@ func New(cfg config.General, path string, logger *slog.Logger) (*Server, error) 
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
-		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelDebug),
+		ErrorLog:          logging.HTTPErrorLog(logger, "admin"),
 	}
 	return server, nil
 }
@@ -238,6 +239,7 @@ type state struct {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	set := s.settings()
+	s.log.Debug("admin request", "method", r.Method, "url", r.URL.Path, "address", addressOf(r))
 	if !s.authenticate(set, w, r) {
 		return
 	}
@@ -312,12 +314,16 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 
 	var posted map[string]any
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxPost)).Decode(&posted); err != nil {
+		s.log.Info("the admin interface rejected a configuration", "reason", "the body is not JSON",
+			"error", err, "address", addressOf(r))
 		http.Error(w, "the body is not the configuration: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	cfg, err := s.schema.Apply(posted)
 	if err != nil {
+		s.log.Info("the admin interface rejected a configuration", "reason", "a value has the wrong shape",
+			"error", err, "address", addressOf(r))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -325,6 +331,10 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	// page reports what -check would report and a file that cannot work is
 	// never written
 	if err := cfg.Resolved().Validate(); err != nil {
+		// the page shows the same message; the record is for the operator
+		// who is told later that "the settings would not save"
+		s.log.Info("the admin interface rejected a configuration", "reason", "it does not validate",
+			"error", err, "address", addressOf(r))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -351,7 +361,9 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 // multipart — and a cross site fetch that sets it is stopped by a preflight
 // this server does not answer.
 func (s *Server) posted(w http.ResponseWriter, r *http.Request) bool {
-	if r.Header.Get("Content-Type") != "application/json" {
+	if kind := r.Header.Get("Content-Type"); kind != "application/json" {
+		s.log.Debug("the admin interface refused a body that is not JSON",
+			"contentType", kind, "address", addressOf(r))
 		http.Error(w, "the body has to be application/json", http.StatusUnsupportedMediaType)
 		return false
 	}

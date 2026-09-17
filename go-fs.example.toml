@@ -48,9 +48,14 @@ adminCert = ""
 adminKey = ""
 
 [log]
-# debug shows the protocol trace, info reports listeners, logins and transfers.
+# Everything goes to standard output, one record per line.
+# debug shows the protocol trace, info reports listeners, logins, transfers and
+# every change to a file, warn and error only what needs attention. The level
+# can be changed here without a restart: the watcher applies it within
+# reloadInterval seconds, which is the way to look at a problem on a running
+# server.
 level = "info"
-# text or json
+# text or json. Changing this needs a restart.
 format = "text"
 
 [ftp]

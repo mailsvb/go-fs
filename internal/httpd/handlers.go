@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"go-fs/internal/vfs"
 )
@@ -21,6 +23,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 	user := cred.user
 	info, err := os.Stat(target.Path)
 	if err != nil {
+		s.log.Debug("http path not found", "path", target.Virtual, "error", err)
 		http.NotFound(w, r)
 		return
 	}
@@ -67,12 +70,17 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !info.Mode().IsRegular() {
+		s.log.Debug("http path is not a regular file", "path", target.Virtual,
+			"mode", info.Mode().String())
 		http.NotFound(w, r)
 		return
 	}
 
 	file, err := os.Open(target.Path)
 	if err != nil {
+		// the file is there but cannot be read, which is the server's problem
+		// rather than the client's, whatever the 404 says
+		s.log.Warn("http cannot open the file", "path", target.Virtual, "error", err)
 		http.NotFound(w, r)
 		return
 	}
@@ -83,8 +91,23 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", typeOf(name).Media)
 	// ServeContent adds Content-Length and, unlike the Node implementation,
 	// answers a range request, so a large download can be resumed
+	started := time.Now()
 	http.ServeContent(w, r, name, info.ModTime(), file)
 
+	// what was actually sent, not the size of the file: a range request
+	// fetches a part, a conditional one nothing at all, and a HEAD only asks
+	if recorder, ok := w.(*responseRecorder); ok {
+		if r.Method == http.MethodHead || (recorder.status != http.StatusOK &&
+			recorder.status != http.StatusPartialContent) {
+			s.log.Debug("http file request answered without a body", "file", target.Virtual,
+				"status", recorder.status, "method", r.Method)
+			return
+		}
+		s.log.Info("http download", "user", nameOf(user), "file", target.Virtual,
+			"bytes", recorder.bytes, "size", info.Size(), "status", recorder.status,
+			"address", addressOf(r), "took", time.Since(started).Round(time.Millisecond))
+		return
+	}
 	s.log.Info("http download", "user", nameOf(user), "file", target.Virtual,
 		"bytes", info.Size(), "address", addressOf(r))
 }
@@ -95,6 +118,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
 	if _, err := os.Stat(target.Path); err == nil {
 		// the original falls through to its not-found handler here
+		s.log.Debug("http upload refused, the file exists", "file", target.Virtual)
 		http.NotFound(w, r)
 		return
 	}
@@ -103,6 +127,8 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 	binary := strings.Contains(contentType, "application/octet-stream")
 	multipart := strings.Contains(contentType, "multipart")
 	if !binary && !multipart {
+		s.log.Debug("http upload refused, the body is neither octet-stream nor multipart",
+			"file", target.Virtual, "contentType", contentType)
 		http.NotFound(w, r)
 		return
 	}
@@ -156,6 +182,7 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 			// part is taken rather than failing on the name
 			part, err = firstFilePart(r)
 			if err != nil {
+				s.log.Debug("http upload has no file part", "file", target.Virtual, "error", err)
 				http.Error(w, "Bad Request", http.StatusBadRequest)
 				return
 			}
@@ -168,6 +195,7 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 		// one byte past the limit is enough to know it was passed
 		body = io.LimitReader(body, set.cfg.MaxUploadSize+1)
 	}
+	started := time.Now()
 	written, err := s.store(target.Path, body)
 	if err == nil && set.cfg.MaxUploadSize > 0 && written > set.cfg.MaxUploadSize {
 		_ = os.Remove(target.Path)
@@ -181,14 +209,38 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 			s.tooLarge(set, w, target)
 			return
 		}
-		s.log.Error("http upload failed", "file", target.Virtual, "error", err)
+		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || isClientGone(err) {
+			// the client went away halfway, which is its doing and no fault
+			// of the server: an info record, with what had arrived by then
+			s.log.Info("http upload failed", "user", nameOf(user), "file", target.Virtual,
+				"bytes", written, "address", addressOf(r),
+				"took", time.Since(started).Round(time.Millisecond), "error", err)
+			http.Error(w, "Server Error", http.StatusInternalServerError)
+			return
+		}
+		s.log.Error("http upload failed", "user", nameOf(user), "file", target.Virtual,
+			"bytes", written, "address", addressOf(r), "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
 
 	s.log.Info("http upload", "user", nameOf(user), "file", target.Virtual,
-		"bytes", written, "address", addressOf(r))
+		"bytes", written, "address", addressOf(r),
+		"took", time.Since(started).Round(time.Millisecond))
 	w.WriteHeader(http.StatusOK)
+}
+
+// isClientGone reports whether an error reading the body means the client
+// closed its side, which net/http reports in a few shapes.
+func isClientGone(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	message := err.Error()
+	return strings.Contains(message, "connection reset") ||
+		strings.Contains(message, "broken pipe") ||
+		strings.Contains(message, "client disconnected")
 }
 
 // disposition builds the Content-Disposition of a download.
@@ -298,11 +350,13 @@ type multipartFile interface {
 func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
 	if target.IsRoot() {
 		// removing the served folder would take every path with it
+		s.log.Debug("http delete refused, the path is the served folder")
 		http.NotFound(w, r)
 		return
 	}
 	info, err := os.Stat(target.Path)
 	if err != nil {
+		s.log.Debug("http delete target not found", "path", target.Virtual, "error", err)
 		http.NotFound(w, r)
 		return
 	}
@@ -318,6 +372,8 @@ func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Requ
 		entries, err := os.ReadDir(target.Path)
 		if err != nil || len(entries) > 0 {
 			// a folder with anything in it is not removed, as in the original
+			s.log.Debug("http delete refused, the folder is not empty or cannot be read",
+				"folder", target.Virtual, "entries", len(entries), "error", err)
 			http.NotFound(w, r)
 			return
 		}
@@ -327,12 +383,14 @@ func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Requ
 			return
 		}
 	default:
+		s.log.Debug("http delete refused, the path is neither a file nor a folder",
+			"path", target.Virtual, "mode", info.Mode().String())
 		http.NotFound(w, r)
 		return
 	}
 
 	s.log.Info("http delete", "user", nameOf(user), "path", target.Virtual,
-		"address", addressOf(r))
+		"folder", info.IsDir(), "bytes", info.Size(), "address", addressOf(r))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -341,14 +399,17 @@ func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Requ
 func (s *Server) handleMkcol(w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
 	if r.ContentLength != 0 {
 		// RFC 4918: a body here describes something this server does not know
+		s.log.Debug("http mkdir refused, the request has a body", "folder", target.Virtual)
 		http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType)
 		return
 	}
 	if target.IsRoot() {
+		s.log.Debug("http mkdir refused, the path is the served folder")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	if _, err := os.Stat(target.Path); err == nil {
+		s.log.Debug("http mkdir refused, the path exists", "folder", target.Virtual)
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -374,10 +435,12 @@ func (s *Server) handleMkcol(w http.ResponseWriter, r *http.Request, target vfs.
 func (s *Server) handleMove(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
 	if target.IsRoot() {
 		// renaming the served folder would take every path with it
+		s.log.Debug("http rename refused, the path is the served folder")
 		http.NotFound(w, r)
 		return
 	}
 	if _, err := os.Stat(target.Path); err != nil {
+		s.log.Debug("http rename source not found", "from", target.Virtual, "error", err)
 		http.NotFound(w, r)
 		return
 	}
@@ -390,6 +453,8 @@ func (s *Server) handleMove(set *settings, w http.ResponseWriter, r *http.Reques
 		// the same refusal PUT makes for a name that is taken, with the status
 		// that says which of the two paths was the problem — a bare 404 here
 		// cannot be told apart from a source that is not there
+		s.log.Debug("http rename refused, the destination exists",
+			"from", target.Virtual, "to", destination.Virtual)
 		http.Error(w, "Precondition Failed", http.StatusPreconditionFailed)
 		return
 	}
@@ -415,11 +480,14 @@ func (s *Server) handleMove(set *settings, w http.ResponseWriter, r *http.Reques
 func (s *Server) destinationOf(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) (vfs.Target, bool) {
 	header := r.Header.Get("Destination")
 	if header == "" {
+		s.log.Debug("http rename has no Destination header", "from", target.Virtual)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return vfs.Target{}, false
 	}
 	parsed, err := url.Parse(header)
 	if err != nil || parsed.Path == "" {
+		s.log.Debug("http rename Destination header is not a URL", "from", target.Virtual,
+			"destination", header, "error", err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return vfs.Target{}, false
 	}

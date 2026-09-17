@@ -88,9 +88,10 @@ type General struct {
 // 'upload' events; here they become structured log records.
 type Log struct {
 	// Level is one of debug, info, warn, error. The protocol trace that the
-	// original reported as 'log' events is written at debug level.
+	// original reported as 'log' events is written at debug level. It can be
+	// changed without a restart: a reload switches the running logger over.
 	Level string `toml:"level"`
-	// Format is text or json.
+	// Format is text or json. Changing it needs a restart.
 	Format string `toml:"format"`
 }
 

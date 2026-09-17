@@ -89,6 +89,7 @@ func (c *conn) formatEntry(format listFormat, name string, info fs.FileInfo) str
 func (c *conn) buildListing(format listFormat, osPath string) (string, bool) {
 	info, err := os.Stat(osPath)
 	if err != nil {
+		c.log.Debug("ftp listing target not found", "error", err)
 		return "", false
 	}
 
@@ -97,6 +98,9 @@ func (c *conn) buildListing(format listFormat, osPath string) (string, bool) {
 	if info.IsDir() {
 		entries, err := os.ReadDir(osPath)
 		if err != nil {
+			// a folder that exists but cannot be read is a permission problem
+			// on the server, which the client's 550 does not say
+			c.log.Warn("ftp cannot read the folder", "user", c.username, "error", err)
 			return "", false
 		}
 		for _, entry := range entries {
@@ -126,10 +130,12 @@ func cmdList(format listFormat) handler {
 	return func(c *conn, arg string) {
 		target := c.root.Resolve(c.cwd, parseListArgument(arg))
 		if !target.Valid {
+			c.log.Debug("ftp listing path refused", "path", arg)
 			c.reply("550", "Directory not found")
 			return
 		}
 		if _, err := os.Stat(target.Path); err != nil {
+			c.log.Debug("ftp listing target not found", "path", target.Virtual, "error", err)
 			c.reply("550", "Directory not found")
 			return
 		}
@@ -144,8 +150,10 @@ func cmdList(format listFormat) handler {
 				listing = "\r\n"
 			}
 			if _, err := io.WriteString(data, listing); err != nil {
+				c.log.Debug("ftp listing transfer failed", "path", relative, "error", err)
 				return "550", fmt.Sprintf("Transfer failed %q", relative)
 			}
+			c.log.Debug("ftp listing sent", "path", relative, "bytes", len(listing))
 			return "226", fmt.Sprintf("Successfully transferred %q", relative)
 		})
 	}

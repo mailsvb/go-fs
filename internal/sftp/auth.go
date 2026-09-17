@@ -75,12 +75,24 @@ var errDenied = errors.New("authentication failed")
 // authenticatePassword answers the SSH password method. The reply to a wrong
 // password is delayed, as in FTP, so that guessing costs the attacker time.
 func (s *Server) authenticatePassword(meta ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+	log := s.log.With("client", meta.RemoteAddr().String(), "user", meta.User(), "method", "password")
 	user := s.account(meta.User())
 	if user != nil && user.canPassword() && secrets.Match(string(password), user.password) {
-		s.log.Debug("sftp authentication", "user", meta.User(), "method", "password", "success", true)
+		log.Debug("sftp authentication", "success", true)
 		return &ssh.Permissions{}, nil
 	}
-	s.log.Debug("sftp authentication", "user", meta.User(), "method", "password", "success", false)
+	// why it failed is for the trace, since the answer to the client must
+	// not say whether the account exists
+	switch {
+	case user == nil:
+		log.Debug("sftp authentication", "success", false, "reason", "no such account")
+	case !user.canPassword():
+		log.Debug("sftp authentication", "success", false, "reason", "the account has no password, only keys")
+	default:
+		log.Debug("sftp authentication", "success", false, "reason", "wrong password")
+	}
+	// the same record the FTP and HTTP servers write for a refused password
+	log.Info("sftp login refused", "address", addressOnly(meta.RemoteAddr().String()))
 	if delay := s.settings().cfg.LoginFailureDelay; delay > 0 {
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
@@ -91,16 +103,27 @@ func (s *Server) authenticatePassword(meta ssh.ConnMetadata, password []byte) (*
 // compared against the account's authorized keys; the SSH layer has already
 // checked that the client holds the matching private key.
 func (s *Server) authenticatePublicKey(meta ssh.ConnMetadata, offered ssh.PublicKey) (*ssh.Permissions, error) {
+	// the fingerprint is what the client's own ssh-keygen -l prints, so the
+	// two can be compared when a key that should match does not
+	log := s.log.With("client", meta.RemoteAddr().String(), "user", meta.User(),
+		"method", "publickey", "keyType", offered.Type(), "fingerprint", ssh.FingerprintSHA256(offered))
 	user := s.account(meta.User())
 	if user != nil {
 		wire := offered.Marshal()
 		for _, allowed := range user.keys {
 			if allowed.Type() == offered.Type() && secrets.MatchBytes(allowed.Marshal(), wire) {
-				s.log.Debug("sftp authentication", "user", meta.User(), "method", "publickey", "success", true)
+				log.Debug("sftp authentication", "success", true)
 				return &ssh.Permissions{}, nil
 			}
 		}
 	}
-	s.log.Debug("sftp authentication", "user", meta.User(), "method", "publickey", "success", false)
+	// a client offers every key it has before the right one, so a refused
+	// key is ordinary and stays in the trace
+	if user == nil {
+		log.Debug("sftp authentication", "success", false, "reason", "no such account")
+	} else {
+		log.Debug("sftp authentication", "success", false,
+			"reason", "the key is not authorized for the account", "authorizedKeys", len(user.keys))
+	}
 	return nil, errDenied
 }

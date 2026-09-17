@@ -34,6 +34,7 @@ func Build(cert, key, certName, keyName string, logger *slog.Logger) (*tls.Confi
 		if err != nil {
 			return nil, fmt.Errorf("%s and %s: %w", certName, keyName, err)
 		}
+		describe(certificate, certName, logger)
 		return &tls.Config{
 			Certificates: []tls.Certificate{certificate},
 			MinVersion:   tls.VersionTLS12,
@@ -55,6 +56,45 @@ func Build(cert, key, certName, keyName string, logger *slog.Logger) (*tls.Confi
 		Certificates: []tls.Certificate{certificate},
 		MinVersion:   tls.VersionTLS12,
 	}, nil
+}
+
+// expiryWarning is how long before a certificate runs out the log starts
+// saying so. A certificate that has expired is the one TLS failure that
+// arrives with no change to the configuration, so it is worth a warning
+// while there is still time to renew.
+const expiryWarning = 30 * 24 * time.Hour
+
+// describe says which certificate a listener serves, so that a client's
+// complaint about the name or the chain can be checked against what is
+// actually loaded, and warns about one that is expiring.
+func describe(certificate tls.Certificate, certName string, logger *slog.Logger) {
+	leaf := certificate.Leaf
+	if leaf == nil {
+		parsed, err := x509.ParseCertificate(certificate.Certificate[0])
+		if err != nil {
+			return
+		}
+		leaf = parsed
+	}
+	logger.Info("tls certificate loaded", "setting", certName,
+		"subject", leaf.Subject.String(), "issuer", leaf.Issuer.String(),
+		"dnsNames", leaf.DNSNames, "ipAddresses", leaf.IPAddresses,
+		"notBefore", leaf.NotBefore.Format(time.RFC3339),
+		"notAfter", leaf.NotAfter.Format(time.RFC3339),
+		"chain", len(certificate.Certificate))
+	now := time.Now()
+	switch {
+	case now.After(leaf.NotAfter):
+		logger.Warn("the tls certificate has expired, clients will refuse it",
+			"setting", certName, "notAfter", leaf.NotAfter.Format(time.RFC3339))
+	case now.Before(leaf.NotBefore):
+		logger.Warn("the tls certificate is not valid yet, clients will refuse it",
+			"setting", certName, "notBefore", leaf.NotBefore.Format(time.RFC3339))
+	case leaf.NotAfter.Sub(now) < expiryWarning:
+		logger.Warn("the tls certificate expires soon",
+			"setting", certName, "notAfter", leaf.NotAfter.Format(time.RFC3339),
+			"remaining", leaf.NotAfter.Sub(now).Round(time.Hour))
+	}
 }
 
 // Pair decodes a configured certificate and private key into the certificate a

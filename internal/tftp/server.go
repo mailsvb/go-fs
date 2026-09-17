@@ -216,6 +216,8 @@ func (s *Server) dispatch(ctx context.Context, msg []byte, from net.Addr) {
 	case opRRQ, opWRQ:
 		req, ok := parseRequest(msg)
 		if !ok {
+			s.log.Info("tftp request refused", "client", client, "reason", "malformed request",
+				"bytes", len(msg))
 			s.sendTo(from, encodeError(errIllegalOperation, "Malformed request"))
 			return
 		}
@@ -246,16 +248,26 @@ type admission struct {
 	host   string
 }
 
+// refused records a request that was answered with an error before a
+// transfer started. TFTP has no login, so a refused request is the event an
+// operator looks for when a client reports that it "cannot get the file".
+func (s *Server) refused(from net.Addr, what string, req request, reason string) {
+	s.log.Info("tftp request refused", "client", clientKey(from), "type", what,
+		"file", sanitize(req.filename), "mode", sanitize(req.mode), "reason", reason)
+}
+
 // admit reserves a slot for a request, or answers why it cannot.
 func (s *Server) admit(set *settings, req request, from net.Addr, what string) (admission, bool) {
 	client := clientKey(from)
 	host := hostKey(from)
 
 	if len(req.filename) == 0 || len(req.filename) > maxFilenameLength {
+		s.refused(from, what, req, "the file name is empty or too long")
 		s.sendTo(from, encodeError(errIllegalOperation, "Filename too long"))
 		return admission{}, false
 	}
 	if req.mode != modeOctet && req.mode != modeNetascii {
+		s.refused(from, what, req, "unsupported transfer mode")
 		s.sendTo(from, encodeError(errIllegalOperation, "Unsupported transfer mode "+sanitize(req.mode)))
 		return admission{}, false
 	}
@@ -273,7 +285,8 @@ func (s *Server) admit(set *settings, req request, from net.Addr, what string) (
 		return admission{}, false
 	}
 	if len(s.transfers)+s.pending >= set.cfg.MaxConnections {
-		s.log.Debug("tftp rejected, server busy", "client", client, "type", what,
+		s.log.Info("tftp request refused, server busy", "client", client, "type", what,
+			"file", sanitize(req.filename), "transfers", len(s.transfers)+s.pending,
 			"maxConnections", set.cfg.MaxConnections)
 		s.sendLocked(from, encodeError(errNotDefined, "Server busy"))
 		return admission{}, false
@@ -281,7 +294,8 @@ func (s *Server) admit(set *settings, req request, from net.Addr, what string) (
 	// A single host must not be able to take every slot, otherwise one client
 	// that never answers starves everybody else.
 	if s.hostTransfers[host] >= set.cfg.MaxConnectionsPerHost {
-		s.log.Debug("tftp rejected, host busy", "client", client, "type", what,
+		s.log.Info("tftp request refused, host busy", "client", client, "type", what,
+			"file", sanitize(req.filename), "transfers", s.hostTransfers[host],
 			"maxConnectionsPerHost", set.cfg.MaxConnectionsPerHost)
 		s.sendLocked(from, encodeError(errNotDefined, "Server busy"))
 		return admission{}, false
@@ -332,6 +346,7 @@ func (s *Server) ActiveTransfers() int {
 
 func (s *Server) handleRead(ctx context.Context, set *settings, req request, from net.Addr) {
 	if !set.cfg.AllowRead {
+		s.refused(from, "RRQ", req, "tftp.allowRead is off")
 		s.sendTo(from, encodeError(errAccessViolation, "Access violation"))
 		return
 	}
@@ -343,18 +358,25 @@ func (s *Server) handleRead(ctx context.Context, set *settings, req request, fro
 	target := s.root.Resolve("/", req.filename)
 	if !target.Valid {
 		s.release(slot)
+		s.refused(from, "RRQ", req, "the path leaves the base folder")
 		s.sendTo(from, encodeError(errAccessViolation, "Access violation"))
 		return
 	}
 	info, err := os.Stat(target.Path)
 	if err != nil || !info.Mode().IsRegular() {
 		s.release(slot)
+		if err != nil {
+			s.refused(from, "RRQ", req, "file not found")
+		} else {
+			s.refused(from, "RRQ", req, "not a regular file")
+		}
 		s.sendTo(from, encodeError(errFileNotFound, "File not found"))
 		return
 	}
 	file, err := os.Open(target.Path)
 	if err != nil {
-		s.log.Debug("tftp cannot open file", "client", slot.client, "error", err)
+		s.log.Warn("tftp cannot open the file", "client", slot.client,
+			"file", target.Virtual, "error", err)
 		s.release(slot)
 		s.sendTo(from, encodeError(errAccessViolation, "Access violation"))
 		return
@@ -367,6 +389,7 @@ func (s *Server) handleRead(ctx context.Context, set *settings, req request, fro
 
 func (s *Server) handleWrite(ctx context.Context, set *settings, req request, from net.Addr) {
 	if !set.cfg.AllowWrite {
+		s.refused(from, "WRQ", req, "tftp.allowWrite is off")
 		s.sendTo(from, encodeError(errAccessViolation, "Access violation"))
 		return
 	}
@@ -374,8 +397,9 @@ func (s *Server) handleWrite(ctx context.Context, set *settings, req request, fr
 	if !ok {
 		return
 	}
-	fail := func(code errorCode, message string) {
+	fail := func(code errorCode, message, reason string) {
 		s.release(slot)
+		s.refused(from, "WRQ", req, reason)
 		s.sendTo(from, encodeError(code, message))
 	}
 
@@ -384,7 +408,8 @@ func (s *Server) handleWrite(ctx context.Context, set *settings, req request, fr
 	if set.cfg.MaxFileSize > 0 {
 		if value, present := req.option("tsize"); present {
 			if announced, valid := parseNumericOption(value, true); valid && announced > set.cfg.MaxFileSize {
-				fail(errDiskFull, fmt.Sprintf("File exceeds the maximum of %d bytes", set.cfg.MaxFileSize))
+				fail(errDiskFull, fmt.Sprintf("File exceeds the maximum of %d bytes", set.cfg.MaxFileSize),
+					fmt.Sprintf("the announced size %d exceeds tftp.maxFileSize %d", announced, set.cfg.MaxFileSize))
 				return
 			}
 		}
@@ -392,25 +417,27 @@ func (s *Server) handleWrite(ctx context.Context, set *settings, req request, fr
 
 	target := s.root.Resolve("/", req.filename)
 	if !target.Valid {
-		fail(errAccessViolation, "Access violation")
+		fail(errAccessViolation, "Access violation", "the path leaves the base folder")
 		return
 	}
 	if _, err := os.Stat(target.Path); err == nil && !set.cfg.AllowOverwrite {
-		fail(errFileExists, "File already exists")
+		fail(errFileExists, "File already exists", "the file exists and tftp.allowOverwrite is off")
 		return
 	}
 
 	dir := filepath.Dir(target.Path)
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		if !set.cfg.AllowCreateDirectory {
-			fail(errAccessViolation, "Access violation")
+			fail(errAccessViolation, "Access violation", "the folder does not exist and tftp.allowCreateDirectory is off")
 			return
 		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			s.log.Debug("tftp cannot create folder", "client", slot.client, "error", err)
-			fail(errAccessViolation, "Access violation")
+			s.log.Warn("tftp cannot create the folder", "client", slot.client,
+				"folder", filepath.Dir(target.Virtual), "error", err)
+			fail(errAccessViolation, "Access violation", "cannot create the folder")
 			return
 		}
+		s.log.Info("tftp mkdir", "client", slot.client, "folder", filepath.Dir(target.Virtual))
 	}
 
 	// The upload is written beside its destination and renamed over it when it
@@ -419,8 +446,9 @@ func (s *Server) handleWrite(ctx context.Context, set *settings, req request, fr
 	// replacing something that was already there.
 	file, err := os.CreateTemp(dir, ".go-fs-upload-*")
 	if err != nil {
-		s.log.Debug("tftp cannot open file for writing", "client", slot.client, "error", err)
-		fail(errAccessViolation, "Access violation")
+		s.log.Warn("tftp cannot create the upload file", "client", slot.client,
+			"folder", filepath.Dir(target.Virtual), "error", err)
+		fail(errAccessViolation, "Access violation", "cannot create the file")
 		return
 	}
 

@@ -194,10 +194,12 @@ func cmdCwd(c *conn, arg string) {
 	folder := vfs.AsFolder(virtual)
 	target := c.root.Resolve("/", folder)
 	if !target.Valid {
+		c.log.Debug("ftp CWD path refused", "path", arg)
 		c.reply("530", "CWD not successful")
 		return
 	}
 	if info, err := os.Stat(target.Path); err != nil || !info.IsDir() {
+		c.log.Debug("ftp CWD folder not found", "path", folder, "error", err)
 		c.reply("530", "CWD not successful")
 		return
 	}
@@ -227,17 +229,24 @@ func cmdDele(c *conn, arg string) {
 	if target.Valid {
 		if info, err := os.Stat(target.Path); err == nil && info.Mode().IsRegular() {
 			if !c.perms.FileDelete {
+				c.log.Debug("ftp DELE refused, the account may not delete files", "file", target.Virtual)
 				c.reply("550", "Permission denied")
 				return
 			}
 			if err := os.Remove(target.Path); err != nil {
+				c.log.Warn("ftp delete failed", "user", c.username, "file", target.Virtual, "error", err)
 				c.reply("550", "File not found")
 				return
 			}
+			// every removal is recorded, as the HTTP server does: a file that
+			// is gone is the question the log is most often asked
+			c.log.Info("ftp delete", "user", c.username, "file", target.Virtual,
+				"bytes", info.Size(), "address", c.remoteAddr)
 			c.reply("250", "File deleted successfully")
 			return
 		}
 	}
+	c.log.Debug("ftp DELE file not found", "path", arg)
 	c.reply("550", "File not found")
 }
 
@@ -254,24 +263,31 @@ func cmdRmd(recursive bool) handler {
 		// the base folder itself is not the client's to remove: it would take
 		// the served tree with it and leave every path invalid
 		if !c.perms.FolderDelete || !target.Valid || target.IsRoot() {
+			c.log.Debug("ftp RMD refused", "path", arg, "allowed", c.perms.FolderDelete,
+				"valid", target.Valid, "root", target.IsRoot())
 			c.reply("550", "Permission denied")
 			return
 		}
 		if recursive && !c.perms.FileDelete {
+			c.log.Debug("ftp RMDA refused, the account may not delete files", "folder", target.Virtual)
 			c.reply("550", "Permission denied")
 			return
 		}
 		if info, err := os.Stat(target.Path); err != nil || !info.IsDir() {
+			c.log.Debug("ftp RMD folder not found", "path", arg, "error", err)
 			c.reply("550", "Folder not found")
 			return
 		}
 		if !recursive {
 			entries, err := os.ReadDir(target.Path)
 			if err != nil {
+				c.log.Debug("ftp RMD cannot read the folder", "folder", target.Virtual, "error", err)
 				c.reply("550", "Folder not found")
 				return
 			}
 			if len(entries) > 0 {
+				c.log.Debug("ftp RMD refused, the folder is not empty",
+					"folder", target.Virtual, "entries", len(entries))
 				c.reply("550", "Folder is not empty")
 				return
 			}
@@ -281,9 +297,13 @@ func cmdRmd(recursive bool) handler {
 			remove = os.RemoveAll
 		}
 		if err := remove(target.Path); err != nil {
+			c.log.Warn("ftp folder delete failed", "user", c.username,
+				"folder", target.Virtual, "recursive", recursive, "error", err)
 			c.reply("550", "Folder not found")
 			return
 		}
+		c.log.Info("ftp folder delete", "user", c.username, "folder", target.Virtual,
+			"recursive", recursive, "address", c.remoteAddr)
 		c.reply("250", "Folder deleted successfully")
 	}
 }
@@ -291,17 +311,21 @@ func cmdRmd(recursive bool) handler {
 func cmdMkd(c *conn, arg string) {
 	target := c.root.Resolve(c.cwd, arg)
 	if !c.perms.FolderCreate || !target.Valid {
+		c.log.Debug("ftp MKD refused", "path", arg, "allowed", c.perms.FolderCreate, "valid", target.Valid)
 		c.reply("550", "Permission denied")
 		return
 	}
 	if info, err := os.Stat(target.Path); err == nil && info.IsDir() {
+		c.log.Debug("ftp MKD refused, the folder exists", "folder", target.Virtual)
 		c.reply("550", "Folder exists")
 		return
 	}
 	if err := os.MkdirAll(target.Path, 0o755); err != nil {
+		c.log.Warn("ftp mkdir failed", "user", c.username, "folder", target.Virtual, "error", err)
 		c.reply("550", "Permission denied")
 		return
 	}
+	c.log.Info("ftp mkdir", "user", c.username, "folder", target.Virtual, "address", c.remoteAddr)
 	c.reply("250", "Folder created successfully")
 }
 
@@ -359,6 +383,8 @@ func cmdStru(c *conn, arg string) {
 // takes both rights, which is the rule the SFTP server follows too.
 func cmdRnfr(c *conn, arg string) {
 	if !c.perms.FileCreate || !c.perms.FileDelete {
+		c.log.Debug("ftp RNFR refused, a rename needs the create and the delete right",
+			"create", c.perms.FileCreate, "delete", c.perms.FileDelete)
 		c.reply("550", "Permission denied")
 		return
 	}
@@ -366,32 +392,44 @@ func cmdRnfr(c *conn, arg string) {
 	if target.Valid && !target.IsRoot() {
 		if info, err := os.Stat(target.Path); err == nil && info.Mode().IsRegular() {
 			c.renameFrom = target.Path
+			c.renameFromVirtual = target.Virtual
 			c.reply("350", "File exists")
 			return
 		}
 	}
+	c.log.Debug("ftp RNFR file not found", "path", arg)
 	c.reply("550", "File does not exist")
 }
 
 func cmdRnto(c *conn, arg string) {
 	if !c.perms.FileCreate || !c.perms.FileDelete {
+		c.log.Debug("ftp RNTO refused, a rename needs the create and the delete right",
+			"create", c.perms.FileCreate, "delete", c.perms.FileDelete)
 		c.reply("550", "Permission denied")
 		return
 	}
 	target := c.root.Resolve(c.cwd, arg)
 	if c.renameFrom == "" || !target.Valid || target.IsRoot() {
+		c.log.Debug("ftp RNTO refused", "path", arg, "pending", c.renameFrom != "",
+			"valid", target.Valid, "root", target.IsRoot())
 		c.reply("550", "File already exists")
 		return
 	}
 	if _, err := os.Stat(target.Path); err == nil {
+		c.log.Debug("ftp RNTO refused, the destination exists", "to", target.Virtual)
 		c.reply("550", "File already exists")
 		return
 	}
 	if err := os.Rename(c.renameFrom, target.Path); err != nil {
+		c.log.Warn("ftp rename failed", "user", c.username,
+			"from", c.renameFromVirtual, "to", target.Virtual, "error", err)
 		c.reply("550", "File rename failed")
 		return
 	}
+	c.log.Info("ftp rename", "user", c.username, "from", c.renameFromVirtual,
+		"to", target.Virtual, "address", c.remoteAddr)
 	c.renameFrom = ""
+	c.renameFromVirtual = ""
 	c.reply("250", "File renamed successfully")
 }
 
@@ -429,9 +467,12 @@ func cmdMfmt(c *conn, arg string) {
 	if target.Valid {
 		if info, err := os.Stat(target.Path); err == nil && info.Mode().IsRegular() {
 			if err := os.Chtimes(target.Path, when, when); err != nil {
+				c.log.Warn("ftp cannot set the modification time", "user", c.username,
+					"file", target.Virtual, "error", err)
 				c.reply("550", "File does not exist")
 				return
 			}
+			c.log.Debug("ftp modification time set", "file", target.Virtual, "time", when)
 			c.reply("253", "Date/time changed okay")
 			return
 		}
@@ -519,9 +560,13 @@ func cmdSite(c *conn, arg string) {
 		return
 	}
 	if err := os.Chmod(target.Path, os.FileMode(bits)); err != nil {
+		c.log.Warn("ftp chmod failed", "user", c.username, "file", target.Virtual,
+			"mode", mode, "error", err)
 		c.reply("550", "File does not exist")
 		return
 	}
+	c.log.Info("ftp chmod", "user", c.username, "file", target.Virtual, "mode", mode,
+		"address", c.remoteAddr)
 	c.reply("200", "SITE CHMOD command successful")
 }
 

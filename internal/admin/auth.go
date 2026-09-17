@@ -32,6 +32,10 @@ func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Requ
 
 	if ok {
 		s.log.Warn("the admin interface refused a login", "user", name, "address", addressOf(r))
+	} else {
+		// the first request of a browser, before it has asked for a password:
+		// ordinary, and only in the trace
+		s.log.Debug("the admin interface asked for credentials", "address", addressOf(r))
 	}
 	time.Sleep(failureDelay)
 	w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`", charset="UTF-8"`)

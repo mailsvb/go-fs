@@ -39,6 +39,7 @@ func (s *Server) cleanupOnce() {
 	if len(entries) == 0 {
 		return
 	}
+	s.log.Debug("http cleanup sweep", "folders", len(entries))
 	for _, entry := range entries {
 		target := s.root.Resolve("/", entry.Path)
 		if !target.Valid {

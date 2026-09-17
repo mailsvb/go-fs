@@ -3,11 +3,13 @@ package ftp
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"strconv"
+	"time"
 )
 
 // cmdRetr handles RETR.
@@ -17,11 +19,13 @@ func cmdRetr(c *conn, arg string) {
 	c.restOffset = 0
 
 	if !c.perms.FileRetrieve || !target.Valid {
+		c.log.Debug("ftp RETR refused", "path", arg, "allowed", c.perms.FileRetrieve, "valid", target.Valid)
 		c.reply("550", fmt.Sprintf("Transfer failed %q", arg))
 		return
 	}
 	info, err := os.Stat(target.Path)
 	if err != nil || !info.Mode().IsRegular() {
+		c.log.Debug("ftp RETR file not found", "path", target.Virtual, "error", err)
 		c.reply("550", "File not found")
 		return
 	}
@@ -29,22 +33,29 @@ func cmdRetr(c *conn, arg string) {
 	c.withData("", func(data net.Conn) (string, string) {
 		file, err := os.Open(target.Path)
 		if err != nil {
-			c.log.Debug("ftp cannot open the file", "error", err)
+			c.log.Warn("ftp cannot open the file", "file", target.Virtual, "error", err)
 			return "550", fmt.Sprintf("Transfer failed %q", arg)
 		}
 		defer func() { _ = file.Close() }()
 
 		if offset > 0 {
 			if _, err := file.Seek(offset, io.SeekStart); err != nil {
+				c.log.Debug("ftp cannot seek to the restart offset",
+					"file", target.Virtual, "offset", offset, "error", err)
 				return "550", fmt.Sprintf("Transfer failed %q", arg)
 			}
 		}
-		if _, err := io.Copy(data, file); err != nil {
-			c.log.Debug("ftp transfer failed", "error", err)
+		started := time.Now()
+		sent, err := io.Copy(data, file)
+		if err != nil {
+			c.log.Info("ftp download failed", "user", c.username, "file", target.Virtual,
+				"bytes", sent, "offset", offset, "address", c.remoteAddr,
+				"took", time.Since(started).Round(time.Millisecond), "error", err)
 			return "550", fmt.Sprintf("Transfer failed %q", arg)
 		}
 		c.log.Info("ftp download", "user", c.username, "file", target.Virtual,
-			"bytes", info.Size()-offset, "address", c.remoteAddr)
+			"bytes", sent, "offset", offset, "address", c.remoteAddr,
+			"took", time.Since(started).Round(time.Millisecond))
 		return "226", fmt.Sprintf("Successfully transferred %q", arg)
 	})
 }
@@ -73,16 +84,21 @@ func cmdStor(kind string) handler {
 		}
 
 		if !target.Valid {
+			c.log.Debug("ftp store path refused", "command", kind, "path", name)
 			c.reply("550", fmt.Sprintf("Transfer failed %q", name))
 			return
 		}
 		_, statErr := os.Stat(target.Path)
 		exists := statErr == nil
 		if exists && !c.perms.FileOverwrite {
+			c.log.Debug("ftp store refused, the file exists and the account may not overwrite",
+				"command", kind, "file", target.Virtual)
 			c.reply("550", "File already exists")
 			return
 		}
 		if !exists && !c.perms.FileCreate {
+			c.log.Debug("ftp store refused, the account may not create files",
+				"command", kind, "file", target.Virtual)
 			c.reply("550", fmt.Sprintf("Transfer failed %q", name))
 			return
 		}
@@ -96,22 +112,26 @@ func cmdStor(kind string) handler {
 		c.withData(opening, func(data net.Conn) (string, string) {
 			file, err := c.openForWrite(target.Path, appending, exists, offset)
 			if err != nil {
-				c.log.Debug("ftp cannot open the file for writing", "error", err)
+				c.log.Warn("ftp cannot open the file for writing", "file", target.Virtual, "error", err)
 				return "550", fmt.Sprintf("Transfer failed %q", name)
 			}
 
+			started := time.Now()
 			written, copyErr := io.Copy(file, data)
 			// Report success only once the data has actually reached the file
 			// system, and never for a transfer that broke off.
 			syncErr := file.Sync()
 			closeErr := file.Close()
 			if copyErr != nil || syncErr != nil || closeErr != nil {
-				c.log.Debug("ftp store failed",
-					"copy", copyErr, "sync", syncErr, "close", closeErr)
+				c.log.Info("ftp upload failed", "user", c.username, "file", target.Virtual,
+					"bytes", written, "address", c.remoteAddr,
+					"took", time.Since(started).Round(time.Millisecond),
+					"error", errors.Join(copyErr, syncErr, closeErr))
 				return "550", fmt.Sprintf("Transfer failed %q", name)
 			}
 			c.log.Info("ftp upload", "user", c.username, "file", target.Virtual,
-				"bytes", written, "address", c.remoteAddr)
+				"bytes", written, "address", c.remoteAddr,
+				"took", time.Since(started).Round(time.Millisecond))
 			return "226", fmt.Sprintf("Successfully transferred %q", name)
 		})
 	}

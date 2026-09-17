@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"go-fs/internal/config"
+	"go-fs/internal/logging"
 	"go-fs/internal/service"
 	"go-fs/internal/tlsconf"
 	"go-fs/internal/vfs"
@@ -170,9 +171,26 @@ func New(cfg config.HTTP, https config.HTTPS, logger *slog.Logger) (*Server, err
 		// the headers are bounded even where the body is not, so a connection
 		// that dribbles a request line forever does not hold a slot
 		ReadHeaderTimeout: headerTimeout,
-		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelDebug),
+		// what net/http reports on its own: a handler that panicked lands at
+		// error, a client that failed its TLS handshake in the trace
+		ErrorLog: logging.HTTPErrorLog(logger, "http"),
+		// each connection is recorded as it comes and goes, so a client that
+		// "cannot connect" can be told apart from one whose request failed
+		ConnState: server.connState,
 	}
 	return server, nil
+}
+
+// connState is the http.Server's report of a connection's life. Only the
+// ends of it are recorded: the states in between are per request, and the
+// request has a record of its own.
+func (s *Server) connState(conn net.Conn, state http.ConnState) {
+	switch state {
+	case http.StateNew:
+		s.log.Debug("http connection established", "client", conn.RemoteAddr().String())
+	case http.StateClosed, http.StateHijacked:
+		s.log.Debug("http connection closed", "client", conn.RemoteAddr().String())
+	}
 }
 
 // Start binds the listeners and serves until ctx is cancelled. The two
@@ -290,7 +308,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// one snapshot for the whole request, so a reload halfway through cannot
 	// authenticate against one account list and authorize against another
 	set := s.settings()
-	s.log.Debug("http request", "method", r.Method, "url", r.URL.Path, "address", addressOf(r))
+	// client keeps the port, which is what ties the records of one connection
+	// together on a busy server, as it does for the FTP trace
+	s.log.Debug("http request", "method", r.Method, "url", r.URL.RequestURI(),
+		"client", r.RemoteAddr, "proto", r.Proto, "tls", r.TLS != nil,
+		"userAgent", r.UserAgent(), "contentLength", r.ContentLength)
+
+	// the answer is recorded when it is complete, with what the handler
+	// decided and how long it took: one line per request, which is what the
+	// question "what happened at 14:32" is answered from
+	recorder := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
+	started := time.Now()
+	defer func() {
+		s.log.Debug("http response", "method", r.Method, "url", r.URL.Path,
+			"client", r.RemoteAddr, "status", recorder.status, "bytes", recorder.bytes,
+			"took", time.Since(started).Round(time.Millisecond))
+	}()
+	w = recorder
 
 	target := s.root.Resolve("/", r.URL.Path)
 	if !target.Valid {
@@ -351,9 +385,39 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleDirectoryReader(set, w, r, target)
 	default:
+		s.log.Debug("http method not allowed", "method", r.Method, "url", r.URL.Path)
 		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, POST, MKCOL, MOVE")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// responseRecorder remembers the status and the size of an answer for its
+// record. Unwrap hands the real writer to http.ResponseController, so that a
+// handler that needs to flush or set a deadline still can.
+type responseRecorder struct {
+	http.ResponseWriter
+	status int
+	bytes  int64
+	wrote  bool
+}
+
+func (r *responseRecorder) WriteHeader(status int) {
+	if !r.wrote {
+		r.status = status
+		r.wrote = true
+	}
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *responseRecorder) Write(b []byte) (int, error) {
+	r.wrote = true
+	n, err := r.ResponseWriter.Write(b)
+	r.bytes += int64(n)
+	return n, err
+}
+
+func (r *responseRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }
 
 // headerTimeout is how long the request line and the headers may take. The

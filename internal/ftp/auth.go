@@ -63,6 +63,9 @@ func (c *conn) authenticateUser(password string) bool {
 	}
 
 	c.log.Debug("ftp authentication", "user", c.username, "success", success)
+	if !success {
+		c.log.Info("ftp login refused", "user", c.username, "address", c.remoteAddr)
+	}
 	return success
 }
 

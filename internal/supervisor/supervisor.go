@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"go-fs/internal/config"
 	"go-fs/internal/ftp"
 	"go-fs/internal/httpd"
+	"go-fs/internal/logging"
 	"go-fs/internal/service"
 	"go-fs/internal/sftp"
 	"go-fs/internal/tftp"
@@ -103,13 +105,27 @@ type Supervisor struct {
 	// is handed it so that it can edit the file it is configured by.
 	path string
 
+	// root is the logger whose level follows the [log] section, when main
+	// handed one over; tests leave it nil.
+	root *logging.Logger
+
 	mu      sync.Mutex
 	running map[string]service.Server
 	current config.Config
+	// applied reports whether current holds a configuration at all, so that
+	// the first Apply is not read as everything having changed.
+	applied bool
 }
 
 func New(logger *slog.Logger, path string) *Supervisor {
 	return &Supervisor{log: logger, path: path, running: make(map[string]service.Server)}
+}
+
+// TrackLog makes a reload of the [log] section reach the logger: the level is
+// switched in place, which is how debug output is turned on under a running
+// server; the format cannot be, and a change to it is reported instead.
+func (s *Supervisor) TrackLog(root *logging.Logger) {
+	s.root = root
 }
 
 // Apply brings what is running in line with cfg. A service that cannot be
@@ -120,6 +136,12 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 	defer s.mu.Unlock()
 
 	current := env{cfg: cfg, path: s.path}
+	if s.applied {
+		s.log.Info("applying the changed configuration",
+			"sections", strings.Join(changedSections(s.current, cfg), ","))
+	}
+	s.applyLog(cfg.Log)
+
 	// a service that could not be brought up leaves the remembered
 	// configuration alone, so that the next reload sees a change and tries it
 	// again rather than deciding there is nothing to do
@@ -139,9 +161,8 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 			}
 
 		case running && !wanted:
-			_ = server.Shutdown(context.Background())
-			delete(s.running, entry.name)
-			s.log.Info("server stopped", "server", entry.name)
+			s.stop(entry.name, server)
+			s.log.Info("server stopped", "server", entry.name, "reason", "disabled in the configuration")
 
 		default:
 			err := entry.reload(server, current)
@@ -149,8 +170,7 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 			case err == nil:
 				s.log.Info("server reloaded", "server", entry.name)
 			case errors.Is(err, service.ErrNeedsRestart):
-				_ = server.Shutdown(context.Background())
-				delete(s.running, entry.name)
+				s.stop(entry.name, server)
 				if err := s.start(ctx, entry, current); err != nil {
 					incomplete = true
 					s.log.Error("cannot restart the server, it will be tried again "+
@@ -169,15 +189,48 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 
 	if !incomplete {
 		s.current = cfg
+		s.applied = true
 	}
 	if len(s.running) == 0 {
 		return errors.New("no server is enabled, nothing to do")
 	}
+	s.log.Debug("configuration applied", "running", strings.Join(s.runningLocked(), ","),
+		"complete", !incomplete)
 	return nil
+}
+
+// applyLog carries the [log] section over to the logger. The level takes
+// effect at once; the format is baked into the handler, so a change to it is
+// said out loud and waits for a restart.
+func (s *Supervisor) applyLog(cfg config.Log) {
+	if s.root == nil {
+		return
+	}
+	if s.root.SetLevel(cfg.Level) {
+		s.log.Info("log level changed", "level", cfg.Level)
+	}
+	if s.applied && cfg.Format != s.root.Format() {
+		s.log.Warn("log.format changed, which takes effect at the next restart",
+			"configured", cfg.Format, "running", s.root.Format())
+	}
+}
+
+// changedSections names the top level sections that differ between two
+// configurations, so a reload record says what it is about.
+func changedSections(before, after config.Config) []string {
+	var changed []string
+	b, a := reflect.ValueOf(before), reflect.ValueOf(after)
+	for i := range a.NumField() {
+		if !reflect.DeepEqual(b.Field(i).Interface(), a.Field(i).Interface()) {
+			changed = append(changed, strings.ToLower(a.Type().Field(i).Name))
+		}
+	}
+	return changed
 }
 
 // start builds and starts one service.
 func (s *Supervisor) start(ctx context.Context, e entry, current env) error {
+	started := time.Now()
 	server, err := e.create(current, s.log)
 	if err != nil {
 		return err
@@ -186,8 +239,21 @@ func (s *Supervisor) start(ctx context.Context, e entry, current env) error {
 		return err
 	}
 	s.running[e.name] = server
-	s.log.Info("server started", "server", e.name)
+	s.log.Info("server started", "server", e.name,
+		"took", time.Since(started).Round(time.Millisecond))
 	return nil
+}
+
+// stop takes one service down. How long it takes is reported, because a
+// shutdown that waits on a client is the one thing that makes a reload slow.
+func (s *Supervisor) stop(name string, server service.Server) {
+	started := time.Now()
+	if err := server.Shutdown(context.Background()); err != nil {
+		s.log.Warn("the server did not shut down cleanly", "server", name, "error", err)
+	}
+	delete(s.running, name)
+	s.log.Debug("server shut down", "server", name,
+		"took", time.Since(started).Round(time.Millisecond))
 }
 
 // Shutdown stops everything.
@@ -195,15 +261,18 @@ func (s *Supervisor) Shutdown(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for name, server := range s.running {
-		_ = server.Shutdown(ctx)
+		started := time.Now()
+		if err := server.Shutdown(ctx); err != nil {
+			s.log.Warn("the server did not shut down cleanly", "server", name, "error", err)
+		}
 		delete(s.running, name)
+		s.log.Info("server stopped", "server", name,
+			"took", time.Since(started).Round(time.Millisecond))
 	}
 }
 
-// Running reports the names of the servers that are up, for tests.
-func (s *Supervisor) Running() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// runningLocked is Running for a caller that holds the mutex.
+func (s *Supervisor) runningLocked() []string {
 	names := make([]string, 0, len(s.running))
 	for _, entry := range services {
 		if _, up := s.running[entry.name]; up {
@@ -211,6 +280,13 @@ func (s *Supervisor) Running() []string {
 		}
 	}
 	return names
+}
+
+// Running reports the names of the servers that are up, for tests.
+func (s *Supervisor) Running() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runningLocked()
 }
 
 // stamp is what the watcher compares to notice a change.
@@ -256,7 +332,15 @@ func (s *Supervisor) Watch(ctx context.Context, path string, interval time.Durat
 			// the stamp is kept whatever the outcome, so a file that does not
 			// parse is reported once rather than on every tick
 			last = current
-			s.log.Debug("the configuration file changed", "path", path)
+			if current == (stamp{}) {
+				// an editor that writes by rename leaves a gap; the file is
+				// read again when it is back, which the next tick sees
+				s.log.Warn("the configuration file is missing, keeping the running configuration",
+					"path", path)
+				continue
+			}
+			s.log.Info("reloading the configuration", "reason", "the file changed",
+				"path", path, "size", current.size, "modified", current.modTime.Format(time.RFC3339))
 			s.reload(ctx, path)
 		}
 	}
@@ -267,7 +351,8 @@ func (s *Supervisor) Watch(ctx context.Context, path string, interval time.Durat
 func (s *Supervisor) reload(ctx context.Context, path string) {
 	cfg, err := config.Load(path)
 	if err != nil {
-		s.log.Error("the configuration was not applied, keeping the running one", "error", err)
+		s.log.Error("the configuration was not applied, keeping the running one",
+			"path", path, "error", err)
 		return
 	}
 
@@ -275,7 +360,7 @@ func (s *Supervisor) reload(ctx context.Context, path string) {
 	unchanged := reflect.DeepEqual(cfg, s.current)
 	s.mu.Unlock()
 	if unchanged {
-		s.log.Debug("the configuration file changed but says the same thing, nothing to do")
+		s.log.Info("the configuration file changed but says the same thing, nothing to do")
 		return
 	}
 

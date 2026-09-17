@@ -43,6 +43,10 @@ type writeTransfer struct {
 
 	expectedBlock uint32
 	bytesWritten  int64
+
+	// reason says how a transfer that did not complete ended, for its record
+	reason  string
+	started time.Time
 }
 
 func (s *Server) startWrite(ctx context.Context, set *settings, slot admission, req request, from net.Addr, file *os.File, destination string) {
@@ -68,6 +72,7 @@ func (s *Server) startWrite(ctx context.Context, set *settings, slot admission, 
 		file:          file,
 		temporary:     file.Name(),
 		destination:   destination,
+		started:       time.Now(),
 		blockSize:     opts.blockSize,
 		timeout:       opts.timeout,
 		retries:       set.limits.retries,
@@ -111,8 +116,9 @@ func (t *writeTransfer) run(ctx context.Context) {
 	}
 
 	for {
-		msg, ok := t.await(ctx, hardDeadline)
-		if !ok {
+		msg, reason := t.await(ctx, hardDeadline)
+		if reason != "" {
+			t.reason = reason
 			return
 		}
 		if len(msg) < 4 {
@@ -120,10 +126,11 @@ func (t *writeTransfer) run(ctx context.Context) {
 		}
 		op := opcode(uint16(msg[0])<<8 | uint16(msg[1]))
 		if op == opERROR {
-			t.log.Debug("tftp client aborted the write transfer")
+			t.reason = "the client aborted: " + describeError(msg)
 			return
 		}
 		if op != opDATA {
+			t.reason = fmt.Sprintf("the client sent opcode %d where DATA was expected", op)
 			t.send(encodeError(errIllegalOperation, "Illegal TFTP operation"))
 			return
 		}
@@ -139,12 +146,14 @@ func (t *writeTransfer) run(ctx context.Context) {
 
 		limit := t.set.cfg.MaxFileSize
 		if limit > 0 && t.bytesWritten+int64(len(data)) > limit {
-			t.log.Debug("tftp write exceeds the maximum size", "maxFileSize", limit)
+			t.reason = fmt.Sprintf("the upload exceeds tftp.maxFileSize %d", limit)
 			t.send(encodeError(errDiskFull, fmt.Sprintf("File exceeds the maximum of %d bytes", limit)))
 			return
 		}
 		if _, err := t.sink.Write(data); err != nil {
-			t.log.Debug("tftp write error", "error", err)
+			// a disk that is full, most likely; the client is told as much
+			t.log.Warn("tftp cannot write the upload", "error", err)
+			t.reason = "write error: " + err.Error()
 			t.send(encodeError(errDiskFull, "Write error"))
 			return
 		}
@@ -174,7 +183,8 @@ func (t *writeTransfer) finish(ctx context.Context) {
 		t.log.Debug("tftp sync failed", "error", err)
 	}
 	if err := t.file.Close(); err != nil {
-		t.log.Debug("tftp close failed", "error", err)
+		t.log.Warn("tftp cannot close the upload", "error", err)
+		t.reason = "close error: " + err.Error()
 		t.send(encodeError(errDiskFull, "Write error"))
 		return
 	}
@@ -186,6 +196,7 @@ func (t *writeTransfer) finish(ctx context.Context) {
 	if err := os.Rename(t.temporary, t.destination); err != nil {
 		t.log.Error("tftp cannot put the upload in place",
 			"path", t.destination, "error", err)
+		t.reason = "cannot put the upload in place: " + err.Error()
 		t.send(encodeError(errDiskFull, "Write error"))
 		return
 	}
@@ -194,8 +205,10 @@ func (t *writeTransfer) finish(ctx context.Context) {
 	t.log.Info("tftp transfer complete",
 		"direction", "upload",
 		"bytes", t.bytesWritten,
+		"blocks", t.expectedBlock-1,
 		"blksize", t.blockSize,
-		"mode", t.req.mode)
+		"mode", t.req.mode,
+		"took", time.Since(t.started).Round(time.Millisecond))
 
 	t.dally(ctx)
 }
@@ -234,7 +247,7 @@ func (t *writeTransfer) dally(ctx context.Context) {
 	}
 }
 
-func (t *writeTransfer) await(ctx context.Context, hardDeadline time.Time) ([]byte, bool) {
+func (t *writeTransfer) await(ctx context.Context, hardDeadline time.Time) ([]byte, string) {
 	resend := func() {
 		if t.expectedBlock == 1 && len(t.acked) > 0 {
 			t.send(encodeOACK(t.acked))
@@ -262,9 +275,17 @@ func (t *writeTransfer) cleanup() {
 		t.log.Debug("tftp close failed", "error", err)
 	}
 	if !t.completed {
+		t.log.Info("tftp transfer failed",
+			"direction", "upload",
+			"reason", reasonOr(t.reason, "the server is shutting down"),
+			"bytes", t.bytesWritten,
+			"blocks", t.expectedBlock-1,
+			"blksize", t.blockSize,
+			"mode", t.req.mode,
+			"took", time.Since(t.started).Round(time.Millisecond))
 		// nothing reached the destination, so nothing is left behind either
 		if err := os.Remove(t.temporary); err != nil && !errors.Is(err, os.ErrNotExist) {
-			t.log.Debug("tftp cannot remove the unfinished upload", "error", err)
+			t.log.Warn("tftp cannot remove the unfinished upload", "path", t.temporary, "error", err)
 		}
 	}
 	_ = t.conn.Close()

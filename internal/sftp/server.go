@@ -191,8 +191,8 @@ func (s *Server) accept(ctx context.Context) {
 		}
 		if len(s.conns) >= s.settings().cfg.MaxConnections {
 			s.mu.Unlock()
-			s.log.Debug("sftp connection refused, too many connections",
-				"maxConnections", s.settings().cfg.MaxConnections)
+			s.log.Info("sftp connection refused, too many connections",
+				"client", raw.RemoteAddr().String(), "maxConnections", s.settings().cfg.MaxConnections)
 			_ = raw.Close()
 			continue
 		}
@@ -217,6 +217,8 @@ func (s *Server) accept(ctx context.Context) {
 func (s *Server) serve(raw net.Conn) {
 	remote := raw.RemoteAddr().String()
 	log := s.log.With("client", remote)
+	log.Debug("sftp connection established", "total", s.Connections())
+	defer log.Debug("sftp connection closed")
 
 	// one snapshot for this connection, so a reload does not change the rules
 	// under a live session
@@ -229,12 +231,25 @@ func (s *Server) serve(raw net.Conn) {
 
 	handshake, chans, reqs, err := ssh.NewServerConn(conn, s.ssh)
 	if err != nil {
-		// a failed handshake is ordinary: a port scan, a wrong password, a
-		// client that gave up
+		var denied *ssh.ServerAuthError
+		if errors.As(err, &denied) {
+			// the client gave up after every method it tried was refused. A
+			// refused password has a record of its own above this one; a
+			// refused key only a debug one, since clients offer every key they
+			// have, so this is the one line at info that says a key login
+			// failed
+			log.Info("sftp connection closed by authenticating client",
+				"address", addressOnly(remote), "attempts", len(denied.Errors))
+			return
+		}
+		// anything else is ordinary: a port scan, a client that gave up, a
+		// client with no algorithm in common
 		log.Debug("sftp handshake failed", "error", err)
 		return
 	}
 	defer func() { _ = handshake.Close() }()
+	log.Debug("sftp handshake complete", "user", handshake.User(),
+		"clientVersion", string(handshake.ClientVersion()))
 
 	user := set.users[handshake.User()]
 	if user == nil {
@@ -244,13 +259,20 @@ func (s *Server) serve(raw net.Conn) {
 	}
 	log = log.With("user", user.name)
 	log.Info("sftp login", "address", addressOnly(remote), "total", s.Connections())
-	defer log.Info("sftp logoff", "address", addressOnly(remote))
+	connected := time.Now()
+	defer func() {
+		log.Info("sftp logoff", "address", addressOnly(remote),
+			"duration", time.Since(connected).Round(time.Millisecond))
+	}()
 
 	// global requests, keepalives among them, are answered but never acted on
 	go ssh.DiscardRequests(reqs)
 
 	for newChannel := range chans {
 		if newChannel.ChannelType() != "session" {
+			// port forwarding is what is asked for here, and refused: this is
+			// a file server, not a tunnel
+			log.Info("sftp channel refused", "type", newChannel.ChannelType())
 			_ = newChannel.Reject(ssh.UnknownChannelType, "only session channels are served")
 			continue
 		}
@@ -279,8 +301,14 @@ func (s *Server) serveSession(channel ssh.Channel, requests <-chan *ssh.Request,
 		if req.Type == "subsystem" && subsystemName(req.Payload) == "sftp" && !started {
 			granted = true
 			started = true
+		} else if req.Type == "shell" || req.Type == "exec" || req.Type == "subsystem" {
+			// a client asking for a shell has the wrong idea of this server,
+			// and the operator wants to know that somebody tried
+			log.Info("sftp request refused", "type", req.Type, "subsystem", subsystemName(req.Payload))
 		} else {
-			log.Debug("sftp request refused", "type", req.Type)
+			// pty-req, env, window-change: what an interactive client sends
+			// before asking for a shell, and nothing to act on
+			log.Debug("sftp request ignored", "type", req.Type)
 		}
 		if req.WantReply {
 			_ = req.Reply(granted, nil)
@@ -289,9 +317,12 @@ func (s *Server) serveSession(channel ssh.Channel, requests <-chan *ssh.Request,
 			continue
 		}
 
+		log.Debug("sftp subsystem started")
 		server := sftp.NewRequestServer(channel, s.handlers(user.name, log))
 		if err := server.Serve(); err != nil && !errors.Is(err, io.EOF) {
 			log.Debug("sftp session ended", "error", err)
+		} else {
+			log.Debug("sftp session ended")
 		}
 		_ = server.Close()
 		return

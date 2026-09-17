@@ -265,8 +265,8 @@ func (s *Server) accept(ctx context.Context, listener net.Listener, secure bool)
 		// maxConnections is a limit on control connections, as in the original
 		if limit := s.settings().cfg.MaxConnections; len(s.conns) >= limit {
 			s.mu.Unlock()
-			s.log.Debug("ftp connection refused, too many connections",
-				"maxConnections", limit)
+			s.log.Info("ftp connection refused, too many connections",
+				"client", raw.RemoteAddr().String(), "maxConnections", limit)
 			_ = raw.Close()
 			continue
 		}
@@ -296,6 +296,7 @@ func (s *Server) unregister(c *conn) {
 // Binding the real listener directly leaves no window in which the port can be
 // taken by somebody else.
 func (s *Server) listenData(set *settings) (net.Listener, int, error) {
+	var last error
 	for port := set.cfg.PassiveMinPort; port <= set.cfg.PassiveMaxPort; port++ {
 		// the data ports follow the control port onto the same interface
 		listener, err := net.Listen("tcp",
@@ -303,9 +304,13 @@ func (s *Server) listenData(set *settings) (net.Listener, int, error) {
 		if err == nil {
 			return listener, port, nil
 		}
+		last = err
 	}
+	// the last refusal is named: a range of ports the process may not bind
+	// fails for a reason other than every port being taken, and the error
+	// says which
 	return nil, 0, fmt.Errorf("no free data port between ftp.passiveMinPort %d and "+
-		"ftp.passiveMaxPort %d", set.cfg.PassiveMinPort, set.cfg.PassiveMaxPort)
+		"ftp.passiveMaxPort %d: %w", set.cfg.PassiveMinPort, set.cfg.PassiveMaxPort, last)
 }
 
 // normalizeAddress strips the IPv4 mapped IPv6 prefix, so addresses compare and

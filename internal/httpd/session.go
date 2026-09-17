@@ -101,11 +101,14 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 	// multipart is the other content type a cross site form can post, so what
 	// is accepted here is narrowed to the one the login form actually sends
 	if kind := r.Header.Get("Content-Type"); !strings.HasPrefix(kind, "application/x-www-form-urlencoded") {
+		s.log.Debug("http login form has the wrong content type", "contentType", kind,
+			"address", addressOf(r))
 		http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBody)
 	if err := r.ParseForm(); err != nil {
+		s.log.Debug("http login form cannot be read", "error", err, "address", addressOf(r))
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
@@ -116,7 +119,7 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 			time.Sleep(time.Duration(delay) * time.Second)
 		}
 		s.log.Info("http login refused", "user", r.PostFormValue("username"),
-			"address", addressOf(r))
+			"method", "form", "address", addressOf(r))
 		// the form comes back with the message rather than a 401: a 401 has to
 		// carry WWW-Authenticate, and that is the header that raises the
 		// browser's own password box this page exists to replace

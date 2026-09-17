@@ -99,6 +99,10 @@ type credential struct {
 	// stale says a digest nonce had aged out while the credentials were right,
 	// which is what lets a browser answer again by itself.
 	stale bool
+	// method is how the request identified itself, for the records: basic,
+	// digest, token, none, or unsupported for a scheme this server does not
+	// speak.
+	method string
 }
 
 // authenticate resolves the account behind a request.
@@ -112,13 +116,15 @@ func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Requ
 	// public folder discards the identity before looking at it
 	cred := s.identify(set, w, r)
 	if cred.user != nil {
-		s.log.Debug("http authenticated", "user", cred.user.name,
+		s.log.Debug("http authenticated", "user", cred.user.name, "method", cred.method,
 			"address", addressOf(r), "path", virtual)
 		return cred, true
 	}
 	if !s.needsAuth(set, r.Method, virtual) {
 		return cred, true
 	}
+	s.log.Debug("http authentication required", "method", r.Method, "path", virtual,
+		"address", addressOf(r), "credentials", cred.method, "stale", cred.stale)
 	s.refuse(set, w, r, cred.stale)
 	return credential{}, false
 }
@@ -135,19 +141,24 @@ func (s *Server) identify(set *settings, w http.ResponseWriter, r *http.Request)
 	switch {
 	case strings.HasPrefix(header, "Digest "):
 		user, stale := s.checkDigest(set, r, header)
-		return credential{user: user, stale: stale}
+		return credential{user: user, stale: stale, method: "digest"}
 	case strings.HasPrefix(header, "Basic "):
-		return credential{user: s.checkBasic(set, header)}
+		return credential{user: s.checkBasic(set, r, header), method: "basic"}
+	case header != "":
+		scheme, _, _ := strings.Cut(header, " ")
+		s.log.Debug("http authorization scheme not supported", "scheme", scheme,
+			"address", addressOf(r))
+		return credential{method: "unsupported"}
 	}
 
 	cookie, err := r.Cookie(sessionCookie)
 	if err != nil {
-		return credential{}
+		return credential{method: "none"}
 	}
 	if user := s.checkToken(set, w, r, cookie.Value); user != nil {
-		return credential{user: user, token: true}
+		return credential{user: user, token: true, method: "token"}
 	}
-	return credential{}
+	return credential{method: "token"}
 }
 
 // checkToken verifies a session token against the accounts as they are
@@ -489,9 +500,10 @@ func (s *Server) challenge(set *settings, w http.ResponseWriter, r *http.Request
 }
 
 // checkBasic verifies an RFC 7617 header.
-func (s *Server) checkBasic(set *settings, header string) *account {
+func (s *Server) checkBasic(set *settings, r *http.Request, header string) *account {
 	name, password, ok := parseBasic(header)
 	if !ok {
+		s.log.Debug("http basic credentials are malformed", "address", addressOf(r))
 		return nil
 	}
 	for _, user := range set.accounts {
@@ -499,6 +511,9 @@ func (s *Server) checkBasic(set *settings, header string) *account {
 			return user
 		}
 	}
+	// the same record the login form writes, so every refused password is
+	// found under one message whichever way it arrived
+	s.log.Info("http login refused", "user", name, "method", "basic", "address", addressOf(r))
 	return nil
 }
 
@@ -518,16 +533,23 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*ac
 	}
 	digest, ok := hasher(algorithm)
 	if !ok {
+		s.log.Debug("http digest algorithm not supported", "algorithm", algorithm,
+			"user", params["username"], "address", addressOf(r))
 		return nil, false
 	}
 	// clients differ on whether the query string is part of it, so both forms
 	// are accepted; either way the path is bound to the response
 	uri := params["uri"]
 	if uri != r.URL.RequestURI() && uri != r.URL.Path {
+		s.log.Debug("http digest uri does not match the request", "uri", uri,
+			"requested", r.URL.RequestURI(), "user", params["username"], "address", addressOf(r))
 		return nil, false
 	}
 	fresh, ours := s.nonceState(params["nonce"])
 	if !ours {
+		// a nonce another server issued, or one from before a restart
+		s.log.Debug("http digest nonce was not issued by this server",
+			"user", params["username"], "address", addressOf(r))
 		return nil, false
 	}
 
@@ -552,11 +574,14 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*ac
 			if !fresh {
 				// right credentials, old nonce: ask again with a new one
 				// rather than letting it through
+				s.log.Debug("http digest nonce is stale, challenging again",
+					"user", name, "address", addressOf(r))
 				return nil, true
 			}
 			return user, false
 		}
 	}
+	s.log.Info("http login refused", "user", name, "method", "digest", "address", addressOf(r))
 	return nil, false
 }
 

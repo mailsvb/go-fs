@@ -140,12 +140,20 @@ func (c *conn) withData(opening string, work func(data net.Conn) (code, message 
 	}
 	c.reply("150", opening)
 
+	mode := "active"
+	if c.mode == dataPassive {
+		mode = "passive"
+	}
 	data, err := c.openData()
 	// a data channel is used once, the client asks for a new one per transfer
 	c.mode = dataNone
 	c.closeData()
 	if err != nil {
-		c.log.Debug("ftp data connection failed", "error", err)
+		// the classic FTP failure, and nearly always a firewall or a NAT
+		// between the two ends: it is reported with what was tried so that the
+		// side at fault can be told
+		c.log.Info("ftp data connection failed", "user", c.username, "mode", mode,
+			"timeout", c.dataTimeout(), "error", err)
 		c.reply("425", "Cannot open the data connection")
 		return
 	}
@@ -241,6 +249,7 @@ func cmdPort(c *conn, arg string) {
 	port := numbers[4]*256 + numbers[5]
 
 	if !c.isDataTargetAllowed(address, port) {
+		c.log.Debug("ftp PORT refused, the target is not the client", "address", address, "port", port)
 		c.reply("501", "Port command not allowed")
 		return
 	}
@@ -269,6 +278,7 @@ func cmdEprt(c *conn, arg string) {
 		return
 	}
 	if !c.isDataTargetAllowed(address, port) {
+		c.log.Debug("ftp EPRT refused, the target is not the client", "address", address, "port", port)
 		c.reply("501", "Extended port command not allowed")
 		return
 	}
@@ -292,11 +302,13 @@ func cmdPasv(c *conn, _ string) {
 	// PASV can only name an IPv4 address, an IPv6 client has to use EPSV
 	ip := net.ParseIP(advertised)
 	if ip == nil || ip.To4() == nil {
+		c.log.Debug("ftp PASV refused, the advertised address is not IPv4", "address", advertised)
 		c.reply("522", "Network protocol not supported, use (2)")
 		return
 	}
 	port, err := c.listenPassive()
 	if err != nil {
+		c.log.Warn("ftp cannot open a passive data port", "error", err)
 		c.reply("501", "Passive command failed")
 		return
 	}
@@ -321,6 +333,7 @@ func cmdEpsv(c *conn, arg string) {
 	}
 	port, err := c.listenPassive()
 	if err != nil {
+		c.log.Warn("ftp cannot open a passive data port", "error", err)
 		c.reply("501", "Extended passive command failed")
 		return
 	}
