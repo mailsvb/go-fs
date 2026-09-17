@@ -1,6 +1,7 @@
 package httpd
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -94,5 +95,40 @@ func TestReloadKeepsTheRunningConfigurationOnError(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode != http.StatusOK || string(body) != "hello" {
 		t.Errorf("status %d body %q", res.StatusCode, body)
+	}
+}
+
+// The lifetime is read when a token is minted, so a reload changes what is
+// issued from here on with no restart and no live token disturbed.
+func TestTheTokenLifetimeIsSwappedWithoutARestart(t *testing.T) {
+	server := newServer(t, func(cfg *config.HTTP) {
+		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	})
+
+	next := server.settings().cfg
+	next.SessionTokenLifetime = 60
+	if err := server.Reload(next, server.settings().https); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if session := login(t, server, "/", "john", "doe"); session.MaxAge != 60 {
+		t.Errorf("maxage = %d, want 60", session.MaxAge)
+	}
+}
+
+// The key is derived once, at startup, and swapping it under a running server
+// would invalidate every live token halfway through a request.
+func TestChangingTheSigningKeyNeedsARestart(t *testing.T) {
+	server := newServer(t, func(cfg *config.HTTP) {
+		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	})
+	secret, err := config.GenerateSessionSecret()
+	if err != nil {
+		t.Fatalf("GenerateSessionSecret: %v", err)
+	}
+
+	next := server.settings().cfg
+	next.SessionTokenSecret = secret
+	if err := server.Reload(next, server.settings().https); !errors.Is(err, service.ErrNeedsRestart) {
+		t.Errorf("Reload = %v, want ErrNeedsRestart", err)
 	}
 }

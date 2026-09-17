@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"go-fs/internal/config"
@@ -91,135 +90,152 @@ func buildAccounts(users []config.HTTPUser) ([]*account, error) {
 	return accounts, nil
 }
 
-// sessions hands out cookies that stand in for a set of credentials, so that a
-// browser does not have to repeat them. A session names the account it was
-// issued to; its rights are looked up again on every request, so a session can
-// never reach further than the account behind it.
-type sessions struct {
-	mu       sync.Mutex
-	lifetime time.Duration
-	live     map[string]*sessionEntry
-}
-
-type sessionEntry struct {
-	// user is the account name rather than the account: what it may do is
-	// looked up again on every request, so a session can never outlive the
-	// rights behind it, nor the account itself.
-	user    string
-	expires time.Time
-}
-
-func newSessions(lifetime time.Duration) *sessions {
-	return &sessions{lifetime: lifetime, live: make(map[string]*sessionEntry)}
-}
-
-// issue mints a token for an account.
-func (s *sessions) issue(name string) (string, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	token := hex.EncodeToString(raw)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.prune()
-	s.live[token] = &sessionEntry{user: name, expires: time.Now().Add(s.lifetime)}
-	return token, nil
-}
-
-// lookup resolves a token to the account name it was issued to, and reports
-// nothing for one that has expired.
-func (s *sessions) lookup(token string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	found, ok := s.live[token]
-	if !ok {
-		return "", false
-	}
-	if time.Now().After(found.expires) {
-		delete(s.live, token)
-		return "", false
-	}
-	return found.user, true
-}
-
-// drop forgets a token, which is what happens to a session whose account is no
-// longer configured.
-func (s *sessions) drop(token string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.live, token)
-}
-
-// prune drops what has expired. The Node implementation never did, so its map
-// only ever grew.
-func (s *sessions) prune() {
-	now := time.Now()
-	for token, found := range s.live {
-		if now.After(found.expires) {
-			delete(s.live, token)
-		}
-	}
-}
-
-// setLifetime changes how long a new session is good for.
-func (s *sessions) setLifetime(lifetime time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.lifetime = lifetime
-}
-
-func (s *sessions) count() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.live)
+// credential is who a request came from and how it said so.
+type credential struct {
+	user *account
+	// token says the identity came from a session token rather than from a
+	// header, which is what decides whether there is anything to log out of.
+	token bool
+	// stale says a digest nonce had aged out while the credentials were right,
+	// which is what lets a browser answer again by itself.
+	stale bool
 }
 
 // authenticate resolves the account behind a request.
 //
-// The two return values are the account and whether the request may proceed. A
-// public request proceeds with no account at all; anything else has to present
-// credentials or a live session.
-func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Request, virtual string) (*account, bool) {
+// The two return values are the credential and whether the request may
+// proceed. A public request proceeds with no account at all; anything else has
+// to present credentials or a live session token.
+func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Request, virtual string) (credential, bool) {
+	// who the request is from is resolved for every request, public ones
+	// included: the page shows who is signed in, and it cannot do that if a
+	// public folder discards the identity before looking at it
+	cred := s.identify(set, w, r)
+	if cred.user != nil {
+		s.log.Debug("http authenticated", "user", cred.user.name,
+			"address", addressOf(r), "path", virtual)
+		return cred, true
+	}
 	if !s.needsAuth(set, r.Method, virtual) {
-		return nil, true
+		return cred, true
 	}
+	s.refuse(set, w, r, cred.stale)
+	return credential{}, false
+}
 
-	if cookie, err := r.Cookie(sessionCookie); err == nil {
-		if name, live := s.sessions.lookup(cookie.Value); live {
-			// the session names the account and nothing more, so what it may do
-			// is whatever the account may do right now
-			if user := accountNamed(set.accounts, name); user != nil {
-				s.log.Debug("http session", "user", user.name, "address", addressOf(r))
-				return user, true
-			}
-			s.log.Info("http session dropped, the account is no longer configured",
-				"user", name, "address", addressOf(r))
-			s.sessions.drop(cookie.Value)
-		}
-	}
-
+// identify reads whatever credentials a request carries, without deciding
+// whether it needed any.
+//
+// The Authorization header is read before the cookie. An explicit header is
+// the client saying who it is now; a cookie is ambient, sent by the browser
+// whether or not anyone meant it to be, and ambient credentials must never
+// shadow explicit ones.
+func (s *Server) identify(set *settings, w http.ResponseWriter, r *http.Request) credential {
 	header := r.Header.Get("Authorization")
-	var user *account
-	stale := false
 	switch {
 	case strings.HasPrefix(header, "Digest "):
-		user, stale = s.checkDigest(set, r, header)
+		user, stale := s.checkDigest(set, r, header)
+		return credential{user: user, stale: stale}
 	case strings.HasPrefix(header, "Basic "):
-		user = s.checkBasic(set, header)
+		return credential{user: s.checkBasic(set, header)}
 	}
 
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return credential{}
+	}
+	if user := s.checkToken(set, w, r, cookie.Value); user != nil {
+		return credential{user: user, token: true}
+	}
+	return credential{}
+}
+
+// checkToken verifies a session token against the accounts as they are
+// configured right now.
+//
+// Every way of failing clears the cookie and returns nothing rather than
+// refusing the request outright, so the request falls through to whatever else
+// it carries: a browser that presents a token for an account that has been
+// removed is simply signed out, and lands on the login page.
+func (s *Server) checkToken(set *settings, w http.ResponseWriter, r *http.Request, raw string) *account {
+	claims, err := s.tokens.read(raw)
+	if err != nil {
+		s.log.Debug("http refused a session token", "error", err, "address", addressOf(r))
+		s.clearSession(w, "/")
+		return nil
+	}
+	user := accountNamed(set.accounts, claims.Subject)
 	if user == nil {
-		s.challenge(set, w, r, stale)
-		return nil, false
+		s.log.Info("http session token names an account that is no longer configured",
+			"user", claims.Subject, "address", addressOf(r))
+		s.clearSession(w, "/")
+		return nil
 	}
+	if !user.cookie {
+		s.log.Info("http session token names an account that may no longer log in",
+			"user", user.name, "address", addressOf(r))
+		s.clearSession(w, user.cookiePath)
+		return nil
+	}
+	if !s.tokens.issuedFor(claims, user) {
+		s.log.Info("http session token was issued for other credentials",
+			"user", user.name, "address", addressOf(r))
+		s.clearSession(w, user.cookiePath)
+		return nil
+	}
+	return user
+}
 
-	s.log.Debug("http authenticated", "user", user.name, "address", addressOf(r), "path", virtual)
-	if user.cookie && r.Header.Get("X-Disable-Session") == "" {
-		s.setSession(set, w, r, user)
+// refuse answers a request that could not be authenticated.
+//
+// A program is challenged as it always was. A browser is sent to the login
+// page instead, because the one header that must not be sent to it is
+// WWW-Authenticate: that is what raises the browser's own password box, and
+// this server now has a page of its own to ask on. RFC 9110 section 15.5.2
+// makes that header mandatory on a 401, which is why the answer is a redirect
+// to a page that comes back 200 rather than a 401 carrying HTML.
+func (s *Server) refuse(set *settings, w http.ResponseWriter, r *http.Request, stale bool) {
+	if !browserRequest(r) || !canLogIn(set) {
+		s.challenge(set, w, r, stale)
+		return
 	}
-	return user, true
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		w.Header().Set("Cache-Control", "no-store")
+		http.Redirect(w, r, loginURL(r.URL), http.StatusSeeOther)
+		return
+	}
+	// a fetch from the page cannot follow a redirect to a login form usefully,
+	// and a challenge here would raise the password box the login page exists
+	// to avoid, so it is told plainly that the session is gone
+	http.Error(w, "Not authenticated", http.StatusUnauthorized)
+}
+
+// browserRequest reports whether the client is a browser.
+//
+// Sec-Fetch-Mode is sent by every current browser on every request, including
+// the ones this page's own script makes, and by no program; Accept covers a
+// browser too old to send it. A client that says X-Disable-Session is taken at
+// its word and treated as a program, which is what that header was for.
+func browserRequest(r *http.Request) bool {
+	if r.Header.Get("X-Disable-Session") != "" {
+		return false
+	}
+	if r.Header.Get("Sec-Fetch-Mode") != "" {
+		return true
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
+// canLogIn reports whether any account may use the login form. Where none may,
+// there is no login page and nothing about this server has changed: a browser
+// is challenged exactly as it was before.
+func canLogIn(set *settings) bool {
+	for _, user := range set.accounts {
+		if user.cookie {
+			return true
+		}
+	}
+	return false
 }
 
 // accountNamed finds a configured account by name.
@@ -267,43 +283,78 @@ func impliedBy(method string) []string {
 	}
 }
 
-// rightsFor is what the account behind a request may do in a folder, which is
-// what the listing page renders its controls from.
+// permits reports whether the account behind a request may use a method on a
+// path. It is the one place the four things that can refuse a request are put
+// together: whether the method needs an account there at all, whether the
+// account may reach the path, and the two rights.
 //
-// It cannot simply read the account flags: a public request has no account at
-// all, and the dispatch lets one through for any method needsAuth does not
-// protect. Asking the same question here is what keeps the buttons on the page
-// and the checks in ServeHTTP saying the same thing.
-func (s *Server) rightsFor(set *settings, user *account, virtual string) rights {
-	create, remove := false, false
-	if user != nil {
-		create, remove = user.upload, user.delete
-	} else {
-		create = !s.needsAuth(set, http.MethodPut, virtual)
-		remove = !s.needsAuth(set, http.MethodDelete, virtual)
+// A request that needs no account for that method is permitted whoever is
+// signed in. An identity adds to what a request may do and never takes
+// anything away: on a server whose GET is public and whose PUT is not, logging
+// in must not be what stops someone reading a folder.
+func (s *Server) permits(set *settings, user *account, method, virtual string) bool {
+	if !s.needsAuth(set, method, virtual) {
+		return true
 	}
-	return rights{
-		Upload: create,
-		Delete: remove,
-		Mkdir:  create,
+	if user == nil || !user.allows(virtual) {
+		return false
+	}
+	switch strings.ToUpper(method) {
+	case http.MethodPut, methodMkcol:
+		return user.upload
+	case http.MethodDelete:
+		return user.delete
+	case methodMove:
 		// renaming leaves a name behind and takes one away, so it needs both
-		Rename: create && remove,
+		return user.upload && user.delete
+	default:
+		return true
 	}
 }
 
-// sameOrigin guards the methods that change something. A cross site form
-// cannot issue any of them and a cross site fetch is stopped by a preflight
-// this server does not answer, so this is a second lock rather than the only
-// one; a request that names another origin outright is refused here.
-func (s *Server) sameOrigin(w http.ResponseWriter, r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" || sameHost(origin, r.Host) {
-		return true
+// rightsFor is what the account behind a request may do in a folder, which is
+// what the listing page renders its controls from. Asking permits the same
+// question the dispatch asks is what keeps the buttons on the page and the
+// checks in ServeHTTP saying the same thing.
+func (s *Server) rightsFor(set *settings, user *account, virtual string) rights {
+	return rights{
+		Upload: s.permits(set, user, http.MethodPut, virtual),
+		Delete: s.permits(set, user, http.MethodDelete, virtual),
+		Mkdir:  s.permits(set, user, methodMkcol, virtual),
+		Rename: s.permits(set, user, methodMove, virtual),
 	}
-	s.log.Warn("http refused a request from another origin",
-		"origin", origin, "method", r.Method, "address", addressOf(r))
-	http.Error(w, "Forbidden", http.StatusForbidden)
-	return false
+}
+
+// sameSite guards the methods that change something, and the login and logout
+// forms, against a request made by another site.
+//
+// A session token is ambient: the browser sends it whether or not anyone meant
+// it to, which is what makes cross site requests worth refusing here. The
+// cookie is SameSite=Lax, which already withholds it from every cross site
+// request that is not a top level navigation, so this is a second lock rather
+// than the only one.
+//
+// Two headers are looked at because neither is always there. Origin is sent by
+// a fetch and by a cross site form post, but not by every same site form post;
+// Sec-Fetch-Site is sent by every current browser on every request and by no
+// program, so a client that sends neither — curl, a script — is left alone.
+func (s *Server) sameSite(w http.ResponseWriter, r *http.Request) bool {
+	if origin := r.Header.Get("Origin"); origin != "" && !sameHost(origin, r.Host) {
+		s.log.Warn("http refused a request from another origin",
+			"origin", origin, "method", r.Method, "address", addressOf(r))
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return false
+	}
+	// "none" is the browser saying nothing initiated this but the user
+	switch site := r.Header.Get("Sec-Fetch-Site"); site {
+	case "", "same-origin", "none":
+		return true
+	default:
+		s.log.Warn("http refused a request from another site",
+			"site", site, "method", r.Method, "address", addressOf(r))
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return false
+	}
 }
 
 // sameHost reports whether an Origin header names the host the request was made
@@ -318,21 +369,57 @@ func sameHost(origin, host string) bool {
 	return parsed.Host == host
 }
 
-func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
-	token, err := s.sessions.issue(user.name)
+// setSession hands a browser the token it carries from here on.
+func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Request, user *account) error {
+	lifetime := time.Duration(set.cfg.SessionTokenLifetime) * time.Second
+	token, expires, err := s.tokens.mint(user, lifetime)
 	if err != nil {
-		s.log.Error("http cannot create a session", "error", err)
-		return
+		return err
 	}
 	s.log.Info("http login", "user", user.name, "address", addressOf(r),
 		"path", user.cookiePath)
 	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
-		Value:    token,
-		Path:     user.cookiePath,
-		MaxAge:   set.cfg.SessionTimeout,
+		Name:  sessionCookie,
+		Value: token,
+		Path:  user.cookiePath,
+		// both, because a client that ignores one honours the other
+		MaxAge:   int(lifetime.Seconds()),
+		Expires:  expires,
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		// there is no trusted proxy setting here and X-Forwarded-Proto is
+		// written by the client, so honouring it would let a client talk this
+		// server out of the flag
+		Secure: r.TLS != nil,
+		// Lax already withholds the cookie from every cross site request that
+		// is not a top level navigation, which is the whole of the CSRF
+		// surface: nothing here changes anything on a GET. Strict would also
+		// withhold it from following a link to a protected folder, for nothing
+		// in return.
+		SameSite: http.SameSiteLaxMode,
+	})
+	// a browser upgraded into this version still holds the opaque session
+	// cookie, which nothing will read again
+	clearCookie(w, legacyCookie, user.cookiePath)
+	return nil
+}
+
+// clearSession tells the browser to drop its session token. The path has to be
+// the one the cookie was set with, or the browser keeps it and clears nothing.
+func (s *Server) clearSession(w http.ResponseWriter, path string) {
+	clearCookie(w, sessionCookie, path)
+}
+
+func clearCookie(w http.ResponseWriter, name, path string) {
+	if path == "" {
+		path = "/"
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     path,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
 }

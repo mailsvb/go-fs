@@ -32,10 +32,6 @@ import (
 	"go-fs/internal/vfs"
 )
 
-// sessionCookie is the name the Node implementation used, so that a browser
-// that already holds one keeps working.
-const sessionCookie = "session"
-
 // readerPath is the legacy listing endpoint one client asks for by name.
 var readerPath = regexp.MustCompile(`/dls_directory_reader\.(php|asp)$`)
 
@@ -55,7 +51,8 @@ type Server struct {
 	root     *vfs.Root
 	log      *slog.Logger
 
-	sessions *sessions
+	// tokens signs and reads the session tokens a logged in browser carries.
+	tokens *signer
 	// nonceKey signs the digest nonces this server hands out, so that a nonce
 	// carries its own age and needs nothing to be remembered about it.
 	nonceKey []byte
@@ -116,6 +113,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS) error {
 		cfg.Address != current.cfg.Address ||
 		cfg.Basefolder != current.cfg.Basefolder ||
 		cfg.MaxConnections != current.cfg.MaxConnections ||
+		cfg.SessionTokenSecret != current.cfg.SessionTokenSecret ||
 		cfg.ReadTimeout != current.cfg.ReadTimeout ||
 		cfg.WriteTimeout != current.cfg.WriteTimeout ||
 		cfg.IdleTimeout != current.cfg.IdleTimeout ||
@@ -128,7 +126,9 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS) error {
 		// a broken account or pattern leaves the running one in place
 		return err
 	}
-	s.sessions.setLifetime(time.Duration(cfg.SessionTimeout) * time.Second)
+	// the token lifetime needs nothing done to it: it is read from the
+	// snapshot when a token is minted, so a reload changes what is issued from
+	// here on and leaves a live token with the expiry it was signed with
 	s.snapshot.Store(next)
 	return nil
 }
@@ -149,10 +149,15 @@ func New(cfg config.HTTP, https config.HTTPS, logger *slog.Logger) (*Server, err
 		return nil, err
 	}
 
+	tokens, err := newSigner(cfg.SessionTokenSecret, logger)
+	if err != nil {
+		return nil, err
+	}
+
 	server := &Server{
 		root:     root,
 		log:      logger,
-		sessions: newSessions(time.Duration(cfg.SessionTimeout) * time.Second),
+		tokens:   tokens,
 		nonceKey: nonceKey,
 		done:     make(chan struct{}),
 	}
@@ -296,56 +301,49 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, ok := s.authenticate(set, w, r, target.Virtual)
+	// the login endpoints come before authentication: the login page for a
+	// folder that needs an account has to be reachable without one, and POST
+	// is protected by default
+	if action := sessionAction(r); action != "" {
+		s.handleSession(set, w, r, target, action)
+		return
+	}
+
+	cred, ok := s.authenticate(set, w, r, target.Virtual)
 	if !ok {
 		return
 	}
-	if user != nil && !user.allows(target.Virtual) {
-		s.log.Debug("http path not allowed for the account",
-			"user", user.name, "path", target.Virtual)
+	user := cred.user
+	if !s.permits(set, user, r.Method, target.Virtual) {
+		s.log.Debug("http request not allowed for the account",
+			"user", nameOf(user), "method", r.Method, "path", target.Virtual)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
-		s.handleGet(set, w, r, target, user)
+		s.handleGet(set, w, r, target, cred)
 	case http.MethodPut:
-		if !s.sameOrigin(w, r) {
-			return
-		}
-		if user != nil && !user.upload {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+		if !s.sameSite(w, r) {
 			return
 		}
 		s.handlePut(set, w, r, target, user)
 	case http.MethodDelete:
-		if !s.sameOrigin(w, r) {
-			return
-		}
-		if user != nil && !user.delete {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+		if !s.sameSite(w, r) {
 			return
 		}
 		s.handleDelete(set, w, r, target, user)
 	case methodMkcol:
-		if !s.sameOrigin(w, r) {
-			return
-		}
-		if !s.rightsFor(set, user, target.Virtual).Mkdir {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+		if !s.sameSite(w, r) {
 			return
 		}
 		s.handleMkcol(w, r, target, user)
 	case methodMove:
-		if !s.sameOrigin(w, r) {
+		if !s.sameSite(w, r) {
 			return
 		}
-		if !s.rightsFor(set, user, target.Virtual).Rename {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
-		s.handleMove(w, r, target, user)
+		s.handleMove(set, w, r, target, user)
 	case http.MethodPost:
 		if !readerPath.MatchString(r.URL.Path) {
 			http.NotFound(w, r)

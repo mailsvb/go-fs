@@ -237,8 +237,15 @@ writeTimeout = 0
 idleTimeout = 120
 # largest accepted upload in bytes, 0 means no limit
 maxUploadSize = 0
-# how long a session cookie stays valid, in seconds
-sessionTimeout = 86400
+# How long a browser stays logged in after using the login form, in seconds.
+# The token cannot be withdrawn once it is signed, so this is what bounds it.
+httpSessionTokenLifetime = 3600
+# The key the login tokens are signed with, base64 of at least 32 random bytes:
+#   head -c 32 /dev/urandom | base64
+# Empty generates one at every start, which logs every browser out on a restart
+# and stops two hosts serving the same folder from sharing a login. Changing it
+# needs a restart.
+httpSessionTokenSecret = ""
 # seconds to wait before answering a request that could not be authenticated
 loginFailureDelay = 1
 
@@ -282,10 +289,15 @@ key = ""
 # paths = ["^/.*"]
 # allowUserFileUpload = true
 # allowUserFileDelete = true
-# Hand this account a session cookie once it has authenticated, so that a
-# browser does not repeat the credentials on every request. The session carries
-# exactly these rights, and cookiePath only tells the browser which URLs to
-# send it back for.
+# Let this account log in through the browser: the page offers it a Log in
+# button, and a successful login is carried by a signed token in the
+# goFsSessionToken cookie rather than by repeating the credentials. The token
+# names the account and nothing else, so it carries exactly the rights below as
+# they are configured right now; cookiePath only tells the browser which URLs
+# to send it back for. Programs are unaffected either way and keep using Basic
+# or Digest. Once any account here sets this, a browser is sent to the login
+# page instead of its own password box, so an account that leaves it false has
+# no way in through a browser.
 # cookie = false
 # cookiePath = "/"
 

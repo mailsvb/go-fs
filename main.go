@@ -106,6 +106,15 @@ func run() error {
 // documentation, and that the file holding every password and private key can
 // be read by more than its owner.
 func warnAboutSecrets(logger *slog.Logger, path string, cfg config.Config) {
+	// a key that no longer exists is ignored rather than refused, so that a
+	// file written for an older version still starts; saying so here is the
+	// only chance its author has to notice
+	if data, err := os.ReadFile(path); err == nil {
+		for _, retired := range config.RetiredKeys(data) {
+			logger.Warn("the configuration file sets a key this version no longer reads",
+				"key", retired)
+		}
+	}
 	if accounts := cfg.ExampleAccounts(); len(accounts) > 0 {
 		logger.Warn("an account still has the password this project's own documentation "+
 			"prints, so it is a password anybody can look up; change it before this "+

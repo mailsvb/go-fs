@@ -425,3 +425,83 @@ func TestTypeOf(t *testing.T) {
 		}
 	}
 }
+
+// The header says who is looking at the page, and offers the way in or out.
+func TestTheListingShowsWhoIsSignedIn(t *testing.T) {
+	server := newServer(t, func(cfg *config.HTTP) {
+		cfg.PathsRequireAuth = nil
+		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	})
+	server.write(t, "notes.txt", "hello")
+
+	// nobody is signed in: the way in is offered
+	_, body := get(t, server, "/")
+	if !strings.Contains(body, "go-fs=login") {
+		t.Error("the page offers no way to log in")
+	}
+	if strings.Contains(body, "go-fs=logout") {
+		t.Error("the page offers a logout to somebody who is not signed in")
+	}
+
+	session := login(t, server, "/", "john", "doe")
+	signedIn := bodyOf(t, withSession(t, server, http.MethodGet, "/", session))
+	if !strings.Contains(signedIn, `class="who">john<`) {
+		t.Error("the page does not say who is signed in")
+	}
+	if !strings.Contains(signedIn, "go-fs=logout") {
+		t.Error("the page offers no way to log out")
+	}
+
+	// somebody who authenticated with a header has no session to log out of
+	withHeader := bodyOf(t, basic(t, server, http.MethodGet, "/", "john", "doe", nil))
+	if strings.Contains(withHeader, "go-fs=logout") {
+		t.Error("a header request was offered a logout that would clear nothing")
+	}
+}
+
+// The listing depends on the cookie now, so a shared cache must not hand one
+// browser's copy to another.
+func TestTheListingVariesOnTheCookie(t *testing.T) {
+	server := newServer(t, func(cfg *config.HTTP) {
+		cfg.PathsRequireAuth = nil
+		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	})
+	res, _ := get(t, server, "/")
+	if !strings.Contains(res.Header.Get("Vary"), "Cookie") {
+		t.Errorf("vary = %q, want it to name Cookie", res.Header.Get("Vary"))
+	}
+}
+
+// Logging in is the most core control on the page, so neither it nor the
+// logout may be one of the things that only work once the script has run.
+func TestTheLoginControlsWorkWithoutJavaScript(t *testing.T) {
+	server := newServer(t, func(cfg *config.HTTP) {
+		cfg.PathsRequireAuth = nil
+		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	})
+
+	for _, item := range []struct {
+		name string
+		body string
+	}{
+		{"the login link", bodyOf(t, browserGet(t, server, "/"))},
+		{"the logout form", bodyOf(t, withSession(t, server, http.MethodGet, "/",
+			login(t, server, "/", "john", "doe")))},
+	} {
+		marker := "go-fs=login"
+		if strings.Contains(item.name, "logout") {
+			marker = "go-fs=logout"
+		}
+		index := strings.Index(item.body, marker)
+		if index < 0 {
+			t.Errorf("%s is not on the page", item.name)
+			continue
+		}
+		// the class would sit on the element the marker is in, which starts at
+		// the last tag opened before it
+		tag := item.body[strings.LastIndex(item.body[:index], "<"):index]
+		if strings.Contains(tag, "needs-js") {
+			t.Errorf("%s is hidden until the script runs: %s", item.name, tag)
+		}
+	}
+}

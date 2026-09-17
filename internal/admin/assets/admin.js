@@ -309,7 +309,11 @@ function materialEditor(field, holder, section) {
     }
   });
 
-  buttons.append(picker, plainButton("Upload\u2026", () => picker.click()));
+  // a signing key is random bytes rather than something that arrives as a
+  // file, so it is generated or pasted, never uploaded
+  if (field.upload !== "sessionsecret") {
+    buttons.append(picker, plainButton("Upload\u2026", () => picker.click()));
+  }
 
   // only a certificate and a host key can be generated: a private key on its
   // own would not match any certificate
@@ -364,6 +368,7 @@ function plainButton(text, onClick) {
 // the server, which parses it.
 function accepts(kind) {
   if (kind === "certificate") return ".pem,.crt,.cer,.cert";
+  if (kind === "sessionsecret") return ".txt,.key";
   return ".pem,.key,.p8";
 }
 

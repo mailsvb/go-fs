@@ -17,7 +17,8 @@ import (
 )
 
 // handleGet serves a file as a download and a folder as the browsable listing.
-func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
+func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, cred credential) {
+	user := cred.user
 	info, err := os.Stat(target.Path)
 	if err != nil {
 		http.NotFound(w, r)
@@ -47,7 +48,8 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 			return
 		}
 		page, err := listingPage(vfs.AsFolder(target.Virtual), entries,
-			parseSort(r.URL.Query()), s.rightsFor(set, user, target.Virtual), nonce)
+			parseSort(r.URL.Query()), s.rightsFor(set, user, target.Virtual),
+			sessionViewFor(set, r, cred), nonce)
 		if err != nil {
 			s.log.Error("http cannot render the listing", "path", target.Virtual, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
@@ -55,6 +57,9 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		}
 		w.Header().Set("Content-Type", "text/html; charset=UTF-8")
 		w.Header().Set("Content-Security-Policy", contentPolicy(nonce))
+		// the page says who is signed in, so a shared cache must not hand one
+		// browser's copy to another
+		w.Header().Set("Vary", "Cookie")
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
 			_, _ = w.Write(page)
@@ -366,7 +371,7 @@ func (s *Server) handleMkcol(w http.ResponseWriter, r *http.Request, target vfs.
 }
 
 // handleMove renames a file or a folder in place.
-func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
+func (s *Server) handleMove(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
 	if target.IsRoot() {
 		// renaming the served folder would take every path with it
 		http.NotFound(w, r)
@@ -377,7 +382,7 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, target vfs.T
 		return
 	}
 
-	destination, ok := s.destinationOf(w, r, target, user)
+	destination, ok := s.destinationOf(set, w, r, target, user)
 	if !ok {
 		return
 	}
@@ -407,7 +412,7 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, target vfs.T
 // result has to name something in the same folder: what this offers is a
 // rename, and accepting a destination anywhere else would quietly make it a
 // move API with a reach nothing here checks for.
-func (s *Server) destinationOf(w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) (vfs.Target, bool) {
+func (s *Server) destinationOf(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) (vfs.Target, bool) {
 	header := r.Header.Get("Destination")
 	if header == "" {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
@@ -431,11 +436,11 @@ func (s *Server) destinationOf(w http.ResponseWriter, r *http.Request, target vf
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return vfs.Target{}, false
 	}
-	// the account's paths are checked against where the name lands as well as
-	// where it came from, so a rename cannot carry a file out of its scope
-	if user != nil && !user.allows(destination.Virtual) {
+	// where the name lands is checked as well as where it came from, so a
+	// rename cannot carry a file out of the scope of the account doing it
+	if !s.permits(set, user, methodMove, destination.Virtual) {
 		s.log.Debug("http rename destination not allowed for the account",
-			"user", user.name, "path", destination.Virtual)
+			"user", nameOf(user), "path", destination.Virtual)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return vfs.Target{}, false
 	}

@@ -117,7 +117,7 @@ configuration keeps serving. The same goes for a change one server rejects, a
 malformed authorized key say: that server keeps running as it was while the
 others take the new file.
 
-An account is checked again on every request, so a session cookie or a live
+An account is checked again on every request, so a browser session or a live
 connection never outlives the rights it was granted by more than the request it
 is in.
 
@@ -413,6 +413,8 @@ port = 9080
 basefolder = "/srv/http"
 methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 pathsRequireAuth = ["^/private/.*"]
+httpSessionTokenLifetime = 3600
+httpSessionTokenSecret = ""
 
 [[http.users]]
 username = "john"
@@ -441,20 +443,71 @@ slash, so `^/private/.*` covers the listing of `/private` itself and not only
 what is inside it — a listing names every file in the folder, so it cannot be
 the one public thing about it.
 
-Both Digest and Basic authentication are accepted. The challenge offers Digest,
-with SHA-256 for Chromium and Firefox and MD5 for everything else, which is what
-those clients handle; `realm` is hashed into the response, so changing it makes
-browsers ask again. A digest response is bound to the path it was made for and
-to a nonce that is good for five minutes, so a header captured off the wire
-cannot be turned on another path or replayed later; a client that still has the
-credentials answers the stale challenge without asking anyone.
+Both Digest and Basic authentication are accepted, and a **program** is
+challenged exactly as it always was: the challenge offers Digest, with SHA-256
+for Chromium and Firefox and MD5 for everything else, which is what those
+clients handle; `realm` is hashed into the response, so changing it makes saved
+credentials stop matching. A digest response is bound to the path it was made
+for and to a nonce that is good for five minutes, so a header captured off the
+wire cannot be turned on another path or replayed later; a client that still has
+the credentials answers the stale challenge without asking anyone. `curl -u`,
+scripts and the legacy client are unaffected by everything below.
 
-With `cookie = true` an account is handed a session cookie once it has
-authenticated, so a browser stops repeating the credentials. The session names
-the account, and its `paths` and rights are checked again on every request — a
-session can never reach further than the account behind it. `cookiePath` only
-tells the browser which URLs to send it back for. A client that sends
-`X-Disable-Session` is never given one.
+### Logging in from a browser
+
+With `cookie = true` an account may log in through the page. A browser that has
+to authenticate is sent to a login form of this server's own instead of being
+challenged, so its native password box never appears: a `401` has to carry
+`WWW-Authenticate` (RFC 9110 §15.5.2), and that header is precisely what raises
+that box, so the answer is a redirect to a page that comes back `200`. The page
+carries a **Log in** button when nobody is signed in, and the account name and a
+**Log out** button when somebody is.
+
+A browser is recognised by `Sec-Fetch-Mode`, which every current browser sends on
+every request and no program sends, falling back to `text/html` in `Accept` for a
+browser too old for it. A client that sends `X-Disable-Session` is treated as a
+program. Where **no** account sets `cookie = true` there is no login page at all
+and nothing about this server has changed.
+
+The login and logout endpoints have no paths of their own: they are
+`?go-fs=login` and `?go-fs=logout` on the path being asked for. Every URL this
+server answers is a path in the served folder — which is also why the page's
+style and script are inlined rather than fetched — so a `/login` would shadow a
+real name, while a query key can shadow nothing. It is also why there is no
+`next` parameter to get wrong: the login page for `/private/` *is* `/private/`.
+
+A successful login is carried by a **JSON Web Token** (RFC 7519) signed with
+HMAC-SHA256 (RFC 7515) in the `goFsSessionToken` cookie, which is `HttpOnly`,
+`SameSite=Lax` and `Secure` over TLS, scoped to `cookiePath`. The token carries
+`iss`, `sub` (the account name), `aud`, `iat`, `nbf`, `exp`, `jti` and a
+fingerprint of the credentials — and **nothing else**. It deliberately does not
+carry the paths or the rights: those are looked up from the configuration as it
+stands on every request, so a token can never reach further than the account
+behind it does right now, and a `paths` narrowed by a reload takes effect at
+once. Verification pins the algorithm to HS256, so a token that says `alg: none`
+or names an asymmetric algorithm is refused rather than trusted.
+
+`httpSessionTokenLifetime` is how long a login lasts, one hour by default. It
+matters, because a signed token cannot be withdrawn once it is out: logging out
+clears the browser's own copy, but a stolen token works until it expires. The
+three things that do cut one short are that lifetime, changing the account's
+password — which changes the fingerprint, so every browser logged in under the
+old one is signed out — and setting `cookie = false`.
+
+`httpSessionTokenSecret` is the signing key, base64 of at least 32 random bytes:
+
+```
+head -c 32 /dev/urandom | base64
+```
+
+Leave it empty and a key is generated at every start, which is enough for a look
+around but logs every browser out on a restart and stops two hosts serving the
+same folder from sharing a login. Changing it needs a restart, as the TLS
+certificate does. The web interface will generate one for you.
+
+`http.sessionTimeout` was what this used to be called, before the session became
+a token that expires rather than a row in memory. A file that still sets it
+loads, and says on startup that it is ignored.
 
 `[[http.cleanup]]` keeps a folder from growing without bound: once an hour
 everything but the newest `keep` files in it is removed. It is the one thing in
@@ -484,8 +537,8 @@ point out of the base folder.
 **HTTP** — `GET` for downloads and a browsable listing, `PUT` for
 `application/octet-stream` and multipart uploads, `DELETE` for a file or an
 empty folder, Basic (RFC 7617) and Digest (RFC 7616, with the RFC 2069 form)
-authentication, session cookies, and the legacy `dls_directory_reader` listing
-endpoint. Downloads answer range requests, so a large one can be resumed.
+authentication, browser login with a signed session token (JWT, RFC 7519), and
+the legacy `dls_directory_reader` listing endpoint. Downloads answer range requests, so a large one can be resumed.
 
 **TFTP** — the protocol has no accounts and no passwords and no way to carry
 them, so anyone who can reach `tftp.port` can read what `allowRead` allows and

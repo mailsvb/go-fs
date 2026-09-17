@@ -211,11 +211,21 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.HTTP.Basefolder = folder
 			c.HTTP.Address = "nope"
 		}, "http.address"},
-		{"http session timeout", func(c *Config) {
+		{"http session token lifetime", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.Basefolder = folder
-			c.HTTP.SessionTimeout = 0
-		}, "http.sessionTimeout"},
+			c.HTTP.SessionTokenLifetime = 0
+		}, "http.httpSessionTokenLifetime"},
+		{"http session token secret that is not base64", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.SessionTokenSecret = "not base64 at all!!"
+		}, "http.httpSessionTokenSecret"},
+		{"http session token secret that is too short", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.SessionTokenSecret = base64.StdEncoding.EncodeToString(make([]byte, 16))
+		}, "at least 32"},
 		{"http cookie path", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.Basefolder = folder
@@ -526,5 +536,42 @@ func TestTheExampleFileIsTheTemplate(t *testing.T) {
 	if !bytes.Equal(example, Template()) {
 		t.Error("go-fs.example.toml and internal/config/template.toml have drifted apart; " +
 			"copy the template over the example")
+	}
+}
+
+// A file written for an older version still loads: a key no field claims is
+// ignored rather than refused, and RetiredKeys is what tells its author.
+func TestARetiredKeyIsStillAccepted(t *testing.T) {
+	folder := t.TempDir()
+	file := []byte("[general]\nbasefolder = " + strconv.Quote(folder) +
+		"\n\n[http]\nenabled = true\nsessionTimeout = 86400\n")
+
+	cfg, err := Parse(file)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if err := cfg.Resolved().Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if cfg.HTTP.SessionTokenLifetime != Default().HTTP.SessionTokenLifetime {
+		t.Errorf("lifetime = %d, want the default %d",
+			cfg.HTTP.SessionTokenLifetime, Default().HTTP.SessionTokenLifetime)
+	}
+}
+
+func TestRetiredKeysAreReported(t *testing.T) {
+	found := RetiredKeys([]byte("[http]\nsessionTimeout = 86400\n"))
+	if len(found) != 1 {
+		t.Fatalf("RetiredKeys = %v, want one entry", found)
+	}
+	if !strings.Contains(found[0], "http.sessionTimeout") ||
+		!strings.Contains(found[0], "http.httpSessionTokenLifetime") {
+		t.Errorf("RetiredKeys = %q, want it to name both the old and the new key", found[0])
+	}
+	if found := RetiredKeys(Template()); len(found) != 0 {
+		t.Errorf("the template sets a retired key: %v", found)
+	}
+	if found := RetiredKeys([]byte("this is not toml at all")); found != nil {
+		t.Errorf("RetiredKeys of an unreadable file = %v, want nothing", found)
 	}
 }

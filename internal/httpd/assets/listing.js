@@ -53,7 +53,12 @@
   };
 
   function reason(what, status, text) {
-    if (status === 401 || status === 403) {
+    // a session can now run out while the page is open, which is a different
+    // thing from never having been allowed
+    if (status === 401) {
+      return "Your session has ended \u2014 reload the page to log in again.";
+    }
+    if (status === 403) {
       return "You are not allowed to do that here.";
     }
     if (status === 409) {

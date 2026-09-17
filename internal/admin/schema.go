@@ -179,7 +179,8 @@ func secret(name string) bool {
 		return true
 	}
 	kind := material(name)
-	return kind == config.KindTLSKey || kind == config.KindSSHKey
+	return kind == config.KindTLSKey || kind == config.KindSSHKey ||
+		kind == config.KindSessionSecret
 }
 
 // material reports the kind of key material a key holds, which is what gives
@@ -196,6 +197,8 @@ func material(name string) string {
 		return config.KindTLSKey
 	case "hostkey":
 		return config.KindSSHKey
+	case "httpsessiontokensecret":
+		return config.KindSessionSecret
 	}
 	return ""
 }

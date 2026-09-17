@@ -47,6 +47,18 @@ func (s *logStore) find(message string) map[string]any {
 	return nil
 }
 
+// findLike is find for a message too long to repeat in a test.
+func (s *logStore) findLike(prefix string) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, record := range s.records {
+		if message, ok := record["msg"].(string); ok && strings.HasPrefix(message, prefix) {
+			return record
+		}
+	}
+	return nil
+}
+
 type recorder struct {
 	store *logStore
 	attrs []slog.Attr
@@ -355,4 +367,73 @@ func bodyOf(t *testing.T, res *http.Response) string {
 		t.Fatal(err)
 	}
 	return string(body)
+}
+
+// cookieUser is an account that may use the login form.
+func cookieUser(name, password string) config.HTTPUser {
+	user := fullUser(name, password)
+	user.Cookie = true
+	return user
+}
+
+// browserGet asks for a path the way a browser does, so that the server offers
+// it the login page rather than a challenge.
+func browserGet(t *testing.T, server *testServer, path string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, server.url(path), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	return do(t, req)
+}
+
+// postLogin submits the login form for a path and returns the answer.
+func postLogin(t *testing.T, server *testServer, path, name, password string) *http.Response {
+	t.Helper()
+	form := url.Values{"username": {name}, "password": {password}}
+	req, err := http.NewRequest(http.MethodPost,
+		server.url(path+"?go-fs=login"), strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	return do(t, req)
+}
+
+// login logs in and returns the session cookie it was handed.
+func login(t *testing.T, server *testServer, path, name, password string) *http.Cookie {
+	t.Helper()
+	res := postLogin(t, server, path, name, password)
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("login status = %d, want 303", res.StatusCode)
+	}
+	session := cookieNamed(res, sessionCookie)
+	if session == nil {
+		t.Fatal("no session token was handed out")
+	}
+	return session
+}
+
+// cookieNamed finds one cookie in an answer, or nothing.
+func cookieNamed(res *http.Response, name string) *http.Cookie {
+	for _, cookie := range res.Cookies() {
+		if cookie.Name == name && cookie.Value != "" {
+			return cookie
+		}
+	}
+	return nil
+}
+
+// withSession sends a request carrying nothing but a session token.
+func withSession(t *testing.T, server *testServer, method, path string, session *http.Cookie) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, server.url(path), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(session)
+	return do(t, req)
 }

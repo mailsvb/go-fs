@@ -36,7 +36,18 @@ const (
 	KindCertificate = "certificate"
 	KindTLSKey      = "tlskey"
 	KindSSHKey      = "sshkey"
+	// KindSessionSecret is the odd one out: it is not PEM but raw random
+	// bytes, base64 of them, because it is a symmetric key rather than
+	// anything with a structure. It is here all the same, so that the web
+	// interface reaches it through the same Decode and Describe as the rest.
+	KindSessionSecret = "sessionsecret"
 )
+
+// minSessionSecret is the shortest key HS256 is signed with here. RFC 8725
+// section 3.5 asks for a key at least as long as the output of the hash, which
+// is 32 bytes for SHA-256; a shorter one is refused rather than stretched,
+// because stretching would hide how little entropy is behind it.
+const minSessionSecret = 32
 
 // Decode checks a value against one of the kinds and returns its PEM bytes.
 func Decode(kind, value string) ([]byte, error) {
@@ -47,6 +58,8 @@ func Decode(kind, value string) ([]byte, error) {
 		return DecodePrivateKey(value)
 	case KindSSHKey:
 		return DecodeHostKey(value)
+	case KindSessionSecret:
+		return DecodeSessionSecret(value)
 	default:
 		return nil, fmt.Errorf("%q is not a kind of key material", kind)
 	}
@@ -218,6 +231,52 @@ func GenerateHostKey() (string, error) {
 	return Encode(pem.EncodeToMemory(block)), nil
 }
 
+// DecodeSessionSecret turns the configured http.httpSessionTokenSecret into the
+// key the login tokens are signed with. Unlike the other kinds the value is not
+// PEM: it is base64 of the key bytes themselves, which is what a key with no
+// structure looks like.
+func DecodeSessionSecret(value string) ([]byte, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, errors.New("is empty")
+	}
+	// tolerate the line breaks a base64 tool leaves behind, as DecodePEM does
+	compact := strings.NewReplacer("\n", "", "\r", "", " ", "", "\t", "").Replace(trimmed)
+	decoded, err := base64.StdEncoding.DecodeString(compact)
+	if err != nil {
+		if looksLikeAPath(trimmed) {
+			return nil, errors.New("looks like a file path; the value is the key itself, " +
+				`base64 encoded, as in: head -c 32 /dev/urandom | base64`)
+		}
+		return nil, errors.New("is not base64")
+	}
+	if len(decoded) < minSessionSecret {
+		return nil, fmt.Errorf("decodes to %d bytes, it has to be at least %d",
+			len(decoded), minSessionSecret)
+	}
+	return decoded, nil
+}
+
+// GenerateSessionSecret produces a signing key as the value the file holds. It
+// is what the HTTP server falls back to when none is configured and what the
+// web interface stores when Generate is pressed, so a generated key and a
+// configured one are the same thing.
+func GenerateSessionSecret() (string, error) {
+	key := make([]byte, minSessionSecret)
+	if _, err := rand.Read(key); err != nil {
+		return "", err
+	}
+	return Encode(key), nil
+}
+
+func describeSessionSecret(value string) string {
+	decoded, err := DecodeSessionSecret(value)
+	if err != nil {
+		return "this value " + err.Error()
+	}
+	return fmt.Sprintf("a %d byte signing key", len(decoded))
+}
+
 // Encode is how PEM bytes become a value in the file.
 func Encode(pemBytes []byte) string {
 	return base64.StdEncoding.EncodeToString(pemBytes)
@@ -236,6 +295,8 @@ func Describe(kind, value string) string {
 		return describeCertificate(value)
 	case KindSSHKey:
 		return describeHostKey(value)
+	case KindSessionSecret:
+		return describeSessionSecret(value)
 	default:
 		return describePrivateKey(value)
 	}

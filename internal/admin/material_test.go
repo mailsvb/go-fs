@@ -52,19 +52,20 @@ func uploadFile(t *testing.T, front *httptest.Server, kind, name string,
 	}, nil)
 }
 
-// The seven keys that hold key material get the buttons, and nothing else
+// The eight keys that hold key material get the buttons, and nothing else
 // does. authorizedKeys in particular stays a plain list of pasted lines.
 func TestSchemaMarksTheKeyMaterial(t *testing.T) {
 	schema, _ := build()
 
 	want := map[string]string{
-		"general.adminCert": config.KindCertificate,
-		"general.adminKey":  config.KindTLSKey,
-		"ftps.cert":         config.KindCertificate,
-		"ftps.key":          config.KindTLSKey,
-		"https.cert":        config.KindCertificate,
-		"https.key":         config.KindTLSKey,
-		"sftp.hostkey":      config.KindSSHKey,
+		"general.adminCert":           config.KindCertificate,
+		"general.adminKey":            config.KindTLSKey,
+		"ftps.cert":                   config.KindCertificate,
+		"ftps.key":                    config.KindTLSKey,
+		"https.cert":                  config.KindCertificate,
+		"https.key":                   config.KindTLSKey,
+		"sftp.hostkey":                config.KindSSHKey,
+		"http.httpSessionTokenSecret": config.KindSessionSecret,
 	}
 
 	found := map[string]string{}

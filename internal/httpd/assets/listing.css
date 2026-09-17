@@ -79,7 +79,9 @@ input[type="search"] {
   font-size: 0.85rem;
 }
 
-button.plain {
+/* One rule for both, because the header holds a Log in link beside buttons
+   that do the same kind of thing, and they have to look alike. */
+.plain {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
@@ -91,11 +93,17 @@ button.plain {
   color: var(--ink);
   font: inherit;
   font-size: 0.85rem;
+  text-decoration: none;
   cursor: pointer;
   white-space: nowrap;
 }
-button.plain:hover { border-color: var(--faint); }
-button.plain .ic { font-size: 1rem; }
+.plain:hover { border-color: var(--faint); }
+.plain .ic { font-size: 1rem; }
+
+/* The signed in account, and the form that holds the Log out button: a form
+   is a block, and this one sits in a row of controls. */
+.who { color: var(--faint); font-size: 0.85rem; white-space: nowrap; }
+.inline { display: contents; }
 
 .banner {
   margin: 0.75rem 1.5rem 0;
@@ -241,6 +249,69 @@ dialog button.go {
   cursor: pointer;
 }
 dialog button.go.danger { border-color: var(--bad); background: var(--bad); }
+
+/* The login page: one card, centred, with nothing else on it. */
+.signin main { display: flex; justify-content: center; padding: 3rem 1rem; }
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 22rem;
+  padding: 1.25rem 1.4rem 1.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+}
+.card h1 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.25rem;
+  font-size: 1.1rem;
+}
+.card h1 .ic { font-size: 1.2rem; color: var(--accent); }
+.card .where {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.5rem;
+  color: var(--faint);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.card .where .ic { color: var(--faint); }
+.card .problem {
+  margin: 0 0 0.25rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--bad);
+  border-radius: 4px;
+  color: var(--bad);
+  font-size: 0.85rem;
+}
+.card label { color: var(--faint); font-size: 0.8rem; }
+.card input {
+  height: 2.2rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+.card .row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.6rem; }
+.card button.go {
+  height: 2.2rem;
+  padding: 0 1.1rem;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--ground);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
 
 @media (max-width: 40rem) {
   header, main { padding-left: 0.75rem; padding-right: 0.75rem; }

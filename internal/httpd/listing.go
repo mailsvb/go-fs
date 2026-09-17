@@ -206,6 +206,12 @@ var assets embed.FS
 // embedded template rather than something a request can cause.
 var listingTemplate = template.Must(template.ParseFS(assets, "assets/listing.html"))
 
+// loginTemplate is the page that asks for a password. It is a template of its
+// own rather than a branch inside the listing, so that "the login page shows no
+// folder content" holds because there is nothing there to show, rather than
+// because an {{if}} is right.
+var loginTemplate = template.Must(template.ParseFS(assets, "assets/login.html"))
+
 // listingStyle and listingScript are inlined into every page. Keeping them out
 // of the URL space is deliberate: every path this server answers is a path in
 // the served folder, so an asset URL would shadow a real name.
@@ -266,6 +272,38 @@ type listingRow struct {
 	Modified string
 }
 
+// sessionView is what the page says about who is looking at it.
+type sessionView struct {
+	// User is the signed in account, empty when nobody is. It is filled only
+	// for a request that came in with a session token: someone who
+	// authenticated with a header has no session to log out of, and offering
+	// the button would be a lie.
+	User string
+	// CanLogin says an account that may use the form exists and nobody is
+	// signed in, which is what puts the Log in button on the page.
+	CanLogin bool
+	Login    string
+	Logout   string
+}
+
+// loginData is the login page.
+type loginData struct {
+	Path    string
+	Action  string
+	Cancel  string
+	Message string
+	Nonce   string
+	Style   template.CSS
+}
+
+func renderLogin(data loginData) ([]byte, error) {
+	var page bytes.Buffer
+	if err := loginTemplate.Execute(&page, data); err != nil {
+		return nil, err
+	}
+	return page.Bytes(), nil
+}
+
 type listingData struct {
 	Path    string
 	Folder  string
@@ -276,13 +314,14 @@ type listingData struct {
 	Sort    string
 	Dir     string
 	Rights  rights
+	Session sessionView
 	Nonce   string
 	Style   template.CSS
 	Script  template.JS
 }
 
 // listingPage renders the browsable directory page.
-func listingPage(virtual string, entries []entry, order sortOrder, allowed rights, nonce string) ([]byte, error) {
+func listingPage(virtual string, entries []entry, order sortOrder, allowed rights, who sessionView, nonce string) ([]byte, error) {
 	rows := make([]listingRow, 0, len(entries))
 	for _, item := range sortEntries(entries, order) {
 		row := listingRow{
@@ -312,6 +351,7 @@ func listingPage(virtual string, entries []entry, order sortOrder, allowed right
 		Crumbs:  crumbsOf(virtual),
 		Parent:  parentOf(virtual),
 		Columns: columnsOf(order),
+		Session: who,
 		Entries: rows,
 		Sort:    order.key,
 		Dir:     order.direction(),

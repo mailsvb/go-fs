@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -276,8 +277,17 @@ type HTTP struct {
 	IdleTimeout  int `toml:"idleTimeout"`
 	// MaxUploadSize is the largest accepted body in bytes, 0 means no limit.
 	MaxUploadSize int64 `toml:"maxUploadSize"`
-	// SessionTimeout is how long a session cookie stays valid, in seconds.
-	SessionTimeout int `toml:"sessionTimeout"`
+	// SessionTokenLifetime is how long a browser stays logged in after using
+	// the login form, in seconds. It bounds a token that cannot be withdrawn:
+	// a signed token is accepted until it runs out, whoever holds it.
+	SessionTokenLifetime int `toml:"httpSessionTokenLifetime"`
+	// SessionTokenSecret is the key the login tokens are signed with, base64
+	// of at least 32 random bytes:
+	//   head -c 32 /dev/urandom | base64
+	// With it empty a key is generated at every start, which logs every
+	// browser out on a restart and stops two hosts serving the same folder
+	// from sharing a login. Changing it needs a restart.
+	SessionTokenSecret string `toml:"httpSessionTokenSecret"`
 	// LoginFailureDelay is the delay in seconds before a rejected request is
 	// answered, which slows down guessing.
 	LoginFailureDelay int `toml:"loginFailureDelay"`
@@ -410,14 +420,14 @@ func Default() Config {
 			LoginFailureDelay: 1,
 		},
 		HTTP: HTTP{
-			Port:               9080,
-			Realm:              "go-fs",
-			MaxConnections:     100,
-			ReadTimeout:        120,
-			IdleTimeout:        120,
-			SessionTimeout:     86400,
-			LoginFailureDelay:  1,
-			MethodsRequireAuth: []string{"PUT", "DELETE", "POST", "MKCOL", "MOVE"},
+			Port:                 9080,
+			Realm:                "go-fs",
+			MaxConnections:       100,
+			ReadTimeout:          120,
+			IdleTimeout:          120,
+			SessionTokenLifetime: 3600,
+			LoginFailureDelay:    1,
+			MethodsRequireAuth:   []string{"PUT", "DELETE", "POST", "MKCOL", "MOVE"},
 		},
 		HTTPS: HTTPS{
 			Port: 9443,
@@ -448,6 +458,38 @@ func Parse(data []byte) (Config, error) {
 		return cfg, err
 	}
 	return cfg, nil
+}
+
+// retired names the keys a configuration file may still hold and what replaced
+// them. A file that sets one is read rather than refused — go-toml ignores a
+// key no field claims — so the only thing left to do is say so, which is what
+// RetiredKeys is for.
+var retired = map[string]string{
+	"http.sessionTimeout": "http.httpSessionTokenLifetime",
+}
+
+// RetiredKeys reports the retired keys a file still sets, each as
+// "old is ignored, use new". It parses loosely into a tree of tables and
+// reports nothing for a file it cannot read: this is a courtesy on top of a
+// configuration that has already loaded, not a check of its own.
+func RetiredKeys(data []byte) []string {
+	var tree map[string]any
+	if err := toml.Unmarshal(data, &tree); err != nil {
+		return nil
+	}
+	found := make([]string, 0, len(retired))
+	for key, replacement := range retired {
+		section, name, _ := strings.Cut(key, ".")
+		table, ok := tree[section].(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, set := table[name]; set {
+			found = append(found, fmt.Sprintf("%s is ignored, use %s", key, replacement))
+		}
+	}
+	sort.Strings(found)
+	return found
 }
 
 // Load reads path onto the defaults and validates the result.
@@ -638,9 +680,16 @@ func (c Config) validateHTTP() error {
 	if h.MaxConnections < 1 {
 		return errors.New("http.maxConnections has to be at least 1")
 	}
-	// 0 would hand out cookies that have already expired
-	if h.SessionTimeout < 1 {
-		return errors.New("http.sessionTimeout has to be at least 1")
+	// 0 would hand out tokens that have already expired
+	if h.SessionTokenLifetime < 1 {
+		return errors.New("http.httpSessionTokenLifetime has to be at least 1")
+	}
+	// checked here rather than at the first login, so that a key too short to
+	// sign with is reported by -check and not by a user who cannot log in
+	if h.SessionTokenSecret != "" {
+		if _, err := DecodeSessionSecret(h.SessionTokenSecret); err != nil {
+			return fmt.Errorf("http.httpSessionTokenSecret: %w", err)
+		}
 	}
 	if h.MaxUploadSize < 0 {
 		return errors.New("http.maxUploadSize cannot be negative")

@@ -128,6 +128,16 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		}
 		answer["value"] = key
 
+	case config.KindSessionSecret:
+		key, err := config.GenerateSessionSecret()
+		if err != nil {
+			s.log.Error("the admin interface cannot generate a signing key", "error", err)
+			http.Error(w, "the signing key could not be generated: "+err.Error(),
+				http.StatusInternalServerError)
+			return
+		}
+		answer["value"] = key
+
 	default:
 		// a private key on its own would not match any certificate
 		http.Error(w, "there is nothing to generate for this setting", http.StatusBadRequest)

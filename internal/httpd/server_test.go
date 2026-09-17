@@ -5,7 +5,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 
 	"go-fs/internal/config"
@@ -54,28 +56,36 @@ func TestHTTPSOnlyWithoutThePlainListener(t *testing.T) {
 // cannot be.
 func TestSessionCookieIsSecureOverTLS(t *testing.T) {
 	server := newServerWith(t, func(cfg *config.HTTP) {
-		user := fullUser("john", "doe")
-		user.Cookie = true
-		cfg.Users = []config.HTTPUser{user}
+		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
 	}, func(https *config.HTTPS) { https.Enabled = true })
 	server.write(t, "private/hello.txt", "x")
 
-	client := &http.Client{Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}}
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	port := server.SecureAddr().(*net.TCPAddr).Port
-	req, _ := http.NewRequest(http.MethodGet,
-		"https://"+net.JoinHostPort("127.0.0.1", strconv.Itoa(port))+"/private/hello.txt", nil)
-	req.SetBasicAuth("john", "doe")
+	form := url.Values{"username": {"john"}, "password": {"doe"}}
+	req, _ := http.NewRequest(http.MethodPost,
+		"https://"+net.JoinHostPort("127.0.0.1", strconv.Itoa(port))+"/private/?go-fs=login",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	res, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = res.Body.Close() }()
-	cookies := res.Cookies()
-	if len(cookies) != 1 || !cookies[0].Secure {
-		t.Errorf("cookie = %v", cookies)
+	session := cookieNamed(res, sessionCookie)
+	if session == nil {
+		t.Fatalf("no session token was handed out: %v", res.Cookies())
+	}
+	if !session.Secure {
+		t.Errorf("cookie = %v, want Secure over TLS", session)
 	}
 }
 
