@@ -242,6 +242,20 @@ writeTimeout = 0
 idleTimeout = 120
 # largest accepted upload in bytes, 0 means no limit
 maxUploadSize = 0
+# Largest single Content-Range chunk of an upload, in bytes (see the docs on
+# chunked uploads). This is what keeps one HTTP request small and fast enough
+# to survive a reverse proxy with a hard per-request cap — Cloudflare's ~100
+# second rule and body-size limits were the motivating case. 0 turns off
+# chunked upload entirely: a PUT carrying a Content-Range header is refused.
+maxChunkSize = 52428800
+# Where the not-yet-finalized bytes of a chunked upload are kept while it is in
+# progress. Must not be inside basefolder: nothing here filters a partial
+# upload out of a directory listing, so it would be visible and downloadable
+# while still being written. Empty uses a "go-fs-uploads" folder under the
+# OS's temp directory. Keep it on the same filesystem as basefolder so
+# finishing an upload is a fast rename rather than a slow or failing
+# cross-device copy.
+uploadStagingFolder = ""
 # How long a browser stays logged in after using the login form, in seconds.
 # The token cannot be withdrawn once it is signed, so this is what bounds it.
 httpSessionTokenLifetime = 3600

@@ -14,6 +14,9 @@
   // already escaped: every request below appends one escaped segment to it.
   var folder = table.dataset.folder;
   var banner = document.getElementById("banner");
+  // maxChunkSize is the largest piece an upload is split into; 0 means
+  // chunked upload is off and a large file is sent as one request, as before.
+  var maxChunkSize = parseInt(table.dataset.maxChunkSize, 10) || 0;
 
   function rows() {
     return Array.prototype.slice.call(body.rows).filter(function (row) {
@@ -49,7 +52,10 @@
     },
     file: { 404: "That file is already gone." },
     folder: { 404: "The folder still has something in it, or it is already gone." },
-    upload: { 404: "There is already a file with that name." }
+    upload: {
+      404: "There is already a file with that name.",
+      416: "This upload lost sync with the server — try uploading it again."
+    }
   };
 
   function reason(what, status, text) {
@@ -460,40 +466,135 @@
     line.appendChild(state);
     queue.appendChild(line);
 
-    var request = new XMLHttpRequest();
-    request.open("PUT", segment(file.name));
-    request.setRequestHeader("Content-Type", "application/octet-stream");
-    request.withCredentials = true;
-    request.upload.addEventListener("progress", function (event) {
-      if (!event.lengthComputable) {
-        return;
-      }
-      var percent = Math.round((event.loaded / event.total) * 100);
+    function progress(fraction) {
+      var percent = Math.round(fraction * 100);
       fill.style.width = percent + "%";
       state.textContent = percent + "%";
-    });
-    request.addEventListener("load", function () {
-      if (request.status >= 200 && request.status < 300) {
-        fill.style.width = "100%";
-        state.textContent = "done";
-        then(null);
-        return;
-      }
-      var problem = file.name + ": " +
-        reason("upload", request.status, request.responseText.trim());
+    }
+    function succeed() {
+      fill.style.width = "100%";
+      state.textContent = "done";
+      then(null);
+    }
+    function fail(problem) {
       line.classList.add("failed");
       fill.style.width = "100%";
       state.textContent = "failed";
       line.title = problem;
       then(problem);
+    }
+
+    if (!maxChunkSize || file.size <= maxChunkSize) {
+      putWhole(file, progress, succeed, fail);
+      return;
+    }
+    putChunked(file, progress, succeed, fail);
+  }
+
+  // putWhole sends a file as a single request, exactly as every upload was
+  // sent before chunking existed: still the path for anything at or under
+  // maxChunkSize, and for every upload when chunking is off.
+  function putWhole(file, progress, succeed, fail) {
+    var request = new XMLHttpRequest();
+    request.open("PUT", segment(file.name));
+    request.setRequestHeader("Content-Type", "application/octet-stream");
+    request.withCredentials = true;
+    request.upload.addEventListener("progress", function (event) {
+      if (event.lengthComputable) {
+        progress(event.loaded / event.total);
+      }
+    });
+    request.addEventListener("load", function () {
+      if (request.status >= 200 && request.status < 300) {
+        succeed();
+        return;
+      }
+      fail(file.name + ": " + reason("upload", request.status, request.responseText.trim()));
     });
     request.addEventListener("error", function () {
-      var problem = file.name + ": the upload could not be sent.";
-      line.classList.add("failed");
-      state.textContent = "failed";
-      line.title = problem;
-      then(problem);
+      fail(file.name + ": the upload could not be sent.");
     });
     request.send(file);
+  }
+
+  // chunkRetries is how many times the current chunk of a chunked upload is
+  // retried before the whole file is reported as failed. A chunk that lands
+  // stays landed on the server (its staging file only grows, never shrinks
+  // below a completed chunk's end), so retrying is always safe: it never
+  // restarts the file from the beginning.
+  var chunkRetries = 3;
+
+  // putChunked sends a file as consecutive Content-Range PUTs of at most
+  // maxChunkSize each, to the same URL a whole-file PUT uses. The server's
+  // staging file is the only record of how far the upload has gotten; a 416
+  // means the server's idea of that offset differs from this one (an earlier
+  // attempt's chunk landing after this page stopped waiting for it, most
+  // likely), and is answered by resuming from the offset the response names,
+  // once, rather than treating a resync as a failed upload.
+  function putChunked(file, progress, succeed, fail) {
+    var sent = 0;
+    var retries = 0;
+    var resynced = false;
+
+    function sendFrom(start) {
+      var end = Math.min(start + maxChunkSize, file.size);
+
+      function retry(problem) {
+        if (retries < chunkRetries) {
+          retries++;
+          sendFrom(start);
+          return;
+        }
+        fail(problem);
+      }
+
+      var request = new XMLHttpRequest();
+      request.open("PUT", segment(file.name));
+      request.setRequestHeader("Content-Type", "application/octet-stream");
+      request.setRequestHeader("Content-Range",
+        "bytes " + start + "-" + (end - 1) + "/" + file.size);
+      request.withCredentials = true;
+      request.upload.addEventListener("progress", function (event) {
+        if (event.lengthComputable) {
+          progress((sent + event.loaded) / file.size);
+        }
+      });
+      request.addEventListener("load", function () {
+        if (request.status >= 200 && request.status < 300) {
+          sent = end;
+          retries = 0;
+          progress(sent / file.size);
+          if (sent >= file.size) {
+            succeed();
+          } else {
+            sendFrom(sent);
+          }
+          return;
+        }
+        if (request.status === 416 && !resynced) {
+          var have = resumeOffset(request.getResponseHeader("Content-Range"));
+          if (have !== null && have <= file.size) {
+            resynced = true;
+            sent = have;
+            sendFrom(have);
+            return;
+          }
+        }
+        retry(file.name + ": " + reason("upload", request.status, request.responseText.trim()));
+      });
+      request.addEventListener("error", function () {
+        retry(file.name + ": the upload could not be sent.");
+      });
+      request.send(file.slice(start, end));
+    }
+
+    sendFrom(0);
+  }
+
+  // resumeOffset reads the size a 416 names in its own Content-Range, the
+  // "bytes */<size>" form the server answers an out-of-sync chunk with.
+  function resumeOffset(header) {
+    var match = /^bytes \*\/(\d+)$/.exec(header || "");
+    return match ? parseInt(match[1], 10) : null;
   }
 })();

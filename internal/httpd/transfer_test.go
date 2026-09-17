@@ -77,6 +77,65 @@ func TestUploadBinary(t *testing.T) {
 	}
 }
 
+// A slow upload whose total duration is longer than readTimeout must still
+// succeed as long as no single gap between chunks is: readTimeout bounds how
+// long an upload may stall, not how long it may take overall. This is what
+// used to abort large uploads partway through at an arbitrary point, because
+// readTimeout was wired into http.Server's own ReadTimeout, which caps the
+// entire request.
+func TestUploadSurvivesBeingSlowerThanReadTimeout(t *testing.T) {
+	server := newServer(t, func(cfg *config.HTTP) { cfg.ReadTimeout = 1 })
+
+	req, _ := http.NewRequest(http.MethodPut, server.url("/private/slow.txt"),
+		&trickleReader{chunks: [][]byte{[]byte("a"), []byte("b"), []byte("c"), []byte("d")},
+			delay: 400 * time.Millisecond})
+	req.SetBasicAuth("john", "doe")
+	req.Header.Set("Content-Type", "application/octet-stream")
+	if res := do(t, req); res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if got := server.read(t, "private/slow.txt"); got != "abcd" {
+		t.Errorf("stored %q", got)
+	}
+}
+
+// A stall longer than readTimeout still has to fail: the idle timeout is a
+// safety net, not a timeout that only applied by accident.
+func TestUploadFailsOnARealStall(t *testing.T) {
+	server := newServer(t, func(cfg *config.HTTP) { cfg.ReadTimeout = 1 })
+
+	req, _ := http.NewRequest(http.MethodPut, server.url("/private/stalled.txt"),
+		&trickleReader{chunks: [][]byte{[]byte("a"), []byte("b")}, delay: 2 * time.Second})
+	req.SetBasicAuth("john", "doe")
+	req.Header.Set("Content-Type", "application/octet-stream")
+	res, err := (&http.Client{}).Do(req)
+	// the server may answer with an error before the client even finishes
+	// writing the stalled body, rather than the connection failing outright,
+	// so either counts as the stall being caught
+	if err == nil {
+		defer res.Body.Close()
+		if res.StatusCode == http.StatusOK {
+			t.Fatalf("a stalled upload has to fail rather than succeed, got %d", res.StatusCode)
+		}
+	}
+}
+
+// trickleReader hands out its chunks one at a time, pausing before each.
+type trickleReader struct {
+	chunks [][]byte
+	delay  time.Duration
+}
+
+func (r *trickleReader) Read(p []byte) (int, error) {
+	if len(r.chunks) == 0 {
+		return 0, io.EOF
+	}
+	time.Sleep(r.delay)
+	n := copy(p, r.chunks[0])
+	r.chunks = r.chunks[1:]
+	return n, nil
+}
+
 func TestUploadMultipart(t *testing.T) {
 	server := newServer(t, nil)
 

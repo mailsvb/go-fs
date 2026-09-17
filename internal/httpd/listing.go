@@ -318,10 +318,14 @@ type listingData struct {
 	Nonce   string
 	Style   template.CSS
 	Script  template.JS
+	// MaxChunkSize is what the client splits a large upload into pieces of; 0
+	// means chunked upload is off and a large file is sent as one request, as
+	// before.
+	MaxChunkSize int64
 }
 
 // listingPage renders the browsable directory page.
-func listingPage(virtual string, entries []entry, order sortOrder, allowed rights, who sessionView, nonce string) ([]byte, error) {
+func listingPage(virtual string, entries []entry, order sortOrder, allowed rights, who sessionView, nonce string, maxChunkSize int64) ([]byte, error) {
 	rows := make([]listingRow, 0, len(entries))
 	for _, item := range sortEntries(entries, order) {
 		row := listingRow{
@@ -359,6 +363,8 @@ func listingPage(virtual string, entries []entry, order sortOrder, allowed right
 		Nonce:   nonce,
 		Style:   listingStyle,
 		Script:  listingScript,
+
+		MaxChunkSize: maxChunkSize,
 	}
 
 	var page bytes.Buffer

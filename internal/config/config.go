@@ -273,11 +273,31 @@ type HTTP struct {
 	MaxConnections int `toml:"maxConnections"`
 	// ReadTimeout, WriteTimeout and IdleTimeout are seconds, 0 disables one.
 	// WriteTimeout is off by default: it would cap the duration of a download.
+	// ReadTimeout does the equivalent job for an upload, but as an idle
+	// timeout rather than a hard cap: it is how long a PUT may go without any
+	// data arriving, reset on every chunk received, so it does not cut off a
+	// large upload that is merely slow.
 	ReadTimeout  int `toml:"readTimeout"`
 	WriteTimeout int `toml:"writeTimeout"`
 	IdleTimeout  int `toml:"idleTimeout"`
 	// MaxUploadSize is the largest accepted body in bytes, 0 means no limit.
 	MaxUploadSize int64 `toml:"maxUploadSize"`
+	// MaxChunkSize is the largest a single Content-Range chunk of an upload
+	// may be, in bytes. It exists so that a reverse proxy with a hard
+	// per-request duration or body-size cap (Cloudflare's ~100 second rule
+	// was the motivating case) never sees a request large enough to trip it:
+	// a large file is still accepted, just never in one request. 0 disables
+	// chunked upload — a PUT carrying Content-Range is then refused.
+	MaxChunkSize int64 `toml:"maxChunkSize"`
+	// UploadStagingFolder holds the not-yet-finalized bytes of a chunked
+	// upload. It must not be inside Basefolder: nothing in vfs or the
+	// directory listing filters partial files out, so a staging file inside
+	// the served tree would be visible and downloadable while still being
+	// written. Empty defaults to a "go-fs-uploads" folder under the OS temp
+	// directory, created as needed. It should stay on the same filesystem as
+	// Basefolder, so finishing a chunked upload is a fast, atomic rename
+	// rather than a slow or outright-failing cross-device move.
+	UploadStagingFolder string `toml:"uploadStagingFolder"`
 	// SessionTokenLifetime is how long a browser stays logged in after using
 	// the login form, in seconds. It bounds a token that cannot be withdrawn:
 	// a signed token is accepted until it runs out, whoever holds it.
@@ -426,6 +446,7 @@ func Default() Config {
 			MaxConnections:       100,
 			ReadTimeout:          120,
 			IdleTimeout:          120,
+			MaxChunkSize:         50 << 20, // 50 MB
 			SessionTokenLifetime: 3600,
 			LoginFailureDelay:    1,
 			MethodsRequireAuth:   []string{"PUT", "DELETE", "POST", "MKCOL", "MOVE"},
@@ -694,6 +715,15 @@ func (c Config) validateHTTP() error {
 	}
 	if h.MaxUploadSize < 0 {
 		return errors.New("http.maxUploadSize cannot be negative")
+	}
+	if h.MaxChunkSize < 0 {
+		return errors.New("http.maxChunkSize cannot be negative")
+	}
+	if h.MaxUploadSize > 0 && h.MaxChunkSize > 0 && h.MaxChunkSize > h.MaxUploadSize {
+		return errors.New("http.maxChunkSize cannot be larger than http.maxUploadSize")
+	}
+	if h.UploadStagingFolder != "" && !filepath.IsAbs(h.UploadStagingFolder) {
+		return errors.New("http.uploadStagingFolder has to be an absolute path")
 	}
 	if h.Realm == "" {
 		return errors.New("http.realm is not set")

@@ -70,6 +70,10 @@ type Server struct {
 
 	mu       sync.Mutex
 	shutdown bool
+
+	// uploadLocks serializes the finishing chunk of a chunked upload per
+	// target path; see uploadLock in handlers.go.
+	uploadLocks sync.Map
 }
 
 // New prepares a server. The base folder has to exist and every configured
