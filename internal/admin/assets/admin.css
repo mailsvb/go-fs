@@ -155,26 +155,49 @@ input[type="checkbox"] { width: 1rem; height: 1rem; margin-top: 0.5rem; }
   font-size: 0.95rem;
 }
 .record {
-  position: relative;
   margin-bottom: 0.75rem;
-  padding: 0.9rem 1rem;
+  padding: 0.6rem 1rem;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--raised);
 }
-.record > h4 {
-  margin: 0 0 0.7rem;
+.record[open] { padding-bottom: 0.9rem; }
+.record > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 1.8rem;
+  list-style: none;
+  cursor: pointer;
+}
+.record > summary::-webkit-details-marker { display: none; }
+.record > summary::before {
+  content: "";
+  flex: none;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 2px solid var(--faint);
+  border-bottom: 2px solid var(--faint);
+  transform: rotate(-45deg);
+  transition: transform 0.12s;
+}
+.record[open] > summary::before { transform: rotate(45deg); }
+.record[open] > summary { margin-bottom: 0.7rem; }
+.record .ordinal {
   color: var(--faint);
   font-size: 0.8rem;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
-.record .remove {
-  position: absolute;
-  top: 0.7rem;
-  right: 0.7rem;
+.record .title {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.record .remove { margin-left: auto; }
 .empty { margin: 0 0 0.75rem; color: var(--faint); font-style: italic; }
 
 button.plain {

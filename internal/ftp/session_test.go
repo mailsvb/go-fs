@@ -28,7 +28,7 @@ func TestGreetingAndLogin(t *testing.T) {
 }
 
 func TestLoginWithPassword(t *testing.T) {
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		cfg.Users = []config.User{{Username: "john", Password: "doe"}}
 	})
 
@@ -57,7 +57,7 @@ func TestLoginWithPassword(t *testing.T) {
 // The user list is the only source of accounts: a name that is not listed
 // cannot log in, and the flags of the entry that matches are applied.
 func TestUserListDefinesTheAccounts(t *testing.T) {
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		cfg.Users = []config.User{{Username: "jane", Password: "secret"}}
 	})
 
@@ -77,7 +77,7 @@ func TestUserListDefinesTheAccounts(t *testing.T) {
 // Anonymous access is not a feature of its own: it is an account named
 // anonymous that logs in without a password, with whatever rights it is given.
 func TestAnonymousLogin(t *testing.T) {
-	server := newServer(t, func(cfg *config.FTP) { cfg.Users = nil })
+	server := newServer(t, func(cfg *ftpConfig) { cfg.Users = nil })
 
 	c := connect(t, server)
 	c.send("USER anonymous")
@@ -86,7 +86,7 @@ func TestAnonymousLogin(t *testing.T) {
 	c.expect("530 Username or password incorrect")
 
 	yes := true
-	allowed := newServer(t, func(cfg *config.FTP) {
+	allowed := newServer(t, func(cfg *ftpConfig) {
 		cfg.Users = []config.User{{
 			Username:                  "anonymous",
 			AllowLoginWithoutPassword: &yes,
@@ -109,7 +109,7 @@ func TestAnonymousLogin(t *testing.T) {
 }
 
 func TestFailedPasswordIsDelayed(t *testing.T) {
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		cfg.Users = []config.User{{Username: "john", Password: "doe"}}
 		cfg.LoginFailureDelay = 1
 	})
@@ -158,7 +158,7 @@ func TestCommandSplitAcrossSegments(t *testing.T) {
 }
 
 func TestOverlongCommandLineIsRefused(t *testing.T) {
-	server := newServer(t, func(cfg *config.FTP) { cfg.MaxCommandLength = 64 })
+	server := newServer(t, func(cfg *ftpConfig) { cfg.MaxCommandLength = 64 })
 	c := connect(t, server)
 
 	c.raw("USER " + strings.Repeat("x", 200))
@@ -210,7 +210,7 @@ func TestPreAuthCommands(t *testing.T) {
 }
 
 func TestIdleTimeoutClosesTheConnection(t *testing.T) {
-	server := newServer(t, func(cfg *config.FTP) { cfg.IdleTimeout = 1 })
+	server := newServer(t, func(cfg *ftpConfig) { cfg.IdleTimeout = 1 })
 	c := connect(t, server)
 	c.expect("421 Timeout, closing control connection")
 }
@@ -240,7 +240,7 @@ func TestLogoffIsOnlyReportedForALogin(t *testing.T) {
 }
 
 func TestMaxConnections(t *testing.T) {
-	server := newServer(t, func(cfg *config.FTP) { cfg.MaxConnections = 2 })
+	server := newServer(t, func(cfg *ftpConfig) { cfg.MaxConnections = 2 })
 
 	first := connect(t, server)
 	first.login()
@@ -279,21 +279,21 @@ func TestShutdownDropsConnections(t *testing.T) {
 func TestNewRejectsMissingFolders(t *testing.T) {
 	cfg := config.Default().FTP
 	cfg.Basefolder = filepath.Join(t.TempDir(), "nope")
-	if _, err := New(cfg, config.FTPS{}, discardLogger()); err == nil {
+	if _, err := New(cfg, config.FTPS{}, nil, discardLogger()); err == nil {
 		t.Error("a missing base folder has to be refused")
 	}
 
 	cfg = config.Default().FTP
 	cfg.Basefolder = t.TempDir()
-	cfg.Users = []config.User{{Username: "john", Basefolder: filepath.Join(t.TempDir(), "nope")}}
-	if _, err := New(cfg, config.FTPS{}, discardLogger()); err == nil {
+	users := []config.User{{Username: "john", FTP: true, Basefolder: filepath.Join(t.TempDir(), "nope")}}
+	if _, err := New(cfg, config.FTPS{}, users, discardLogger()); err == nil {
 		t.Error("a missing user base folder has to be refused")
 	}
 }
 
 func TestPerUserBasefolder(t *testing.T) {
 	own := t.TempDir()
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		user := fullUser("john")
 		user.Basefolder = own
 		cfg.Users = []config.User{user}
@@ -339,7 +339,7 @@ func TestRemoveTheRootIsRefused(t *testing.T) {
 // it may not delete one at a time.
 func TestRemoveFolderIsNotRecursive(t *testing.T) {
 	no := false
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		user := fullUser("john")
 		user.AllowUserFileDelete = &no
 		cfg.Users = []config.User{user}
@@ -388,7 +388,7 @@ func TestRenameNeedsCreateAndDelete(t *testing.T) {
 		{"without delete", func(u *config.User) { u.AllowUserFileDelete = &no }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			server := newServer(t, func(cfg *config.FTP) {
+			server := newServer(t, func(cfg *ftpConfig) {
 				user := fullUser("john")
 				tc.deny(&user)
 				cfg.Users = []config.User{user}
@@ -424,8 +424,7 @@ func TestReloadReachesALiveSession(t *testing.T) {
 	next := server.settings().cfg
 	user := fullUser("john")
 	user.AllowUserFileDelete = &no
-	next.Users = []config.User{user}
-	if err := server.Reload(next, server.settings().ftps); err != nil {
+	if err := server.Reload(next, server.settings().ftps, []config.User{user}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -442,8 +441,7 @@ func TestReloadEndsASessionWhoseAccountIsGone(t *testing.T) {
 	c.login()
 
 	next := server.settings().cfg
-	next.Users = []config.User{fullUser("someone else")}
-	if err := server.Reload(next, server.settings().ftps); err != nil {
+	if err := server.Reload(next, server.settings().ftps, []config.User{fullUser("someone else")}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 

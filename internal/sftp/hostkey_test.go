@@ -18,7 +18,7 @@ func TestConfiguredHostKeyIsStable(t *testing.T) {
 	want := ssh.FingerprintSHA256(public)
 
 	for _, run := range []string{"first start", "restart"} {
-		server := newServer(t, func(cfg *config.SFTP) { cfg.HostKey = encoded })
+		server := newServer(t, func(cfg *sftpConfig) { cfg.HostKey = encoded })
 
 		var seen string
 		client, err := ssh.Dial("tcp", server.Addr().String(), &ssh.ClientConfig{

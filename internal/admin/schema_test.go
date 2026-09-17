@@ -20,7 +20,7 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 	for _, section := range schema.Sections {
 		sections[section.Key] = section
 	}
-	for _, name := range []string{"general", "log", "ftp", "ftps", "sftp", "http", "https", "tftp"} {
+	for _, name := range []string{"general", "log", "users", "ftp", "ftps", "sftp", "http", "https", "tftp"} {
 		if _, ok := sections[name]; !ok {
 			t.Errorf("the schema has no %s section", name)
 		}
@@ -30,10 +30,56 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 			len(sections), reflect.TypeOf(config.Config{}).NumField())
 	}
 
-	tables := map[string]int{"ftp": 1, "sftp": 1, "http": 2, "general": 0, "log": 0}
+	tables := map[string]int{"ftp": 0, "sftp": 0, "http": 1, "general": 0, "log": 0, "users": 1}
 	for name, want := range tables {
 		if got := len(sections[name].Tables); got != want {
 			t.Errorf("%s has %d repeated tables, want %d", name, got, want)
+		}
+	}
+
+	// the accounts are a list at the top of the file, and their tab sits
+	// where the file has them: between the log and the first server
+	if !sections["users"].Direct || sections["ftp"].Direct {
+		t.Error("users is the direct section, and the only one")
+	}
+	if len(sections["users"].Fields) != 0 || sections["users"].Fields == nil {
+		t.Errorf("users has fields of its own: %v", sections["users"].Fields)
+	}
+	var order []string
+	for _, section := range schema.Sections[:4] {
+		order = append(order, section.Key)
+	}
+	if want := []string{"general", "log", "users", "ftp"}; !reflect.DeepEqual(order, want) {
+		t.Errorf("the tabs open %v, want %v", order, want)
+	}
+}
+
+// TestSummaryFields checks what a folded record is named by: its first text
+// and its switches, and not its rights or its secrets.
+func TestSummaryFields(t *testing.T) {
+	schema, _ := build()
+	summary := make(map[string]bool)
+	for _, section := range schema.Sections {
+		for _, table := range section.Tables {
+			for _, field := range table.Fields {
+				summary[section.Key+"."+table.Key+"."+field.Key] = field.Summary
+			}
+		}
+	}
+	for key, want := range map[string]bool{
+		"users.users.username":            true,
+		"users.users.ftp":                 true,
+		"users.users.sftp":                true,
+		"users.users.http":                true,
+		"users.users.cookie":              true,
+		"users.users.password":            false,
+		"users.users.basefolder":          false,
+		"users.users.allowUserFileCreate": false,
+		"http.cleanup.path":               true,
+		"http.cleanup.keep":               false,
+	} {
+		if summary[key] != want {
+			t.Errorf("%s summary = %v, want %v", key, summary[key], want)
 		}
 	}
 }
@@ -55,19 +101,20 @@ func TestFieldKinds(t *testing.T) {
 	}
 
 	for key, want := range map[string]string{
-		"ftp.enabled":                   kindBool,
-		"ftp.port":                      kindInt,
-		"ftp.basefolder":                kindText,
-		"http.maxUploadSize":            kindInt,
-		"http.methodsRequireAuth":       kindLines,
-		"general.adminPassword":         kindSecret,
-		"general.adminCert":             kindText,
-		"sftp.hostkey":                  kindSecret,
-		"ftp.users.password":            kindSecret,
-		"ftp.users.allowUserFileCreate": kindBool,
-		"sftp.users.authorizedKeys":     kindLines,
-		"http.users.paths":              kindLines,
-		"http.cleanup.keep":             kindInt,
+		"ftp.enabled":                     kindBool,
+		"ftp.port":                        kindInt,
+		"ftp.basefolder":                  kindText,
+		"http.maxUploadSize":              kindInt,
+		"http.methodsRequireAuth":         kindLines,
+		"general.adminPassword":           kindSecret,
+		"general.adminCert":               kindText,
+		"sftp.hostkey":                    kindSecret,
+		"users.users.password":            kindSecret,
+		"users.users.ftp":                 kindBool,
+		"users.users.allowUserFileCreate": kindBool,
+		"users.users.authorizedKeys":      kindLines,
+		"users.users.paths":               kindLines,
+		"http.cleanup.keep":               kindInt,
 	} {
 		if kinds[key] != want {
 			t.Errorf("%s is %q, want %q", key, kinds[key], want)
@@ -105,15 +152,17 @@ func TestValuesRoundTrip(t *testing.T) {
 	cfg := config.Default()
 	cfg.General.Basefolder = "/srv/files"
 	cfg.HTTP.MaxUploadSize = 1 << 30
-	cfg.FTP.Users = []config.User{
-		{Username: "john", Password: "doe", AllowUserFileRetrieve: &yes},
-		{Username: "anonymous", AllowLoginWithoutPassword: &yes},
+	cfg.Users = []config.User{
+		{Username: "john", Password: "doe", FTP: true, HTTP: true, Paths: []string{"^/public/"}, AllowUserFileRetrieve: &yes},
+		{Username: "anonymous", FTP: true, AllowLoginWithoutPassword: &yes},
+		{Username: "max", SFTP: true, AuthorizedKeys: []string{"ssh-ed25519 AAAA max@laptop"}},
 	}
-	cfg.HTTP.Users = []config.HTTPUser{{Username: "max", Password: "m", Paths: []string{"^/public/"}}}
 	cfg.HTTP.Cleanup = []config.Cleanup{{Path: "/iso", Keep: 10}}
-	cfg.SFTP.Users = []config.User{{Username: "max", AuthorizedKeys: []string{"ssh-ed25519 AAAA max@laptop"}}}
 
 	first := schema.Values(cfg)
+	if records, ok := first["users"].([]any); !ok || len(records) != 3 {
+		t.Errorf("users renders as %v, want its three records", first["users"])
+	}
 	applied, err := schema.Apply(roundTripJSON(t, first))
 	if err != nil {
 		t.Fatal(err)
@@ -123,13 +172,16 @@ func TestValuesRoundTrip(t *testing.T) {
 	}
 
 	// the parts a round trip must not lose
-	if len(applied.FTP.Users) != 2 || applied.FTP.Users[0].Username != "john" {
-		t.Errorf("the accounts did not survive: %+v", applied.FTP.Users)
+	if len(applied.Users) != 3 || applied.Users[0].Username != "john" {
+		t.Errorf("the accounts did not survive: %+v", applied.Users)
 	}
-	if !applied.FTP.Users[0].Permissions().FileRetrieve {
+	if !applied.Users[0].FTP || !applied.Users[0].HTTP || applied.Users[0].SFTP {
+		t.Errorf("the switches did not survive: %+v", applied.Users[0])
+	}
+	if !applied.Users[0].Permissions().FileRetrieve {
 		t.Error("a granted permission did not survive")
 	}
-	if applied.FTP.Users[0].Permissions().FileCreate {
+	if applied.Users[0].Permissions().FileCreate {
 		t.Error("a permission that was never granted came back granted")
 	}
 	if applied.HTTP.MaxUploadSize != 1<<30 {
@@ -138,8 +190,8 @@ func TestValuesRoundTrip(t *testing.T) {
 	if applied.HTTP.Cleanup[0].Keep != 10 {
 		t.Errorf("http.cleanup did not survive: %+v", applied.HTTP.Cleanup)
 	}
-	if applied.SFTP.Users[0].AuthorizedKeys[0] != "ssh-ed25519 AAAA max@laptop" {
-		t.Errorf("the authorized key did not survive: %+v", applied.SFTP.Users[0])
+	if applied.Users[2].AuthorizedKeys[0] != "ssh-ed25519 AAAA max@laptop" {
+		t.Errorf("the authorized key did not survive: %+v", applied.Users[2])
 	}
 }
 

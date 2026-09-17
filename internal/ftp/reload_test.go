@@ -16,9 +16,9 @@ func TestReloadAppliesAccounts(t *testing.T) {
 	open.login()
 
 	next := server.settings().cfg
-	next.Users = append(append([]config.User{}, next.Users...),
-		config.User{Username: "jane", Password: "secret"})
-	if err := server.Reload(next, server.settings().ftps); err != nil {
+	users := append(append([]config.User{}, server.settings().users...),
+		config.User{Username: "jane", Password: "secret", FTP: true})
+	if err := server.Reload(next, server.settings().ftps, users); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -46,7 +46,7 @@ func TestReloadReportsWhatNeedsARestart(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg, ftps := server.settings().cfg, server.settings().ftps
 			change(&cfg, &ftps)
-			if err := server.Reload(cfg, ftps); err != service.ErrNeedsRestart {
+			if err := server.Reload(cfg, ftps, server.settings().users); err != service.ErrNeedsRestart {
 				t.Errorf("err = %v, want ErrNeedsRestart", err)
 			}
 		})
@@ -59,7 +59,7 @@ func TestReloadAppliesLimits(t *testing.T) {
 
 	next := server.settings().cfg
 	next.MaxConnections = 1
-	if err := server.Reload(next, server.settings().ftps); err != nil {
+	if err := server.Reload(next, server.settings().ftps, server.settings().users); err != nil {
 		t.Fatal(err)
 	}
 	if got := server.settings().cfg.MaxConnections; got != 1 {
@@ -72,8 +72,8 @@ func TestReloadKeepsTheRunningConfigurationOnError(t *testing.T) {
 	server := newServer(t, nil)
 
 	next := server.settings().cfg
-	next.Users = []config.User{{Username: "jane", Basefolder: t.TempDir() + "/nope"}}
-	if err := server.Reload(next, server.settings().ftps); err == nil {
+	users := []config.User{{Username: "jane", FTP: true, Basefolder: t.TempDir() + "/nope"}}
+	if err := server.Reload(next, server.settings().ftps, users); err == nil {
 		t.Fatal("a missing user folder has to be refused")
 	}
 

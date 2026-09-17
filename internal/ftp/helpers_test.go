@@ -117,6 +117,7 @@ func fullUser(name string) config.User {
 	yes := true
 	return config.User{
 		Username:                  name,
+		FTP:                       true,
 		AllowLoginWithoutPassword: &yes,
 		AllowUserFileCreate:       &yes,
 		AllowUserFileRetrieve:     &yes,
@@ -127,16 +128,23 @@ func fullUser(name string) config.User {
 	}
 }
 
+// ftpConfig is the [ftp] section together with the accounts the file keeps
+// under [[users]], so that one closure tunes both.
+type ftpConfig struct {
+	config.FTP
+	Users []config.User
+}
+
 // newServer starts a server on an ephemeral control port, with its own passive
 // port range and a single user "john" that needs no password.
-func newServer(t *testing.T, tune func(*config.FTP)) *testServer {
+func newServer(t *testing.T, tune func(*ftpConfig)) *testServer {
 	t.Helper()
 	return newServerWith(t, tune, nil)
 }
 
 // newTLSServer does the same with the implicit TLS listener enabled on an
 // ephemeral port and a generated certificate.
-func newTLSServer(t *testing.T, tune func(*config.FTP)) *testServer {
+func newTLSServer(t *testing.T, tune func(*ftpConfig)) *testServer {
 	t.Helper()
 	return newServerWith(t, tune, func(ftps *config.FTPS) {
 		ftps.Enabled = true
@@ -144,10 +152,10 @@ func newTLSServer(t *testing.T, tune func(*config.FTP)) *testServer {
 	})
 }
 
-func newServerWith(t *testing.T, tune func(*config.FTP), tuneTLS func(*config.FTPS)) *testServer {
+func newServerWith(t *testing.T, tune func(*ftpConfig), tuneTLS func(*config.FTPS)) *testServer {
 	t.Helper()
 	base := t.TempDir()
-	cfg := config.Default().FTP
+	cfg := ftpConfig{FTP: config.Default().FTP}
 	cfg.Basefolder = base
 	cfg.Port = 0
 	cfg.MaxConnections = 8
@@ -167,7 +175,7 @@ func newServerWith(t *testing.T, tune func(*config.FTP), tuneTLS func(*config.FT
 	}
 
 	logs := &logStore{}
-	server, err := New(cfg, ftps, slog.New(&recorder{store: logs}))
+	server, err := New(cfg.FTP, ftps, cfg.Users, slog.New(&recorder{store: logs}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

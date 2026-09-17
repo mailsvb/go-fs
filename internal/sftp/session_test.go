@@ -40,7 +40,7 @@ func TestPublicKeyLogin(t *testing.T) {
 	signer, authorized := newKeyPair(t)
 	other, _ := newKeyPair(t)
 
-	server := newServer(t, func(cfg *config.SFTP) {
+	server := newServer(t, func(cfg *sftpConfig) {
 		user := fullUser("john", "")
 		user.AuthorizedKeys = []string{authorized}
 		cfg.Users = []config.User{user}
@@ -61,7 +61,7 @@ func TestPublicKeyLogin(t *testing.T) {
 // A key and a password on the same account are both usable.
 func TestBothAuthenticationMethods(t *testing.T) {
 	signer, authorized := newKeyPair(t)
-	server := newServer(t, func(cfg *config.SFTP) {
+	server := newServer(t, func(cfg *sftpConfig) {
 		user := fullUser("john", "doe")
 		user.AuthorizedKeys = []string{authorized}
 		cfg.Users = []config.User{user}
@@ -80,8 +80,8 @@ func TestBothAuthenticationMethods(t *testing.T) {
 func TestNewRejectsAnAccountWithoutCredentials(t *testing.T) {
 	cfg := config.Default().SFTP
 	cfg.Basefolder = t.TempDir()
-	cfg.Users = []config.User{{Username: "john"}}
-	if _, err := New(cfg, discardLogger()); err == nil {
+	users := []config.User{{Username: "john", SFTP: true}}
+	if _, err := New(cfg, users, discardLogger()); err == nil {
 		t.Error("an account with neither a password nor a key has to be refused")
 	} else if !strings.Contains(err.Error(), "never log in") {
 		t.Errorf("error = %v", err)
@@ -91,8 +91,8 @@ func TestNewRejectsAnAccountWithoutCredentials(t *testing.T) {
 func TestNewRejectsABrokenAuthorizedKey(t *testing.T) {
 	cfg := config.Default().SFTP
 	cfg.Basefolder = t.TempDir()
-	cfg.Users = []config.User{{Username: "john", AuthorizedKeys: []string{"ssh-ed25519 not-a-key"}}}
-	if _, err := New(cfg, discardLogger()); err == nil {
+	users := []config.User{{Username: "john", SFTP: true, AuthorizedKeys: []string{"ssh-ed25519 not-a-key"}}}
+	if _, err := New(cfg, users, discardLogger()); err == nil {
 		t.Error("a malformed authorized key has to be refused at startup")
 	}
 }
@@ -100,8 +100,7 @@ func TestNewRejectsABrokenAuthorizedKey(t *testing.T) {
 func TestNewRejectsMissingFolders(t *testing.T) {
 	cfg := config.Default().SFTP
 	cfg.Basefolder = t.TempDir() + "/nope"
-	cfg.Users = []config.User{fullUser("john", "doe")}
-	if _, err := New(cfg, discardLogger()); err == nil {
+	if _, err := New(cfg, []config.User{fullUser("john", "doe")}, discardLogger()); err == nil {
 		t.Error("a missing base folder has to be refused")
 	}
 
@@ -109,8 +108,7 @@ func TestNewRejectsMissingFolders(t *testing.T) {
 	cfg.Basefolder = t.TempDir()
 	user := fullUser("john", "doe")
 	user.Basefolder = t.TempDir() + "/nope"
-	cfg.Users = []config.User{user}
-	if _, err := New(cfg, discardLogger()); err == nil {
+	if _, err := New(cfg, []config.User{user}, discardLogger()); err == nil {
 		t.Error("a missing user base folder has to be refused")
 	}
 }
@@ -118,8 +116,8 @@ func TestNewRejectsMissingFolders(t *testing.T) {
 func TestDuplicateAccountIsRejected(t *testing.T) {
 	cfg := config.Default().SFTP
 	cfg.Basefolder = t.TempDir()
-	cfg.Users = []config.User{fullUser("john", "doe"), fullUser("john", "other")}
-	if _, err := New(cfg, discardLogger()); err == nil {
+	users := []config.User{fullUser("john", "doe"), fullUser("john", "other")}
+	if _, err := New(cfg, users, discardLogger()); err == nil {
 		t.Error("the same username twice has to be refused")
 	}
 }
@@ -153,7 +151,7 @@ func TestShellAndExecAreRefused(t *testing.T) {
 
 func TestPerUserBasefolder(t *testing.T) {
 	own := t.TempDir()
-	server := newServer(t, func(cfg *config.SFTP) {
+	server := newServer(t, func(cfg *sftpConfig) {
 		user := fullUser("john", "doe")
 		user.Basefolder = own
 		cfg.Users = []config.User{user}
@@ -174,7 +172,7 @@ func TestPerUserBasefolder(t *testing.T) {
 }
 
 func TestMaxConnections(t *testing.T) {
-	server := newServer(t, func(cfg *config.SFTP) { cfg.MaxConnections = 1 })
+	server := newServer(t, func(cfg *sftpConfig) { cfg.MaxConnections = 1 })
 
 	first := login(t, server)
 	if _, err := first.Getwd(); err != nil {

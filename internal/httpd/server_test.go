@@ -41,7 +41,7 @@ func TestHTTPSListener(t *testing.T) {
 }
 
 func TestHTTPSOnlyWithoutThePlainListener(t *testing.T) {
-	server := newServerWith(t, func(cfg *config.HTTP) { cfg.Enabled = false },
+	server := newServerWith(t, func(cfg *httpConfig) { cfg.Enabled = false },
 		func(https *config.HTTPS) { https.Enabled = true })
 
 	if addr := server.Addr(); addr != nil {
@@ -55,8 +55,8 @@ func TestHTTPSOnlyWithoutThePlainListener(t *testing.T) {
 // A session cookie sent over TLS is marked Secure, which one over plain HTTP
 // cannot be.
 func TestSessionCookieIsSecureOverTLS(t *testing.T) {
-	server := newServerWith(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServerWith(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	}, func(https *config.HTTPS) { https.Enabled = true })
 	server.write(t, "private/hello.txt", "x")
 
@@ -94,21 +94,21 @@ func TestNewRejectsBadConfiguration(t *testing.T) {
 
 	cfg := config.Default().HTTP
 	cfg.Basefolder = base + "/nope"
-	if _, err := New(cfg, config.HTTPS{}, discardLogger()); err == nil {
+	if _, err := New(cfg, config.HTTPS{}, nil, discardLogger()); err == nil {
 		t.Error("a missing base folder has to be refused")
 	}
 
 	cfg = config.Default().HTTP
 	cfg.Basefolder = base
 	cfg.PathsRequireAuth = []string{"([unclosed"}
-	if _, err := New(cfg, config.HTTPS{}, discardLogger()); err == nil {
+	if _, err := New(cfg, config.HTTPS{}, nil, discardLogger()); err == nil {
 		t.Error("a broken pathsRequireAuth pattern has to be refused")
 	}
 
 	cfg = config.Default().HTTP
 	cfg.Basefolder = base
-	cfg.Users = []config.HTTPUser{{Username: "john", Password: "doe", Paths: []string{"([unclosed"}}}
-	if _, err := New(cfg, config.HTTPS{}, discardLogger()); err == nil {
+	users := []config.User{{Username: "john", Password: "doe", HTTP: true, Paths: []string{"([unclosed"}}}
+	if _, err := New(cfg, config.HTTPS{}, users, discardLogger()); err == nil {
 		t.Error("a broken user path pattern has to be refused")
 	}
 }
@@ -117,7 +117,7 @@ func TestStartNeedsAListener(t *testing.T) {
 	cfg := config.Default().HTTP
 	cfg.Enabled = false
 	cfg.Basefolder = t.TempDir()
-	server, err := New(cfg, config.HTTPS{}, discardLogger())
+	server, err := New(cfg, config.HTTPS{}, nil, discardLogger())
 	if err != nil {
 		t.Fatal(err)
 	}

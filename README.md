@@ -70,21 +70,22 @@ them for you, or run on high ports behind a redirect.
 
 ## Configuration
 
-One TOML file with a `[general]`, a `[log]`, an `[ftp]`, an `[ftps]`, an
-`[sftp]`, an `[http]`, an `[https]` and a `[tftp]` section. Every key is
-optional and keeps the documented default when absent, so a working file can be
-this short:
+One TOML file with a `[general]`, a `[log]`, a `[[users]]` list, an `[ftp]`,
+an `[ftps]`, an `[sftp]`, an `[http]`, an `[https]` and a `[tftp]` section.
+Every key is optional and keeps the documented default when absent, so a
+working file can be this short:
 
 ```toml
 [general]
 basefolder = "/srv/files"
 
-[ftp]
-port = 2121
-
-[[ftp.users]]
+[[users]]
 username = "john"
 password = "doe"
+ftp = true
+
+[ftp]
+port = 2121
 
 [tftp]
 port = 6969
@@ -122,10 +123,22 @@ connection never outlives the rights it was granted by more than the request it
 is in.
 
 `go-fs.example.toml` is the fully commented version, and the same file
-`-init` writes. Accounts are one `[[ftp.users]]` table each; there is no default
-account, so a name that is not listed cannot log in. Each user may have its own
-`basefolder`. `[sftp]` has the same shape with its own `[[sftp.users]]`, and
-its accounts follow the same rules.
+`-init` writes.
+
+### Accounts
+
+Accounts are one `[[users]]` table each, and every server draws from the same
+list: an account is configured once, with one password, and says which servers
+it may log in to with `ftp = true`, `sftp = true` and `http = true`, each off
+unless set. There is no default account, so a name that is not listed cannot
+log in anywhere, and a name is listed once — the same person on FTP and HTTP is
+one entry with both switches on. An entry that switches nothing on is kept
+without being served, which is the way to park an account.
+
+Each account may have its own `basefolder`, which FTP and SFTP serve instead of
+the server's; HTTP scopes an account by `paths` instead. `allowLoginWithoutPassword`
+is read by FTP alone, `authorizedKeys` by SFTP alone, `paths`, `cookie` and
+`cookiePath` by HTTP alone; the servers a key does not apply to ignore it.
 
 **The shipped file defines no account.** The examples in it are commented out on
 purpose, so a fresh configuration serves nobody until you put a name and a
@@ -138,28 +151,43 @@ Every right an account has is granted explicitly — `allowUserFileCreate`,
 `allowUserFileRetrieve`, `allowUserFileOverwrite`, `allowUserFileDelete`,
 `allowUserFolderCreate` and `allowUserFolderDelete` all deny when they are not
 set, so an account that lists none of them can log in and look around and
-nothing more.
+nothing more. The rights are one set that holds on every server the account
+uses: `allowUserFileDelete = true` lets it delete over FTP, SFTP and HTTP alike.
 
 An operation that does two things needs both rights, and no right reaches
 further than its name says:
 
 | Operation | Needs |
 |---|---|
-| `RMD`, `XRMD`, SFTP `rmdir` | `allowUserFolderDelete`, and the folder has to be empty |
+| `RMD`, `XRMD`, SFTP `rmdir`, HTTP `DELETE` of a folder | `allowUserFolderDelete`, and the folder has to be empty |
 | `RMDA` | `allowUserFolderDelete` **and** `allowUserFileDelete`, since what it removes is files |
-| `RNFR`/`RNTO`, SFTP rename | `allowUserFileCreate` **and** `allowUserFileDelete`: a rename makes one name and unmakes another |
+| `RNFR`/`RNTO`, SFTP rename, HTTP `MOVE` | `allowUserFileCreate` **and** `allowUserFileDelete`: a rename makes one name and unmakes another |
 | `MFMT`, `SITE CHMOD`, SFTP setstat | `allowUserFileOverwrite`, since they change the file |
+| HTTP `PUT` of a new name | `allowUserFileCreate` |
+| HTTP `PUT` over a file that exists | `allowUserFileOverwrite`; without it the name is taken |
+| HTTP `MKCOL` | `allowUserFolderCreate` |
+| HTTP `DELETE` of a file | `allowUserFileDelete` |
+| HTTP `GET`, `HEAD` and the listing, where an account is required | `allowUserFileRetrieve` — where the request is public no account is asked |
 
 Anonymous access is not a setting of its own, just an account that takes no
 password:
 
 ```toml
-[[ftp.users]]
+[[users]]
 username = "anonymous"
 password = ""
+ftp = true
 allowLoginWithoutPassword = true
 allowUserFileRetrieve = true
 ```
+
+**Upgrading from a file with `[[ftp.users]]`, `[[sftp.users]]` or
+`[[http.users]]`:** those tables are not read any more. The file still loads,
+with no accounts, and the server says so at warning level on every start. Move
+each entry under `[[users]]`, add the switch of the server it was listed under,
+and for an HTTP account replace `allowUserFileUpload = true` with
+`allowUserFileCreate = true` and `allowUserFolderCreate = true`, and add
+`allowUserFileRetrieve = true` if it reads paths that require an account.
 
 Every server confines every request to its base folder. Symbolic links are
 resolved before that check, so a link inside the folder cannot be used to reach
@@ -178,10 +206,13 @@ adminUsername = "admin"
 adminPassword = "..."
 ```
 
-It shows every section of the configuration as a tab, every repeated table —
-`[[ftp.users]]`, `[[sftp.users]]`, `[[http.users]]`, `[[http.cleanup]]` — as a
-list of records that can be added to and removed from, and each key with the
-comment that documents it in `go-fs.example.toml`. One **Apply** button writes
+It shows every section of the configuration as a tab, with the accounts on a
+**USERS** tab of their own between LOG and FTP, and every repeated table —
+`[[users]]`, `[[http.cleanup]]` — as a list of records that can be added to and
+removed from. Each record folds up to one line naming it, `john · ftp, http`,
+and starts folded, so a long account list reads as a list of names and one
+opens to be edited. Each key comes with the comment that documents it in
+`go-fs.example.toml`. One **Apply** button writes
 the file; the watcher above then applies it, so the same rules hold — accounts
 change without dropping anything, a port restarts one server.
 
@@ -298,14 +329,14 @@ data connection owes nothing on the control one.
 | `ftp.idleTimeout` | `600` | an idle control connection does not hold a slot forever, though a running transfer is never idle |
 | `ftp.transferIdleTimeout` | `300` | a transfer that stalls gives its slot back, however long a moving one takes |
 | `ftp.loginFailureDelay` | `1` | a wrong password is answered after a second, which slows guessing |
-| `ftp.users[].allowUser*` | `false` | an account is granted only the rights its table lists |
+| `users[].ftp`, `users[].sftp`, `users[].http` | `false` | an account logs in only to the servers it switches on |
+| `users[].allowUser*` | `false` | an account is granted only the rights its table lists |
 | `sftp.enabled`, `http.enabled` | `false` | both are off by default, so an upgrade never opens a port on its own |
-| `http.users[].allowUser*` | `false` | an account is granted only the rights its table lists |
 | `tftp.allowWrite` | `false` | read only unless switched on |
 | `tftp.maxBlockSize` | `1468` | keeps a block inside a typical ethernet MTU so datagrams are not IP fragmented |
 | `tftp.maxTimeout` | `60` | a client cannot negotiate a retransmit interval that pins a transfer slot |
 | `tftp.maxConnectionsPerHost` | `5` | one host cannot take every slot |
-| `ftp.users`, `http.users` in the shipped file | none | the examples are commented out, so a fresh configuration serves nobody |
+| `[[users]]` in the shipped file | none | the examples are commented out, so a fresh configuration serves nobody |
 
 ## TLS
 
@@ -355,29 +386,32 @@ serves only that subsystem: a `shell` or `exec` request is refused, and there is
 no way to run anything on the host through it.
 
 ```toml
+[[users]]
+username = "john"
+password = "doe"
+sftp = true
+allowUserFileRetrieve = true
+
+[[users]]
+username = "max"
+sftp = true
+authorizedKeys = ["ssh-ed25519 AAAAC3Nz... max@laptop"]
+allowUserFileRetrieve = true
+allowUserFileCreate = true
+
 [sftp]
 enabled = true
 port = 2222
 basefolder = "/srv/sftp"
 hostkey = ""
-
-[[sftp.users]]
-username = "john"
-password = "doe"
-allowUserFileRetrieve = true
-
-[[sftp.users]]
-username = "max"
-authorizedKeys = ["ssh-ed25519 AAAAC3Nz... max@laptop"]
-allowUserFileRetrieve = true
-allowUserFileCreate = true
 ```
 
-An account authenticates with a password, with a public key, or with either
-when both are configured. `authorizedKeys` entries are `authorized_keys` lines,
-the content of an `id_*.pub` file. `allowLoginWithoutPassword` means nothing
-here — SSH has no anonymous login — so an account needs a password or a key, and
-one with neither is refused at startup rather than left unusable.
+The accounts are the `[[users]]` entries that set `sftp = true`. An account
+authenticates with a password, with a public key, or with either when both are
+configured. `authorizedKeys` entries are `authorized_keys` lines, the content
+of an `id_*.pub` file. `allowLoginWithoutPassword` means nothing here — SSH has
+no anonymous login — so an account needs a password or a key, and one with
+neither is refused at startup rather than left unusable.
 
 The host key lives in the configuration itself rather than in a separate file,
 as every certificate and key here does: `hostkey` is base64 of its PEM encoding,
@@ -407,6 +441,19 @@ still sort, as ordinary links.
 Access has two layers, which is what the Express server it replaces did:
 
 ```toml
+[[users]]
+username = "john"
+password = "doe"
+http = true
+paths = ["^/private/.*"]
+allowUserFileRetrieve = true
+allowUserFileCreate = true
+allowUserFileOverwrite = true
+allowUserFolderCreate = true
+allowUserFileDelete = true
+allowUserFolderDelete = true
+cookie = true
+
 [http]
 enabled = true
 port = 9080
@@ -415,21 +462,19 @@ methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 pathsRequireAuth = ["^/private/.*"]
 httpSessionTokenLifetime = 3600
 httpSessionTokenSecret = ""
-
-[[http.users]]
-username = "john"
-password = "doe"
-paths = ["^/private/.*"]
-allowUserFileUpload = true
-allowUserFileDelete = true
-cookie = true
 ```
 
 A request is **public** unless its method is in `methodsRequireAuth` or its path
-matches one of `pathsRequireAuth`. Anything else has to be answered by an
-account, and that account's own `paths` then decide what it may reach:
-`allowUserFileUpload` for `PUT` and `MKCOL`, `allowUserFileDelete` for `DELETE`,
-both of them for `MOVE`, all false unless set. A path an account may not reach is
+matches one of `pathsRequireAuth`. Anything else has to be answered by one of
+the `[[users]]` entries that set `http = true`, and that account's own `paths`
+then decide what it may reach, and its rights what it may do there: the same
+`allowUser*` flags as on the other servers, mapped as the table under Accounts
+says — `allowUserFileCreate` for a `PUT` of a new name, `allowUserFileOverwrite`
+for a `PUT` over a file that exists, `allowUserFolderCreate` for `MKCOL`,
+`allowUserFileDelete` and `allowUserFolderDelete` for `DELETE` of the one or
+the other, create and delete both for `MOVE`, and `allowUserFileRetrieve` for
+reading and listing, all false unless set. A public `PUT` never replaces a file
+whoever is signed in; that takes the right. A path an account may not reach is
 `403`, not another challenge.
 
 `MKCOL` and `MOVE` do not have to appear in `methodsRequireAuth`: `MKCOL` is

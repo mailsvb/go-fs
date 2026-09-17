@@ -17,8 +17,8 @@ func TestReloadAppliesAccounts(t *testing.T) {
 	}
 
 	next := server.settings().cfg
-	next.Users = append(append([]config.User{}, next.Users...), fullUser("jane", "secret"))
-	if err := server.Reload(next); err != nil {
+	users := []config.User{fullUser("john", "doe"), fullUser("jane", "secret")}
+	if err := server.Reload(next, users); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -42,7 +42,7 @@ func TestReloadReportsWhatNeedsARestart(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := server.settings().cfg
 			change(&cfg)
-			if err := server.Reload(cfg); err != service.ErrNeedsRestart {
+			if err := server.Reload(cfg, nil); err != service.ErrNeedsRestart {
 				t.Errorf("err = %v, want ErrNeedsRestart", err)
 			}
 		})
@@ -54,8 +54,8 @@ func TestReloadKeepsTheRunningConfigurationOnError(t *testing.T) {
 	server := newServer(t, nil)
 
 	next := server.settings().cfg
-	next.Users = []config.User{{Username: "jane", AuthorizedKeys: []string{"ssh-ed25519 not-a-key"}}}
-	if err := server.Reload(next); err == nil {
+	users := []config.User{{Username: "jane", SFTP: true, AuthorizedKeys: []string{"ssh-ed25519 not-a-key"}}}
+	if err := server.Reload(next, users); err == nil {
 		t.Fatal("a malformed key has to be refused")
 	}
 	if _, err := dial(t, server, "john", ssh.Password("doe")); err != nil {

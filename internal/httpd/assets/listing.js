@@ -53,6 +53,7 @@
     file: { 404: "That file is already gone." },
     folder: { 404: "The folder still has something in it, or it is already gone." },
     upload: {
+      403: "You may not upload here, or there is already a file with that name and you may not replace it.",
       404: "There is already a file with that name.",
       416: "This upload lost sync with the server — try uploading it again."
     }
@@ -64,6 +65,10 @@
     if (status === 401) {
       return "Your session has ended \u2014 reload the page to log in again.";
     }
+    var known = refusals[what] || {};
+    if (known[status]) {
+      return known[status];
+    }
     if (status === 403) {
       return "You are not allowed to do that here.";
     }
@@ -72,10 +77,6 @@
     }
     if (status === 413) {
       return text || "The file is larger than this server accepts.";
-    }
-    var known = refusals[what] || {};
-    if (known[status]) {
-      return known[status];
     }
     return text || ("The server answered " + status + ".");
   }

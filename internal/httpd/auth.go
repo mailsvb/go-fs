@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,15 +21,13 @@ import (
 	"go-fs/internal/vfs"
 )
 
-// account is one resolved entry of http.users: its credentials, the paths it
-// may reach and what it may do there.
+// account is one resolved entry of [[users]] that sets http: its credentials,
+// the paths it may reach and what it may do there.
 type account struct {
 	name     string
 	password string
 	paths    []*regexp.Regexp
-
-	upload bool
-	delete bool
+	perms    config.Permissions
 
 	cookie     bool
 	cookiePath string
@@ -56,22 +55,25 @@ func matchesPath(patterns []*regexp.Regexp, virtual string) bool {
 	return false
 }
 
-func buildAccounts(users []config.HTTPUser) ([]*account, error) {
+// buildAccounts resolves the accounts once, at startup and on every reload. An
+// error names the account rather than its position: the list is the file's
+// filtered down to this server. The base folder and the anonymous login of an
+// entry belong to the other servers and are not read here.
+func buildAccounts(users []config.User) ([]*account, error) {
 	accounts := make([]*account, 0, len(users))
 	seen := map[string]bool{}
-	for i, user := range users {
+	for _, user := range users {
 		// a session names its account, and every request resolves that name
 		// again, so two entries with the same name would make which rights
 		// apply a matter of order
 		if seen[user.Username] {
-			return nil, fmt.Errorf("http.users[%d]: %q is configured twice", i, user.Username)
+			return nil, fmt.Errorf("users %q is configured twice", user.Username)
 		}
 		seen[user.Username] = true
 		resolved := &account{
 			name:       user.Username,
 			password:   user.Password,
-			upload:     user.AllowUserFileUpload,
-			delete:     user.AllowUserFileDelete,
+			perms:      user.Permissions(),
 			cookie:     user.Cookie,
 			cookiePath: user.CookiePath,
 		}
@@ -81,7 +83,7 @@ func buildAccounts(users []config.HTTPUser) ([]*account, error) {
 		for k, pattern := range user.Paths {
 			compiled, err := regexp.Compile(pattern)
 			if err != nil {
-				return nil, fmt.Errorf("http.users[%d].paths[%d]: %w", i, k, err)
+				return nil, fmt.Errorf("users %q paths[%d]: %w", user.Username, k, err)
 			}
 			resolved.paths = append(resolved.paths, compiled)
 		}
@@ -294,33 +296,102 @@ func impliedBy(method string) []string {
 	}
 }
 
-// permits reports whether the account behind a request may use a method on a
-// path. It is the one place the four things that can refuse a request are put
-// together: whether the method needs an account there at all, whether the
-// account may reach the path, and the two rights.
+// action is what a request is about to do to a path. It is finer than the
+// method: a PUT creates or replaces depending on what is there, and a DELETE
+// removes a file or a folder, and those are different rights.
+type action int
+
+const (
+	actRead         action = iota // GET, HEAD and the legacy POST reader
+	actCreate                     // PUT on a name that is free
+	actOverwrite                  // PUT on a name that is taken
+	actMkdir                      // MKCOL
+	actDeleteFile                 // DELETE of a file
+	actDeleteFolder               // DELETE of a folder
+	actRename                     // MOVE, for its source and its destination alike
+)
+
+func (a action) String() string {
+	switch a {
+	case actRead:
+		return "read"
+	case actCreate:
+		return "create"
+	case actOverwrite:
+		return "overwrite"
+	case actMkdir:
+		return "mkdir"
+	case actDeleteFile:
+		return "delete"
+	case actDeleteFolder:
+		return "rmdir"
+	case actRename:
+		return "rename"
+	}
+	return "unknown"
+}
+
+// actionOf reads the target once, before the permission check, so that the
+// check and the handler agree on what the request is: the handlers stat again
+// for their own refusals, but the right is decided here.
+func actionOf(method string, target vfs.Target) action {
+	switch strings.ToUpper(method) {
+	case http.MethodPut:
+		if _, err := os.Stat(target.Path); err == nil {
+			return actOverwrite
+		}
+		return actCreate
+	case methodMkcol:
+		return actMkdir
+	case http.MethodDelete:
+		if info, err := os.Stat(target.Path); err == nil && info.IsDir() {
+			return actDeleteFolder
+		}
+		return actDeleteFile
+	case methodMove:
+		return actRename
+	default:
+		return actRead
+	}
+}
+
+// permits reports whether the account behind a request may do act to a path.
+// It is the one place the things that can refuse a request are put together:
+// whether the method needs an account there at all, whether the account may
+// reach the path, and the right the action needs.
 //
 // A request that needs no account for that method is permitted whoever is
 // signed in. An identity adds to what a request may do and never takes
 // anything away: on a server whose GET is public and whose PUT is not, logging
-// in must not be what stops someone reading a folder.
-func (s *Server) permits(set *settings, user *account, method, virtual string) bool {
-	if !s.needsAuth(set, method, virtual) {
+// in must not be what stops someone reading a folder. Replacing a file is the
+// one exception: a public PUT never replaced what was there, and it still does
+// not — only an account granted allowUserFileOverwrite may.
+func (s *Server) permits(set *settings, user *account, method, virtual string, act action) bool {
+	if act != actOverwrite && !s.needsAuth(set, method, virtual) {
 		return true
 	}
 	if user == nil || !user.allows(virtual) {
 		return false
 	}
-	switch strings.ToUpper(method) {
-	case http.MethodPut, methodMkcol:
-		return user.upload
-	case http.MethodDelete:
-		return user.delete
-	case methodMove:
+	perms := user.perms
+	switch act {
+	case actRead:
+		return perms.FileRetrieve
+	case actCreate:
+		return perms.FileCreate
+	case actOverwrite:
+		return perms.FileOverwrite
+	case actMkdir:
+		return perms.FolderCreate
+	case actDeleteFile:
+		return perms.FileDelete
+	case actDeleteFolder:
+		return perms.FolderDelete
+	case actRename:
 		// renaming leaves a name behind and takes one away, so it needs both
-		return user.upload && user.delete
-	default:
-		return true
+		return perms.FileCreate && perms.FileDelete
 	}
+	return false
 }
 
 // rightsFor is what the account behind a request may do in a folder, which is
@@ -329,10 +400,11 @@ func (s *Server) permits(set *settings, user *account, method, virtual string) b
 // checks in ServeHTTP saying the same thing.
 func (s *Server) rightsFor(set *settings, user *account, virtual string) rights {
 	return rights{
-		Upload: s.permits(set, user, http.MethodPut, virtual),
-		Delete: s.permits(set, user, http.MethodDelete, virtual),
-		Mkdir:  s.permits(set, user, methodMkcol, virtual),
-		Rename: s.permits(set, user, methodMove, virtual),
+		Upload:       s.permits(set, user, http.MethodPut, virtual, actCreate),
+		Mkdir:        s.permits(set, user, methodMkcol, virtual, actMkdir),
+		DeleteFile:   s.permits(set, user, http.MethodDelete, virtual, actDeleteFile),
+		DeleteFolder: s.permits(set, user, http.MethodDelete, virtual, actDeleteFolder),
+		Rename:       s.permits(set, user, methodMove, virtual, actRename),
 	}
 }
 

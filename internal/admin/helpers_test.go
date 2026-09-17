@@ -27,14 +27,15 @@ adminInterfaceEnabled = true
 adminUsername = "admin"
 adminPassword = "secret"
 
+[[users]]
+username = "john"
+password = "doe"
+ftp = true
+allowUserFileRetrieve = true
+
 [ftp]
 enabled = true
 port = 2121
-
-[[ftp.users]]
-username = "john"
-password = "doe"
-allowUserFileRetrieve = true
 
 [tftp]
 enabled = false

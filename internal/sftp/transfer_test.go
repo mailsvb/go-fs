@@ -204,7 +204,7 @@ func TestPermissionsAreEnforced(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			server := newServer(t, func(cfg *config.SFTP) {
+			server := newServer(t, func(cfg *sftpConfig) {
 				user := fullUser("john", "doe")
 				tc.deny(&user)
 				cfg.Users = []config.User{user}
@@ -225,7 +225,7 @@ func TestPermissionsAreEnforced(t *testing.T) {
 
 // Listing needs no right, the same way LIST does not over FTP.
 func TestListingNeedsNoPermission(t *testing.T) {
-	server := newServer(t, func(cfg *config.SFTP) {
+	server := newServer(t, func(cfg *sftpConfig) {
 		cfg.Users = []config.User{{Username: "john", Password: "doe"}}
 	})
 	server.write(t, "hello.txt", "hello")
@@ -358,8 +358,7 @@ func TestReloadReachesALiveSession(t *testing.T) {
 	next := server.settings().cfg
 	user := fullUser("john", "doe")
 	user.AllowUserFileRetrieve = &no
-	next.Users = []config.User{user}
-	if err := server.Reload(next); err != nil {
+	if err := server.Reload(next, []config.User{user}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if _, err := client.Open("/hello.txt"); err == nil {
@@ -367,8 +366,7 @@ func TestReloadReachesALiveSession(t *testing.T) {
 	}
 
 	// and an account that is no longer configured can do nothing
-	next.Users = []config.User{fullUser("someone else", "doe")}
-	if err := server.Reload(next); err != nil {
+	if err := server.Reload(next, []config.User{fullUser("someone else", "doe")}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if _, err := client.ReadDir("/"); err == nil {

@@ -230,16 +230,17 @@ func mustRead(name string) string {
 
 // rights is what the page may offer to the account looking at it.
 type rights struct {
-	Upload bool
-	Delete bool
-	Mkdir  bool
-	Rename bool
+	Upload       bool
+	DeleteFile   bool
+	DeleteFolder bool
+	Mkdir        bool
+	Rename       bool
 }
 
 // Any reports whether any per-row action is offered, which is what decides
 // whether the actions column is there at all.
 func (r rights) Any() bool {
-	return r.Rename || r.Delete
+	return r.Rename || r.DeleteFile || r.DeleteFolder
 }
 
 type crumb struct {

@@ -158,10 +158,10 @@ func TestMoveNeedsADestination(t *testing.T) {
 // The account's paths are checked against where the name lands as well as
 // where it came from, so a rename cannot carry a file out of its scope.
 func TestMoveChecksTheDestinationAgainstThePaths(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		scoped := fullUser("john", "doe")
 		scoped.Paths = []string{"^/private/keep/.*"}
-		cfg.Users = []config.HTTPUser{scoped}
+		cfg.Users = []config.User{scoped}
 		cfg.PathsRequireAuth = []string{"^/private/.*"}
 	})
 	server.write(t, "private/keep/one.txt", "x")
@@ -180,12 +180,13 @@ func TestMoveChecksTheDestinationAgainstThePaths(t *testing.T) {
 // Creating a folder is the create right, and renaming is that plus the right to
 // take a name away.
 func TestNewMethodsNeedTheRights(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		creator := fullUser("creator", "pw")
-		creator.AllowUserFileDelete = false
+		creator.AllowUserFileDelete = new(false)
 		remover := fullUser("remover", "pw")
-		remover.AllowUserFileUpload = false
-		cfg.Users = []config.HTTPUser{
+		remover.AllowUserFileCreate = new(false)
+		remover.AllowUserFolderCreate = new(false)
+		cfg.Users = []config.User{
 			fullUser("john", "doe"), creator, remover, readOnlyUser("reader", "pw"),
 		}
 	})
@@ -227,7 +228,7 @@ func TestNewMethodsNeedTheRights(t *testing.T) {
 // MKCOL and MOVE were answered at all, so a file on disk names PUT and DELETE
 // and not them. An upgrade must not leave the two new writes public.
 func TestExistingConfigStillProtectsTheNewMethods(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		cfg.MethodsRequireAuth = []string{"PUT", "DELETE", "POST"}
 		cfg.PathsRequireAuth = nil
 	})
@@ -272,8 +273,8 @@ func TestWritesFromAnotherOriginAreRefused(t *testing.T) {
 // The page offers only what the account behind it may actually do, so that a
 // reader is not shown controls that would answer 403.
 func TestListingOffersOnlyWhatTheAccountMayDo(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{fullUser("john", "doe"), readOnlyUser("reader", "pw")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{fullUser("john", "doe"), readOnlyUser("reader", "pw")}
 		cfg.PathsRequireAuth = []string{"^/.*"}
 	})
 	server.write(t, "one.txt", "x")
@@ -295,6 +296,33 @@ func TestListingOffersOnlyWhatTheAccountMayDo(t *testing.T) {
 	}
 }
 
+// Deleting a file and deleting a folder are two rights, so the trash button is
+// offered per row: on the files for the one, on the folders for the other.
+func TestListingOffersDeletePerRow(t *testing.T) {
+	server := newServer(t, func(cfg *httpConfig) {
+		files := fullUser("files", "pw")
+		files.AllowUserFolderDelete = new(false)
+		folders := fullUser("folders", "pw")
+		folders.AllowUserFileDelete = new(false)
+		cfg.Users = []config.User{files, folders}
+		cfg.PathsRequireAuth = []string{"^/.*"}
+	})
+	server.write(t, "one.txt", "x")
+	server.mkdir(t, "sub")
+
+	trash := func(body, name string) bool {
+		return strings.Contains(body, `aria-label="Delete `+name+`"`)
+	}
+	body := bodyOf(t, basic(t, server, http.MethodGet, "/", "files", "pw", nil))
+	if !trash(body, "one.txt") || trash(body, "sub") {
+		t.Errorf("the file deleter is offered the wrong rows:\n%s", body)
+	}
+	body = bodyOf(t, basic(t, server, http.MethodGet, "/", "folders", "pw", nil))
+	if trash(body, "one.txt") || !trash(body, "sub") {
+		t.Errorf("the folder deleter is offered the wrong rows:\n%s", body)
+	}
+}
+
 // A public server offers what a public request may do, which is what the
 // dispatch lets one do rather than what an account would have been allowed.
 func TestListingFollowsWhatAPublicRequestMayDo(t *testing.T) {
@@ -308,7 +336,7 @@ func TestListingFollowsWhatAPublicRequestMayDo(t *testing.T) {
 		}
 	}
 
-	locked := newServer(t, func(cfg *config.HTTP) {
+	locked := newServer(t, func(cfg *httpConfig) {
 		cfg.MethodsRequireAuth = []string{"PUT", "DELETE", "POST"}
 		cfg.PathsRequireAuth = nil
 	})

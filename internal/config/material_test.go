@@ -198,7 +198,7 @@ func TestValidateChecksTheWholePair(t *testing.T) {
 		cfg.FTP.Basefolder = folder
 		cfg.TFTP.Basefolder = folder
 		cfg.FTPS.Enabled = true
-		cfg.FTP.Users = []User{{Username: "john", Password: "doe"}}
+		cfg.Users = []User{{Username: "john", Password: "doe", FTP: true}}
 		return cfg
 	}
 

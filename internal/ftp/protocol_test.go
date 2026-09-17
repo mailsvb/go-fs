@@ -119,7 +119,7 @@ func TestEprtToAForeignAddressIsRefused(t *testing.T) {
 }
 
 func TestPortToAForeignAddressWithBounceAllowed(t *testing.T) {
-	server := newServer(t, func(cfg *config.FTP) { cfg.AllowFtpBounce = true })
+	server := newServer(t, func(cfg *ftpConfig) { cfg.AllowFtpBounce = true })
 	c := connect(t, server)
 	c.login()
 
@@ -222,7 +222,7 @@ func TestMdtmAndMfmt(t *testing.T) {
 
 func TestMfmtWithoutOverwritePermission(t *testing.T) {
 	no := false
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		user := fullUser("john")
 		user.AllowUserFileOverwrite = &no
 		cfg.Users = []config.User{user}
@@ -264,7 +264,7 @@ func TestSiteChmod(t *testing.T) {
 
 func TestSiteChmodWithoutPermission(t *testing.T) {
 	no := false
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		user := fullUser("john")
 		user.AllowUserFileOverwrite = &no
 		cfg.Users = []config.User{user}
@@ -362,7 +362,7 @@ func TestImplicitTLS(t *testing.T) {
 // ftp.enabled off with ftps.enabled on serves implicit FTPS and nothing on the
 // plaintext port.
 func TestFTPSWithoutThePlainListener(t *testing.T) {
-	server := newTLSServer(t, func(cfg *config.FTP) {
+	server := newTLSServer(t, func(cfg *ftpConfig) {
 		cfg.Enabled = false
 	})
 	if addr := server.Addr(); addr != nil {

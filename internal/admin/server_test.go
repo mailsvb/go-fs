@@ -60,10 +60,10 @@ func TestApplyWritesTheFile(t *testing.T) {
 	if written.FTP.Port != 2122 || written.Log.Level != "debug" {
 		t.Errorf("the file says port %d level %q", written.FTP.Port, written.Log.Level)
 	}
-	if len(written.FTP.Users) != 1 || written.FTP.Users[0].Username != "john" {
-		t.Errorf("the accounts did not survive the write: %+v", written.FTP.Users)
+	if len(written.Users) != 1 || written.Users[0].Username != "john" || !written.Users[0].FTP {
+		t.Errorf("the accounts did not survive the write: %+v", written.Users)
 	}
-	if !written.FTP.Users[0].Permissions().FileRetrieve {
+	if !written.Users[0].Permissions().FileRetrieve {
 		t.Error("a granted permission did not survive the write")
 	}
 
@@ -82,10 +82,14 @@ func TestApplyAddsAndRemovesRecords(t *testing.T) {
 	_, front := testServer(t, path)
 
 	body := get(t, front)
-	ftp := section(t, body.Values, "ftp")
-	ftp["users"] = append(ftp["users"].([]any), map[string]any{
+	users, ok := body.Values["users"].([]any)
+	if !ok {
+		t.Fatalf("users is %T, want the list of records", body.Values["users"])
+	}
+	body.Values["users"] = append(users, map[string]any{
 		"username":              "max",
 		"password":              "mustermann",
+		"sftp":                  true,
 		"allowUserFileRetrieve": true,
 	})
 	if status, answer := post(t, front, body.Values, nil); status != http.StatusOK {
@@ -95,13 +99,12 @@ func TestApplyAddsAndRemovesRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(written.FTP.Users) != 2 || written.FTP.Users[1].Username != "max" {
-		t.Fatalf("the account was not added: %+v", written.FTP.Users)
+	if len(written.Users) != 2 || written.Users[1].Username != "max" || !written.Users[1].SFTP {
+		t.Fatalf("the account was not added: %+v", written.Users)
 	}
 
 	body = get(t, front)
-	ftp = section(t, body.Values, "ftp")
-	ftp["users"] = ftp["users"].([]any)[:1]
+	body.Values["users"] = body.Values["users"].([]any)[:1]
 	if status, answer := post(t, front, body.Values, nil); status != http.StatusOK {
 		t.Fatalf("apply answered %d: %s", status, answer)
 	}
@@ -109,8 +112,8 @@ func TestApplyAddsAndRemovesRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(written.FTP.Users) != 1 {
-		t.Errorf("the account was not removed: %+v", written.FTP.Users)
+	if len(written.Users) != 1 {
+		t.Errorf("the account was not removed: %+v", written.Users)
 	}
 }
 

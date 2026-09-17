@@ -11,6 +11,10 @@ let summaries = {};
 // the tab that is open, kept across a reload so that Apply does not send the
 // reader back to the first one
 let selected = 0;
+// the records that are unfolded, remembered by the record object itself: the
+// list is redrawn on every add and remove, and the objects survive that, while
+// a fresh read of the file replaces them all and so folds everything up again
+const openRecords = new WeakSet();
 
 const banner = document.getElementById("banner");
 const tabs = document.getElementById("tabs");
@@ -83,10 +87,15 @@ function panel(section, index) {
   if (section.help) {
     element.append(paragraph(section.help, "section-help"));
   }
+  if (section.direct) {
+    // the section is the list itself, [[users]] at the top of the file
+    element.append(tableBlock(values, section.key, section.tables[0], ""));
+    return element;
+  }
   element.append(fieldGrid(section.fields, values[section.key], section.key));
 
   (section.tables || []).forEach((table) => {
-    element.append(tableBlock(section, table));
+    element.append(tableBlock(values[section.key], table.key, table, section.key + "." + table.key));
   });
   return element;
 }
@@ -110,16 +119,22 @@ function fieldGrid(fields, holder, section) {
   return grid;
 }
 
-// A table that repeats in the file, [[ftp.users]] and the like, is shown as a
-// list with one record per entry, each of which can be removed, and an Add
-// button that appends an empty one.
-function tableBlock(section, table) {
+// A table that repeats in the file, [[users]] and the like, is shown as a list
+// with one record per entry, each of which can be removed, and an Add button
+// that appends an empty one. The records live in holder[key]; heading is what
+// the list is titled with, empty for a list that is a tab of its own.
+//
+// Each record folds up to one line, and starts folded: a long account list
+// reads as a list of names, and one of them opens to be edited.
+function tableBlock(holder, key, table, heading) {
   const block = document.createElement("div");
   block.className = "table";
 
-  const heading = document.createElement("h3");
-  heading.textContent = section.key + "." + table.key;
-  block.append(heading);
+  if (heading) {
+    const title = document.createElement("h3");
+    title.textContent = heading;
+    block.append(title);
+  }
   if (table.help) {
     block.append(paragraph(table.help, "help"));
   }
@@ -129,29 +144,43 @@ function tableBlock(section, table) {
 
   const draw = () => {
     list.replaceChildren();
-    const records = values[section.key][table.key] || [];
+    const records = holder[key] || [];
     if (records.length === 0) {
       list.append(paragraph("No entries.", "empty"));
     }
     records.forEach((record, i) => {
-      const card = document.createElement("div");
+      const card = document.createElement("details");
       card.className = "record";
+      card.open = openRecords.has(record);
+      card.addEventListener("toggle", () => {
+        if (card.open) openRecords.add(record);
+        else openRecords.delete(record);
+      });
 
-      const title = document.createElement("h4");
-      title.textContent = table.key + " " + (i + 1);
-      card.append(title);
+      const summary = document.createElement("summary");
+      summary.append(span(table.key + " " + (i + 1), "ordinal"));
+      const title = span(describe(table, record), "title");
+      summary.append(title);
 
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "plain remove";
       remove.textContent = "Remove";
-      remove.addEventListener("click", () => {
+      remove.addEventListener("click", (event) => {
+        // a button inside the summary would otherwise fold it too
+        event.preventDefault();
+        event.stopPropagation();
         records.splice(i, 1);
         draw();
       });
-      card.append(remove);
+      summary.append(remove);
+      card.append(summary);
 
       card.append(fieldGrid(table.fields, record, ""));
+      // the line the record folds up to follows what is typed into it
+      const refresh = () => (title.textContent = describe(table, record));
+      card.addEventListener("input", refresh);
+      card.addEventListener("change", refresh);
       list.append(card);
     });
   };
@@ -161,16 +190,46 @@ function tableBlock(section, table) {
   add.className = "plain";
   add.textContent = "Add " + table.key;
   add.addEventListener("click", () => {
-    if (!values[section.key][table.key]) {
-      values[section.key][table.key] = [];
+    if (!holder[key]) {
+      holder[key] = [];
     }
-    values[section.key][table.key].push(blank(table.fields));
+    const record = blank(table.fields);
+    holder[key].push(record);
+    // a new record is there to be filled in, so it starts open
+    openRecords.add(record);
     draw();
+    const first = list.lastElementChild.querySelector("input, textarea");
+    if (first) first.focus();
   });
 
   draw();
   block.append(add);
   return block;
+}
+
+// describe is the line a folded record is named by: the fields the schema
+// marks for it, which are its first text and its switches. A switch reads as
+// its name when it is on and as nothing when it is off.
+function describe(table, record) {
+  const parts = [];
+  const on = [];
+  table.fields.forEach((field) => {
+    if (!field.summary) return;
+    if (field.kind === "bool") {
+      if (record[field.key]) on.push(field.label);
+    } else if (record[field.key]) {
+      parts.push(record[field.key]);
+    }
+  });
+  if (on.length > 0) parts.push(on.join(", "));
+  return parts.join(" \u00b7 ");
+}
+
+function span(text, className) {
+  const element = document.createElement("span");
+  element.className = className;
+  element.textContent = text;
+  return element;
 }
 
 // blank is a new record with every key at its zero value, which is what an

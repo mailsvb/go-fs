@@ -24,7 +24,7 @@ const (
 // an account removed, has to reach a session that is already open, otherwise
 // revoking access would mean waiting for the client to hang up.
 func (c *conn) users() []config.User {
-	return c.server.settings().cfg.Users
+	return c.server.settings().users
 }
 
 // validateLoginType decides how the named user may log in. Accounts come from

@@ -4,14 +4,12 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"go-fs/internal/config"
 )
 
 // A path that is not protected and a method that is not protected are served
 // to anyone, which is what the Node implementation does.
 func TestPublicRequestNeedsNoCredentials(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		cfg.MethodsRequireAuth = []string{"PUT", "DELETE"}
 	})
 	server.write(t, "public/hello.txt", "hello")

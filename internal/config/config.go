@@ -35,6 +35,7 @@ func Template() []byte {
 type Config struct {
 	General General `toml:"general"`
 	Log     Log     `toml:"log"`
+	Users   []User  `toml:"users"`
 	FTP     FTP     `toml:"ftp"`
 	FTPS    FTPS    `toml:"ftps"`
 	SFTP    SFTP    `toml:"sftp"`
@@ -110,28 +111,63 @@ type FTPS struct {
 	Key  string `toml:"key"`
 }
 
-// User is one entry of the FTP user list. There is nothing special about the
+// User is one entry of the [[users]] list, which every server draws its
+// accounts from. An entry says which servers it may log in to, and its rights
+// are one set that holds on all of them: a right granted once applies to FTP,
+// SFTP and HTTP alike. There is no default account and no implicit one: a name
+// that is not listed cannot log in anywhere. There is nothing special about the
 // account named "anonymous": it is an ordinary entry that sets
 // allowLoginWithoutPassword.
 //
 // The permission flags are pointers only so that Save can leave an unset key
 // out of the file; every one of them denies by default.
 type User struct {
-	Username                  string `toml:"username"`
-	Password                  string `toml:"password"`
-	Basefolder                string `toml:"basefolder,omitempty"`
-	AllowLoginWithoutPassword *bool  `toml:"allowLoginWithoutPassword,omitempty"`
-	AllowUserFileCreate       *bool  `toml:"allowUserFileCreate,omitempty"`
-	AllowUserFileRetrieve     *bool  `toml:"allowUserFileRetrieve,omitempty"`
-	AllowUserFileOverwrite    *bool  `toml:"allowUserFileOverwrite,omitempty"`
-	AllowUserFileDelete       *bool  `toml:"allowUserFileDelete,omitempty"`
-	AllowUserFolderDelete     *bool  `toml:"allowUserFolderDelete,omitempty"`
-	AllowUserFolderCreate     *bool  `toml:"allowUserFolderCreate,omitempty"`
+	Username string `toml:"username"`
+	Password string `toml:"password"`
 
+	// FTP, SFTP and HTTP are the servers this account may log in to, each off
+	// unless it is switched on. An entry that enables none is an account
+	// nobody can use, which is a way to keep one without serving it.
+	FTP  bool `toml:"ftp,omitempty"`
+	SFTP bool `toml:"sftp,omitempty"`
+	HTTP bool `toml:"http,omitempty"`
+
+	// Basefolder is the folder this account sees on FTP and SFTP instead of
+	// the server's own. HTTP scopes an account by Paths instead and ignores
+	// it.
+	Basefolder string `toml:"basefolder,omitempty"`
+	// Paths are regular expressions matched against an HTTP request path,
+	// after it has been normalized, so that ".." cannot be used to slip past
+	// one. An HTTP account with no pattern can reach nothing; FTP and SFTP
+	// ignore them.
+	Paths []string `toml:"paths,omitempty"`
+
+	// AllowLoginWithoutPassword accepts the account on FTP with any password
+	// or none. SSH and HTTP have no anonymous login, so it means nothing
+	// there.
+	AllowLoginWithoutPassword *bool `toml:"allowLoginWithoutPassword,omitempty"`
 	// AuthorizedKeys are SSH public keys in authorized_keys format, one entry
 	// per line as ssh-keygen writes them. They are how an SFTP account logs in
-	// with a key instead of a password; the FTP server ignores them.
+	// with a key instead of a password; the other servers ignore them.
 	AuthorizedKeys []string `toml:"authorizedKeys,omitempty"`
+
+	AllowUserFileCreate    *bool `toml:"allowUserFileCreate,omitempty"`
+	AllowUserFileRetrieve  *bool `toml:"allowUserFileRetrieve,omitempty"`
+	AllowUserFileOverwrite *bool `toml:"allowUserFileOverwrite,omitempty"`
+	AllowUserFileDelete    *bool `toml:"allowUserFileDelete,omitempty"`
+	AllowUserFolderDelete  *bool `toml:"allowUserFolderDelete,omitempty"`
+	AllowUserFolderCreate  *bool `toml:"allowUserFolderCreate,omitempty"`
+
+	// Cookie lets the account log in to the HTTP server through the browser:
+	// the page offers it a Log in button, and a successful login is carried by
+	// a signed token in a cookie rather than by repeating the credentials on
+	// every request. The token names the account and nothing else, so it
+	// carries exactly the rights above as they are configured right now.
+	Cookie bool `toml:"cookie,omitempty"`
+	// CookiePath is the URL prefix the browser sends the cookie back for, "/"
+	// when it is not set. It is a hint to the browser, not a permission: Paths
+	// are checked on every request either way.
+	CookiePath string `toml:"cookiePath,omitempty"`
 }
 
 // Permissions resolves the user entry. Every right has to be granted
@@ -160,6 +196,23 @@ type Permissions struct {
 	FileDelete      bool
 	FolderDelete    bool
 	FolderCreate    bool
+}
+
+// FTPUsers, SFTPUsers and HTTPUsers are the entries a server serves: the ones
+// that switch it on. Each server is handed its own list, so it never sees an
+// account that is not meant for it.
+func (c Config) FTPUsers() []User  { return c.usersFor(func(u User) bool { return u.FTP }) }
+func (c Config) SFTPUsers() []User { return c.usersFor(func(u User) bool { return u.SFTP }) }
+func (c Config) HTTPUsers() []User { return c.usersFor(func(u User) bool { return u.HTTP }) }
+
+func (c Config) usersFor(serves func(User) bool) []User {
+	var users []User
+	for _, user := range c.Users {
+		if serves(user) {
+			users = append(users, user)
+		}
+	}
+	return users
 }
 
 // FTP configures the FTP server.
@@ -213,15 +266,13 @@ type FTP struct {
 	// AllowForeignDataConnection permits passive data connections from a
 	// different address than the control connection.
 	AllowForeignDataConnection bool `toml:"allowForeignDataConnection"`
-
-	// Users are the accounts, including anonymous access. There is no default
-	// account and no implicit one: a name that is not listed cannot log in.
-	Users []User `toml:"users"`
 }
 
 // SFTP configures the SFTP server, which is the SFTP subsystem of an SSH
-// server. It has the shape of the FTP section: a base folder and a list of
-// accounts, with the same permission flags.
+// server. Its accounts are the entries of [[users]] that set sftp; each of
+// those needs a password or at least one authorized key, and
+// allowLoginWithoutPassword has no meaning here, because SSH has no equivalent
+// of an anonymous login.
 type SFTP struct {
 	Enabled bool `toml:"enabled"`
 	Port    int  `toml:"port"`
@@ -242,11 +293,6 @@ type SFTP struct {
 	// LoginFailureDelay is the delay in seconds before a wrong password is
 	// answered, which slows down guessing.
 	LoginFailureDelay int `toml:"loginFailureDelay"`
-
-	// Users are the accounts. Each needs a password or at least one authorized
-	// key; allowLoginWithoutPassword has no meaning here, because SSH has no
-	// equivalent of an anonymous login.
-	Users []User `toml:"users"`
 }
 
 // HTTP configures the HTTP file server: browsing and downloading with GET,
@@ -255,8 +301,8 @@ type SFTP struct {
 //
 // Access has two layers. A request is public unless its method is in
 // MethodsRequireAuth or its path matches one of PathsRequireAuth; when it is
-// not public it has to be answered by one of Users, and that account's own
-// paths and rights then decide what it may do.
+// not public it has to be answered by one of the [[users]] entries that set
+// http, and that account's own paths and rights then decide what it may do.
 type HTTP struct {
 	// Enabled serves the plain port. The TLS listener has its own switch in
 	// [https]; the rest of this section applies to both.
@@ -322,8 +368,7 @@ type HTTP struct {
 	// one of them needs an account whatever its method.
 	PathsRequireAuth []string `toml:"pathsRequireAuth"`
 
-	Cleanup []Cleanup  `toml:"cleanup"`
-	Users   []HTTPUser `toml:"users"`
+	Cleanup []Cleanup `toml:"cleanup"`
 }
 
 // HTTPS configures the TLS interface of the HTTP server. It is a section of
@@ -345,35 +390,6 @@ type HTTPS struct {
 type Cleanup struct {
 	Path string `toml:"path"`
 	Keep int    `toml:"keep"`
-}
-
-// HTTPUser is one entry of http.users. It is not the User of the other servers:
-// an HTTP account is scoped by path patterns rather than by a base folder, and
-// the operations it can be granted are different ones.
-type HTTPUser struct {
-	Username string `toml:"username"`
-	Password string `toml:"password"`
-
-	// Paths are regular expressions matched against the request path, after it
-	// has been normalized, so that ".." cannot be used to slip past one. An
-	// account with no pattern can reach nothing.
-	Paths []string `toml:"paths"`
-
-	// Both default to false, as the permissions of the other servers do.
-	// AllowUserFileUpload also covers MKCOL, which creates a folder, and the
-	// two together cover MOVE, which renames: a rename leaves a name behind
-	// and takes one away, so it needs the right to do both.
-	AllowUserFileUpload bool `toml:"allowUserFileUpload"`
-	AllowUserFileDelete bool `toml:"allowUserFileDelete"`
-
-	// Cookie hands the client a session cookie once it has authenticated, so
-	// that a browser does not repeat the credentials on every request. The
-	// session is bound to this account and carries exactly these rights.
-	Cookie bool `toml:"cookie"`
-	// CookiePath is the URL prefix the browser sends the cookie back for, "/"
-	// when it is not set. It is a hint to the browser, not a permission: the
-	// paths above are checked on every request either way.
-	CookiePath string `toml:"cookiePath,omitempty"`
 }
 
 // TFTP configures the TFTP server.
@@ -488,6 +504,10 @@ func Parse(data []byte) (Config, error) {
 // RetiredKeys is for.
 var retired = map[string]string{
 	"http.sessionTimeout": "http.httpSessionTokenLifetime",
+	// the accounts of every server are one list now
+	"ftp.users":  "[[users]] with ftp = true",
+	"sftp.users": "[[users]] with sftp = true",
+	"http.users": "[[users]] with http = true",
 }
 
 // RetiredKeys reports the retired keys a file still sets, each as
@@ -581,19 +601,9 @@ func (c Config) ExampleAccounts() []string {
 	note := func(where, name string) {
 		found = append(found, fmt.Sprintf("%s %q", where, name))
 	}
-	for i, user := range c.FTP.Users {
+	for i, user := range c.Users {
 		if exampleSecrets[user.Password] {
-			note(fmt.Sprintf("ftp.users[%d]", i), user.Username)
-		}
-	}
-	for i, user := range c.SFTP.Users {
-		if exampleSecrets[user.Password] {
-			note(fmt.Sprintf("sftp.users[%d]", i), user.Username)
-		}
-	}
-	for i, user := range c.HTTP.Users {
-		if exampleSecrets[user.Password] {
-			note(fmt.Sprintf("http.users[%d]", i), user.Username)
+			note(fmt.Sprintf("users[%d]", i), user.Username)
 		}
 	}
 	if exampleSecrets[c.General.AdminPassword] {
@@ -656,6 +666,9 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
+	if err := c.validateUsers(); err != nil {
+		return err
+	}
 	if c.FTP.Enabled || c.FTPS.Enabled {
 		if err := c.validateFTP(); err != nil {
 			return err
@@ -674,6 +687,65 @@ func (c Config) Validate() error {
 	if c.TFTP.Enabled {
 		if err := c.TFTP.validate(); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateUsers checks the account list. The rules that hold for every entry
+// are checked first; what a server needs of its accounts is checked only for
+// the entries that switch it on, so a key-only SFTP account is not asked for
+// the password an HTTP account needs. It runs whether or not that server is
+// enabled: the entry is what is wrong, and -check should say so before the day
+// the server is switched on.
+func (c Config) validateUsers() error {
+	seen := map[string]bool{}
+	for i, user := range c.Users {
+		where := fmt.Sprintf("users[%d]", i)
+		if user.Username == "" {
+			return fmt.Errorf("%s has no username", where)
+		}
+		// every server resolves an account by name on every request, so two
+		// entries with the same name would make which rights apply a matter
+		// of order
+		if seen[user.Username] {
+			return fmt.Errorf("%s: %q is configured twice", where, user.Username)
+		}
+		seen[user.Username] = true
+
+		if (user.FTP || user.SFTP) && user.Basefolder != "" {
+			if err := checkFolder(where+".basefolder", user.Basefolder); err != nil {
+				return err
+			}
+		}
+		if user.SFTP {
+			// the keys are parsed here as well as at startup, so that -check
+			// reports a key that would stop the server rather than passing it
+			for k, entry := range user.AuthorizedKeys {
+				if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(entry)); err != nil {
+					return fmt.Errorf("%s.authorizedKeys[%d]: %w", where, k, err)
+				}
+			}
+			if user.Password == "" && len(user.AuthorizedKeys) == 0 {
+				return fmt.Errorf("%s %q has neither a password nor an authorized key, "+
+					"so it could never log in to sftp", where, user.Username)
+			}
+		}
+		if user.HTTP {
+			if user.Password == "" {
+				return fmt.Errorf("%s %q has no password, which http needs", where, user.Username)
+			}
+			for k, pattern := range user.Paths {
+				if _, err := regexp.Compile(pattern); err != nil {
+					return fmt.Errorf("%s.paths[%d]: %w", where, k, err)
+				}
+			}
+			// a cookie path is a URL prefix; a browser silently drops a cookie
+			// whose path does not start at the root
+			if user.CookiePath != "" && !strings.HasPrefix(user.CookiePath, "/") {
+				return fmt.Errorf("%s.cookiePath %q has to start with a slash",
+					where, user.CookiePath)
+			}
 		}
 	}
 	return nil
@@ -739,32 +811,6 @@ func (c Config) validateHTTP() error {
 		}
 		if entry.Keep < 0 {
 			return fmt.Errorf("http.cleanup[%d].keep cannot be negative", i)
-		}
-	}
-	seen := map[string]bool{}
-	for i, user := range h.Users {
-		if user.Username == "" {
-			return fmt.Errorf("http.users[%d] has no username", i)
-		}
-		// an account is resolved by name on every request, so two entries with
-		// the same name would make which rights apply a matter of order
-		if seen[user.Username] {
-			return fmt.Errorf("http.users[%d]: %q is configured twice", i, user.Username)
-		}
-		seen[user.Username] = true
-		if user.Password == "" {
-			return fmt.Errorf("http.users[%d] %q has no password", i, user.Username)
-		}
-		for k, pattern := range user.Paths {
-			if _, err := regexp.Compile(pattern); err != nil {
-				return fmt.Errorf("http.users[%d].paths[%d]: %w", i, k, err)
-			}
-		}
-		// a cookie path is a URL prefix; a browser silently drops a cookie
-		// whose path does not start at the root
-		if user.CookiePath != "" && !strings.HasPrefix(user.CookiePath, "/") {
-			return fmt.Errorf("http.users[%d].cookiePath %q has to start with a slash",
-				i, user.CookiePath)
 		}
 	}
 	return checkFolder("http.basefolder", h.Basefolder)
@@ -834,21 +880,6 @@ func (c Config) validateFTP() error {
 	if err := checkFolder("ftp.basefolder", f.Basefolder); err != nil {
 		return err
 	}
-	seen := map[string]bool{}
-	for i, user := range f.Users {
-		if user.Username == "" {
-			return fmt.Errorf("ftp.users[%d] has no username", i)
-		}
-		if seen[user.Username] {
-			return fmt.Errorf("ftp.users[%d]: %q is configured twice", i, user.Username)
-		}
-		seen[user.Username] = true
-		if user.Basefolder != "" {
-			if err := checkFolder(fmt.Sprintf("ftp.users[%d].basefolder", i), user.Basefolder); err != nil {
-				return err
-			}
-		}
-	}
 	return nil
 }
 
@@ -871,32 +902,6 @@ func (s SFTP) validate() error {
 	}
 	if err := checkFolder("sftp.basefolder", s.Basefolder); err != nil {
 		return err
-	}
-	seen := map[string]bool{}
-	for i, user := range s.Users {
-		if user.Username == "" {
-			return fmt.Errorf("sftp.users[%d] has no username", i)
-		}
-		if seen[user.Username] {
-			return fmt.Errorf("sftp.users[%d]: %q is configured twice", i, user.Username)
-		}
-		seen[user.Username] = true
-		if user.Basefolder != "" {
-			if err := checkFolder(fmt.Sprintf("sftp.users[%d].basefolder", i), user.Basefolder); err != nil {
-				return err
-			}
-		}
-		// the keys are parsed here as well as at startup, so that -check
-		// reports a key that would stop the server rather than passing it
-		for k, entry := range user.AuthorizedKeys {
-			if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(entry)); err != nil {
-				return fmt.Errorf("sftp.users[%d].authorizedKeys[%d]: %w", i, k, err)
-			}
-		}
-		if user.Password == "" && len(user.AuthorizedKeys) == 0 {
-			return fmt.Errorf("sftp.users[%d] %q has neither a password nor an authorized key, "+
-				"so it could never log in", i, user.Username)
-		}
 	}
 	return nil
 }

@@ -2,13 +2,31 @@ package config
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 )
+
+// authorizedKey is one line as ssh-keygen would write it, for a fresh key.
+func authorizedKey(t *testing.T) string {
+	t.Helper()
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ssh.NewPublicKey(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+}
 
 func writeConfig(t *testing.T, body string) (path string, folder string) {
 	t.Helper()
@@ -58,12 +76,14 @@ func TestUserPermissionDefaults(t *testing.T) {
 [ftp]
 basefolder = "{{folder}}"
 
-[[ftp.users]]
+[[users]]
 username = "john"
 password = "doe"
+ftp = true
 
-[[ftp.users]]
+[[users]]
 username = "jane"
+ftp = true
 allowLoginWithoutPassword = true
 allowUserFileRetrieve = true
 
@@ -75,12 +95,12 @@ basefolder = "{{folder}}"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.FTP.Users) != 2 {
-		t.Fatalf("got %d users, want 2", len(cfg.FTP.Users))
+	if len(cfg.Users) != 2 {
+		t.Fatalf("got %d users, want 2", len(cfg.Users))
 	}
 
 	// an entry that sets nothing is granted nothing
-	john := cfg.FTP.Users[0].Permissions()
+	john := cfg.Users[0].Permissions()
 	if john.FileCreate || john.FileRetrieve || john.FileOverwrite ||
 		john.FileDelete || john.FolderCreate || john.FolderDelete {
 		t.Errorf("john should have no permission by default: %+v", john)
@@ -90,7 +110,7 @@ basefolder = "{{folder}}"
 	}
 
 	// and what is granted explicitly is honoured
-	jane := cfg.FTP.Users[1].Permissions()
+	jane := cfg.Users[1].Permissions()
 	if !jane.LoginNoPassword {
 		t.Error("jane should be allowed to log in without a password")
 	}
@@ -148,7 +168,10 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"missing basefolder", func(c *Config) { c.FTP.Basefolder = filepath.Join(folder, "nope") }, "ftp.basefolder"},
 		{"ftps port", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Port = 0 }, "ftps.port"},
 		{"half a tls pair", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Cert = "cert.pem" }, "together"},
-		{"user without name", func(c *Config) { c.FTP.Users = []User{{Password: "x"}} }, "no username"},
+		{"user without name", func(c *Config) { c.Users = []User{{Password: "x", FTP: true}} }, "no username"},
+		{"user basefolder", func(c *Config) {
+			c.Users = []User{{Username: "john", FTP: true, Basefolder: filepath.Join(folder, "nope")}}
+		}, "users[0].basefolder"},
 		{"sftp port", func(c *Config) { c.SFTP.Enabled = true; c.SFTP.Port = 0 }, "sftp.port"},
 		{"sftp basefolder", func(c *Config) { c.SFTP.Enabled = true; c.SFTP.Basefolder = "" }, "sftp.basefolder"},
 		{"sftp host key", func(c *Config) {
@@ -156,22 +179,13 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.SFTP.Basefolder = folder
 			c.SFTP.HostKey = "not a key"
 		}, "sftp.hostkey"},
-		{"sftp user without name", func(c *Config) {
-			c.SFTP.Enabled = true
-			c.SFTP.Basefolder = folder
-			c.SFTP.Users = []User{{Password: "x"}}
-		}, "no username"},
 		{"broken authorized key", func(c *Config) {
-			c.SFTP.Enabled = true
-			c.SFTP.Basefolder = folder
-			c.SFTP.Users = []User{{Username: "max", AuthorizedKeys: []string{
+			c.Users = []User{{Username: "max", SFTP: true, AuthorizedKeys: []string{
 				"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExample max@laptop",
 			}}}
-		}, "sftp.users[0].authorizedKeys[0]"},
+		}, "users[0].authorizedKeys[0]"},
 		{"sftp account with no way in", func(c *Config) {
-			c.SFTP.Enabled = true
-			c.SFTP.Basefolder = folder
-			c.SFTP.Users = []User{{Username: "max"}}
+			c.Users = []User{{Username: "max", SFTP: true}}
 		}, "never log in"},
 		{"http port", func(c *Config) { c.HTTP.Enabled = true; c.HTTP.Port = 0 }, "http.port"},
 		{"https port", func(c *Config) { c.HTTPS.Enabled = true; c.HTTPS.Port = 0 }, "https.port"},
@@ -182,16 +196,14 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.HTTPS.Cert = "cert.pem"
 		}, "together"},
 		{"http basefolder", func(c *Config) { c.HTTP.Enabled = true }, "http.basefolder"},
+		// an http account is checked whether or not http is enabled: the entry
+		// is what is wrong, and it stays wrong on the day http is switched on
 		{"http user without a password", func(c *Config) {
-			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
-			c.HTTP.Users = []HTTPUser{{Username: "john"}}
+			c.Users = []User{{Username: "john", HTTP: true}}
 		}, "no password"},
 		{"broken user path pattern", func(c *Config) {
-			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
-			c.HTTP.Users = []HTTPUser{{Username: "john", Password: "doe", Paths: []string{"([bad"}}}
-		}, "http.users[0].paths[0]"},
+			c.Users = []User{{Username: "john", Password: "doe", HTTP: true, Paths: []string{"([bad"}}}
+		}, "users[0].paths[0]"},
 		{"broken protected path pattern", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.Basefolder = folder
@@ -227,23 +239,21 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.HTTP.SessionTokenSecret = base64.StdEncoding.EncodeToString(make([]byte, 16))
 		}, "at least 32"},
 		{"http cookie path", func(c *Config) {
-			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
-			c.HTTP.Users = []HTTPUser{{Username: "john", Password: "doe", CookiePath: "public"}}
+			c.Users = []User{{Username: "john", Password: "doe", HTTP: true, CookiePath: "public"}}
 		}, "cookiePath"},
 		{"sftp bind address", func(c *Config) {
 			c.SFTP.Enabled = true
 			c.SFTP.Basefolder = folder
 			c.SFTP.Address = "nope"
 		}, "sftp.address"},
-		{"duplicate ftp account", func(c *Config) {
-			c.FTP.Users = []User{{Username: "john"}, {Username: "john"}}
+		{"duplicate account", func(c *Config) {
+			c.Users = []User{{Username: "john", FTP: true}, {Username: "john", FTP: true}}
 		}, "configured twice"},
-		{"duplicate http account", func(c *Config) {
-			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
-			c.HTTP.Users = []HTTPUser{
-				{Username: "john", Password: "a"}, {Username: "john", Password: "b"},
+		// one name is one account whatever it logs in to, so the same name
+		// cannot be listed once per server either
+		{"duplicate account across servers", func(c *Config) {
+			c.Users = []User{
+				{Username: "john", Password: "a", FTP: true}, {Username: "john", Password: "b", HTTP: true},
 			}
 		}, "configured twice"},
 		{"tftp type", func(c *Config) { c.TFTP.Type = "sctp" }, "tftp.type"},
@@ -265,6 +275,44 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An entry that switches no server on is not an error: it is an account kept
+// without being served. And what one server needs is not asked of an account
+// that does not log in to it.
+func TestValidateAcceptsAccountsAsTheyAreMeant(t *testing.T) {
+	folder := t.TempDir()
+	cfg := Default()
+	cfg.FTP.Basefolder = folder
+	cfg.TFTP.Basefolder = folder
+	cfg.Users = []User{
+		{Username: "parked", Password: "x"},
+		// no password is fine on ftp and sftp when a key is there, and on ftp
+		// with anonymous login; only http insists on one
+		{Username: "anonymous", FTP: true, AllowLoginWithoutPassword: new(true)},
+		{Username: "keys", SFTP: true, AuthorizedKeys: []string{authorizedKey(t)}},
+		{Username: "john", Password: "doe", FTP: true, SFTP: true, HTTP: true},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.FTPUsers(); len(got) != 2 || got[0].Username != "anonymous" || got[1].Username != "john" {
+		t.Errorf("FTPUsers = %v", names(got))
+	}
+	if got := cfg.SFTPUsers(); len(got) != 2 || got[0].Username != "keys" {
+		t.Errorf("SFTPUsers = %v", names(got))
+	}
+	if got := cfg.HTTPUsers(); len(got) != 1 || got[0].Username != "john" {
+		t.Errorf("HTTPUsers = %v", names(got))
+	}
+}
+
+func names(users []User) []string {
+	found := make([]string, 0, len(users))
+	for _, user := range users {
+		found = append(found, user.Username)
+	}
+	return found
 }
 
 func TestTemplateRoundTrips(t *testing.T) {
@@ -323,7 +371,7 @@ func TestSaveKeepsExplicitUserFlags(t *testing.T) {
 	cfg.FTP.Basefolder = folder
 	cfg.TFTP.Basefolder = folder
 	yes := true
-	cfg.FTP.Users = []User{{Username: "john", Password: "doe", AllowUserFileDelete: &yes}}
+	cfg.Users = []User{{Username: "john", Password: "doe", FTP: true, AllowUserFileDelete: &yes}}
 
 	path := filepath.Join(t.TempDir(), "saved.toml")
 	if err := Save(path, cfg); err != nil {
@@ -333,12 +381,29 @@ func TestSaveKeepsExplicitUserFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	permissions := reloaded.FTP.Users[0].Permissions()
+	permissions := reloaded.Users[0].Permissions()
 	if !permissions.FileDelete {
 		t.Error("an explicit true was lost on the way through the file")
 	}
 	if permissions.FileCreate {
 		t.Error("an unset permission should still deny after a round trip")
+	}
+
+	// a switch that is off and a key another server would read stay out of the
+	// file, so an ftp account is written as an ftp account and nothing more
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, account, _ := strings.Cut(string(written), "[[users]]")
+	account, _, _ = strings.Cut(account, "\n[")
+	for _, unwanted := range []string{"sftp", "http", "paths", "cookie", "authorizedKeys"} {
+		if strings.Contains(account, unwanted) {
+			t.Errorf("the saved account mentions %q:\n%s", unwanted, account)
+		}
+	}
+	if !reloaded.Users[0].FTP || reloaded.Users[0].SFTP || reloaded.Users[0].HTTP {
+		t.Errorf("switches after a round trip: %+v", reloaded.Users[0])
 	}
 }
 
@@ -496,8 +561,11 @@ func TestParseLeavesTheFallbackAlone(t *testing.T) {
 // look up, so a configuration that still holds one says so before it serves.
 func TestDocumentedPasswordsAreReported(t *testing.T) {
 	cfg := Default()
-	cfg.FTP.Users = []User{{Username: "john", Password: "doe"}, {Username: "jane", Password: "chosen"}}
-	cfg.HTTP.Users = []HTTPUser{{Username: "max", Password: "mustermann"}}
+	cfg.Users = []User{
+		{Username: "john", Password: "doe", FTP: true},
+		{Username: "jane", Password: "chosen", FTP: true},
+		{Username: "max", Password: "mustermann", HTTP: true},
+	}
 	cfg.General.AdminUsername = "admin"
 	cfg.General.AdminPassword = "chosen too"
 
@@ -517,9 +585,9 @@ func TestDocumentedPasswordsAreReported(t *testing.T) {
 	if got := template.ExampleAccounts(); len(got) != 0 {
 		t.Errorf("the shipped template still has a documented password: %v", got)
 	}
-	if len(template.FTP.Users) != 0 {
+	if len(template.Users) != 0 {
 		t.Errorf("the shipped template defines %d accounts, it should define none",
-			len(template.FTP.Users))
+			len(template.Users))
 	}
 }
 
@@ -556,6 +624,35 @@ func TestARetiredKeyIsStillAccepted(t *testing.T) {
 	if cfg.HTTP.SessionTokenLifetime != Default().HTTP.SessionTokenLifetime {
 		t.Errorf("lifetime = %d, want the default %d",
 			cfg.HTTP.SessionTokenLifetime, Default().HTTP.SessionTokenLifetime)
+	}
+}
+
+// The accounts a file listed under its servers are not read any more. They are
+// not refused either: the file loads with no accounts, and RetiredKeys says
+// where they went.
+func TestPerServerAccountsAreRetired(t *testing.T) {
+	folder := t.TempDir()
+	file := []byte("[general]\nbasefolder = " + strconv.Quote(folder) +
+		"\n\n[[ftp.users]]\nusername = \"john\"\npassword = \"doe\"\n" +
+		"\n[[http.users]]\nusername = \"max\"\npassword = \"mustermann\"\n")
+
+	cfg, err := Parse(file)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if err := cfg.Resolved().Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(cfg.Users) != 0 {
+		t.Errorf("Users = %v, want none: the old tables are not read", names(cfg.Users))
+	}
+	found := RetiredKeys(file)
+	if len(found) != 2 {
+		t.Fatalf("RetiredKeys = %v, want the two old tables", found)
+	}
+	if !strings.Contains(found[0], "ftp.users") || !strings.Contains(found[0], "[[users]]") ||
+		!strings.Contains(found[1], "http.users") {
+		t.Errorf("RetiredKeys = %q", found)
 	}
 }
 

@@ -41,7 +41,7 @@ func TestRetrOfAMissingFile(t *testing.T) {
 
 func TestRetrWithoutPermission(t *testing.T) {
 	no := false
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		user := fullUser("john")
 		user.AllowUserFileRetrieve = &no
 		cfg.Users = []config.User{user}
@@ -116,7 +116,7 @@ func TestStor(t *testing.T) {
 
 func TestStorWithoutPermission(t *testing.T) {
 	no := false
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		user := fullUser("john")
 		user.AllowUserFileCreate = &no
 		cfg.Users = []config.User{user}
@@ -130,7 +130,7 @@ func TestStorWithoutPermission(t *testing.T) {
 
 func TestStorOverwrite(t *testing.T) {
 	no := false
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		user := fullUser("john")
 		user.AllowUserFileOverwrite = &no
 		cfg.Users = []config.User{user}
@@ -212,7 +212,7 @@ func TestStou(t *testing.T) {
 
 func TestStouWithoutPermission(t *testing.T) {
 	no := false
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		user := fullUser("john")
 		user.AllowUserFileCreate = &no
 		cfg.Users = []config.User{user}
@@ -328,7 +328,7 @@ func TestDele(t *testing.T) {
 
 func TestDeleWithoutPermission(t *testing.T) {
 	no := false
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		user := fullUser("john")
 		user.AllowUserFileDelete = &no
 		cfg.Users = []config.User{user}
@@ -470,7 +470,7 @@ func TestShutdownAbortsARunningTransfer(t *testing.T) {
 // Before this, a download longer than the idle timeout finished and the session
 // was then closed with a 421 for having been "idle" throughout it.
 func TestATransferDoesNotTripTheIdleTimeout(t *testing.T) {
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		cfg.IdleTimeout = 1
 		cfg.TransferIdleTimeout = 30
 	})

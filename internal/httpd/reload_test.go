@@ -22,9 +22,8 @@ func TestReloadAppliesAccounts(t *testing.T) {
 	}
 
 	next := server.settings().cfg
-	next.Users = append([]config.HTTPUser{}, next.Users...)
-	next.Users = append(next.Users, fullUser("jane", "secret"))
-	if err := server.Reload(next, server.settings().https); err != nil {
+	users := []config.User{fullUser("john", "doe"), fullUser("jane", "secret")}
+	if err := server.Reload(next, server.settings().https, users); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -42,9 +41,8 @@ func TestReloadRevokesAPermission(t *testing.T) {
 
 	next := server.settings().cfg
 	user := fullUser("john", "doe")
-	user.AllowUserFileUpload = false
-	next.Users = []config.HTTPUser{user}
-	if err := server.Reload(next, server.settings().https); err != nil {
+	user.AllowUserFileCreate = new(false)
+	if err := server.Reload(next, server.settings().https, []config.User{user}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -72,7 +70,7 @@ func TestReloadReportsWhatNeedsARestart(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg, https := server.settings().cfg, server.settings().https
 			change(&cfg, &https)
-			if err := server.Reload(cfg, https); err != service.ErrNeedsRestart {
+			if err := server.Reload(cfg, https, nil); err != service.ErrNeedsRestart {
 				t.Errorf("err = %v, want ErrNeedsRestart", err)
 			}
 		})
@@ -86,7 +84,7 @@ func TestReloadKeepsTheRunningConfigurationOnError(t *testing.T) {
 
 	next := server.settings().cfg
 	next.PathsRequireAuth = []string{"([unclosed"}
-	if err := server.Reload(next, server.settings().https); err == nil {
+	if err := server.Reload(next, server.settings().https, []config.User{fullUser("john", "doe")}); err == nil {
 		t.Fatal("a broken pattern has to be refused")
 	}
 
@@ -101,13 +99,13 @@ func TestReloadKeepsTheRunningConfigurationOnError(t *testing.T) {
 // The lifetime is read when a token is minted, so a reload changes what is
 // issued from here on with no restart and no live token disturbed.
 func TestTheTokenLifetimeIsSwappedWithoutARestart(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 
 	next := server.settings().cfg
 	next.SessionTokenLifetime = 60
-	if err := server.Reload(next, server.settings().https); err != nil {
+	if err := server.Reload(next, server.settings().https, []config.User{cookieUser("john", "doe")}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if session := login(t, server, "/", "john", "doe"); session.MaxAge != 60 {
@@ -118,8 +116,8 @@ func TestTheTokenLifetimeIsSwappedWithoutARestart(t *testing.T) {
 // The key is derived once, at startup, and swapping it under a running server
 // would invalidate every live token halfway through a request.
 func TestChangingTheSigningKeyNeedsARestart(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	secret, err := config.GenerateSessionSecret()
 	if err != nil {
@@ -128,7 +126,7 @@ func TestChangingTheSigningKeyNeedsARestart(t *testing.T) {
 
 	next := server.settings().cfg
 	next.SessionTokenSecret = secret
-	if err := server.Reload(next, server.settings().https); !errors.Is(err, service.ErrNeedsRestart) {
+	if err := server.Reload(next, server.settings().https, nil); !errors.Is(err, service.ErrNeedsRestart) {
 		t.Errorf("Reload = %v, want ErrNeedsRestart", err)
 	}
 }

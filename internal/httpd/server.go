@@ -92,9 +92,11 @@ func (s *Server) settings() *settings {
 	return s.snapshot.Load()
 }
 
-// newSettings compiles a section into what the request path needs.
-func newSettings(cfg config.HTTP, https config.HTTPS) (*settings, error) {
-	accounts, err := buildAccounts(cfg.Users)
+// newSettings compiles a section into what the request path needs. users are
+// the [[users]] entries that set http, which the supervisor hands over already
+// filtered.
+func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User) (*settings, error) {
+	accounts, err := buildAccounts(users)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +114,7 @@ func newSettings(cfg config.HTTP, https config.HTTPS) (*settings, error) {
 // Reload swaps the accounts, the paths and the limits that are read per
 // request. The ports, the folder, the certificate and the settings baked into
 // the http.Server and its listener at Start report ErrNeedsRestart.
-func (s *Server) Reload(cfg config.HTTP, https config.HTTPS) error {
+func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User) error {
 	current := s.settings()
 	if cfg.Enabled != current.cfg.Enabled || cfg.Port != current.cfg.Port ||
 		cfg.Address != current.cfg.Address ||
@@ -126,7 +128,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS) error {
 		https.Cert != current.https.Cert || https.Key != current.https.Key {
 		return service.ErrNeedsRestart
 	}
-	next, err := newSettings(cfg, https)
+	next, err := newSettings(cfg, https, users)
 	if err != nil {
 		// a broken account or pattern leaves the running one in place
 		return err
@@ -138,13 +140,13 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS) error {
 	return nil
 }
 
-func New(cfg config.HTTP, https config.HTTPS, logger *slog.Logger) (*Server, error) {
+func New(cfg config.HTTP, https config.HTTPS, users []config.User, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
 		return nil, fmt.Errorf("http.basefolder: %w", err)
 	}
 
-	set, err := newSettings(cfg, https)
+	set, err := newSettings(cfg, https, users)
 	if err != nil {
 		return nil, err
 	}
@@ -352,9 +354,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := cred.user
-	if !s.permits(set, user, r.Method, target.Virtual) {
+	act := actionOf(r.Method, target)
+	if !s.permits(set, user, r.Method, target.Virtual, act) {
 		s.log.Debug("http request not allowed for the account",
-			"user", nameOf(user), "method", r.Method, "path", target.Virtual)
+			"user", nameOf(user), "method", r.Method, "action", act, "path", target.Virtual)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -366,7 +369,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !s.sameSite(w, r) {
 			return
 		}
-		s.handlePut(set, w, r, target, user)
+		s.handlePut(set, w, r, target, user, act == actOverwrite)
 	case http.MethodDelete:
 		if !s.sameSite(w, r) {
 			return

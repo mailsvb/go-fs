@@ -49,6 +49,9 @@ type Server struct {
 type settings struct {
 	cfg  config.FTP
 	ftps config.FTPS
+	// users are the accounts that may log in here: the [[users]] entries
+	// that set ftp, which the supervisor hands over already filtered.
+	users []config.User
 }
 
 func (s *Server) settings() *settings {
@@ -58,7 +61,7 @@ func (s *Server) settings() *settings {
 // Reload swaps the accounts and the limits. The ports, the folder and the
 // certificate cannot change under a running listener, so those report
 // ErrNeedsRestart.
-func (s *Server) Reload(cfg config.FTP, ftps config.FTPS) error {
+func (s *Server) Reload(cfg config.FTP, ftps config.FTPS, users []config.User) error {
 	current := s.settings()
 	if cfg.Enabled != current.cfg.Enabled || cfg.Port != current.cfg.Port ||
 		cfg.Address != current.cfg.Address ||
@@ -67,7 +70,7 @@ func (s *Server) Reload(cfg config.FTP, ftps config.FTPS) error {
 		ftps.Cert != current.ftps.Cert || ftps.Key != current.ftps.Key {
 		return service.ErrNeedsRestart
 	}
-	if err := checkUserFolders(cfg); err != nil {
+	if err := checkUserFolders(users); err != nil {
 		// a broken account leaves the running one in place
 		return err
 	}
@@ -76,7 +79,7 @@ func (s *Server) Reload(cfg config.FTP, ftps config.FTPS) error {
 		cfg.MaxConnections != current.cfg.MaxConnections {
 		warnNarrowPassiveRange(cfg, s.log)
 	}
-	s.snapshot.Store(&settings{cfg: cfg, ftps: ftps})
+	s.snapshot.Store(&settings{cfg: cfg, ftps: ftps, users: users})
 	return nil
 }
 
@@ -95,25 +98,27 @@ func warnNarrowPassiveRange(cfg config.FTP, logger *slog.Logger) {
 		"ports", width, "maxConnections", cfg.MaxConnections)
 }
 
-// checkUserFolders reports a per user base folder that cannot be served.
-func checkUserFolders(cfg config.FTP) error {
-	for i, user := range cfg.Users {
+// checkUserFolders reports a per user base folder that cannot be served. The
+// account is named rather than numbered: the list is the file's filtered down
+// to this server, so its positions are not the file's.
+func checkUserFolders(users []config.User) error {
+	for _, user := range users {
 		if user.Basefolder == "" {
 			continue
 		}
 		if _, err := vfs.New(user.Basefolder); err != nil {
-			return fmt.Errorf("ftp.users[%d].basefolder: %w", i, err)
+			return fmt.Errorf("users %q basefolder: %w", user.Username, err)
 		}
 	}
 	return nil
 }
 
-func New(cfg config.FTP, ftps config.FTPS, logger *slog.Logger) (*Server, error) {
+func New(cfg config.FTP, ftps config.FTPS, users []config.User, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
 		return nil, fmt.Errorf("ftp.basefolder: %w", err)
 	}
-	if err := checkUserFolders(cfg); err != nil {
+	if err := checkUserFolders(users); err != nil {
 		return nil, err
 	}
 
@@ -122,7 +127,7 @@ func New(cfg config.FTP, ftps config.FTPS, logger *slog.Logger) (*Server, error)
 		log:   logger,
 		conns: make(map[*conn]struct{}),
 	}
-	server.snapshot.Store(&settings{cfg: cfg, ftps: ftps})
+	server.snapshot.Store(&settings{cfg: cfg, ftps: ftps, users: users})
 	warnNarrowPassiveRange(cfg, logger)
 	if ftps.Enabled {
 		server.tls, err = tlsconf.Build(ftps.Cert, ftps.Key, "ftps.cert", "ftps.key", logger)

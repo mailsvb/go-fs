@@ -84,7 +84,7 @@ func TestUploadBinary(t *testing.T) {
 // readTimeout was wired into http.Server's own ReadTimeout, which caps the
 // entire request.
 func TestUploadSurvivesBeingSlowerThanReadTimeout(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) { cfg.ReadTimeout = 1 })
+	server := newServer(t, func(cfg *httpConfig) { cfg.ReadTimeout = 1 })
 
 	req, _ := http.NewRequest(http.MethodPut, server.url("/private/slow.txt"),
 		&trickleReader{chunks: [][]byte{[]byte("a"), []byte("b"), []byte("c"), []byte("d")},
@@ -102,7 +102,7 @@ func TestUploadSurvivesBeingSlowerThanReadTimeout(t *testing.T) {
 // A stall longer than readTimeout still has to fail: the idle timeout is a
 // safety net, not a timeout that only applied by accident.
 func TestUploadFailsOnARealStall(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) { cfg.ReadTimeout = 1 })
+	server := newServer(t, func(cfg *httpConfig) { cfg.ReadTimeout = 1 })
 
 	req, _ := http.NewRequest(http.MethodPut, server.url("/private/stalled.txt"),
 		&trickleReader{chunks: [][]byte{[]byte("a"), []byte("b")}, delay: 2 * time.Second})
@@ -161,25 +161,62 @@ func TestUploadMultipart(t *testing.T) {
 	}
 }
 
-// A PUT does not replace what is already there, as in the original.
-func TestUploadDoesNotOverwrite(t *testing.T) {
-	server := newServer(t, nil)
-	server.write(t, "private/exists.txt", "original")
+// A PUT replaces what is already there only for an account granted
+// allowUserFileOverwrite; without the right the name is taken, as in the
+// original.
+func TestUploadReplacesOnlyWithTheRight(t *testing.T) {
+	put := func(t *testing.T, server *testServer, user, password string) int {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPut, server.url("/private/exists.txt"),
+			strings.NewReader("replacement"))
+		if user != "" {
+			req.SetBasicAuth(user, password)
+		}
+		req.Header.Set("Content-Type", "application/octet-stream")
+		return do(t, req).StatusCode
+	}
 
-	req, _ := http.NewRequest(http.MethodPut, server.url("/private/exists.txt"),
-		strings.NewReader("replacement"))
-	req.SetBasicAuth("john", "doe")
-	req.Header.Set("Content-Type", "application/octet-stream")
-	if res := do(t, req); res.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", res.StatusCode)
-	}
-	if got := server.read(t, "private/exists.txt"); got != "original" {
-		t.Errorf("the file was changed to %q", got)
-	}
+	t.Run("without the right", func(t *testing.T) {
+		server := newServer(t, func(cfg *httpConfig) {
+			user := fullUser("john", "doe")
+			user.AllowUserFileOverwrite = new(false)
+			cfg.Users = []config.User{user}
+		})
+		server.write(t, "private/exists.txt", "original")
+		if status := put(t, server, "john", "doe"); status != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", status)
+		}
+		if got := server.read(t, "private/exists.txt"); got != "original" {
+			t.Errorf("the file was changed to %q", got)
+		}
+	})
+
+	t.Run("with the right", func(t *testing.T) {
+		server := newServer(t, nil)
+		server.write(t, "private/exists.txt", "original")
+		if status := put(t, server, "john", "doe"); status != http.StatusOK {
+			t.Errorf("status = %d, want 200", status)
+		}
+		if got := server.read(t, "private/exists.txt"); got != "replacement" {
+			t.Errorf("the file holds %q, want it replaced", got)
+		}
+	})
+
+	// a public PUT never replaced a file, and being public is not a right
+	t.Run("public", func(t *testing.T) {
+		server := newServer(t, publicServer)
+		server.write(t, "private/exists.txt", "original")
+		if status := put(t, server, "", ""); status != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", status)
+		}
+		if got := server.read(t, "private/exists.txt"); got != "original" {
+			t.Errorf("the file was changed to %q", got)
+		}
+	})
 }
 
 func TestUploadSizeLimit(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) { cfg.MaxUploadSize = 8 })
+	server := newServer(t, func(cfg *httpConfig) { cfg.MaxUploadSize = 8 })
 
 	req, _ := http.NewRequest(http.MethodPut, server.url("/private/big.txt"),
 		strings.NewReader("far more than eight bytes"))
@@ -222,42 +259,61 @@ func TestDelete(t *testing.T) {
 
 // Each right is granted explicitly, so an account without one is refused.
 func TestPermissionsAreEnforced(t *testing.T) {
+	// without names the one right each case takes away
+	without := func(take func(*config.User)) config.User {
+		user := fullUser("john", "doe")
+		take(&user)
+		return user
+	}
 	cases := []struct {
 		name   string
-		user   config.HTTPUser
+		user   config.User
 		method string
-		body   io.Reader
+		path   string
 		want   int
 	}{
-		{"upload denied", config.HTTPUser{
-			Username: "john", Password: "doe", Paths: []string{"^/.*"},
-			AllowUserFileDelete: true,
-		}, http.MethodPut, strings.NewReader("x"), http.StatusForbidden},
-		{"delete denied", config.HTTPUser{
-			Username: "john", Password: "doe", Paths: []string{"^/.*"},
-			AllowUserFileUpload: true,
-		}, http.MethodDelete, nil, http.StatusForbidden},
-		{"path denied", config.HTTPUser{
-			Username: "john", Password: "doe", Paths: []string{"^/elsewhere/.*"},
-			AllowUserFileUpload: true, AllowUserFileDelete: true,
-		}, http.MethodGet, nil, http.StatusForbidden},
-		{"no path at all", config.HTTPUser{
-			Username: "john", Password: "doe",
-		}, http.MethodGet, nil, http.StatusForbidden},
+		{"read denied", without(func(u *config.User) { u.AllowUserFileRetrieve = new(false) }),
+			http.MethodGet, "/private/hello.txt", http.StatusForbidden},
+		{"listing denied", without(func(u *config.User) { u.AllowUserFileRetrieve = new(false) }),
+			http.MethodGet, "/private/", http.StatusForbidden},
+		{"create denied", without(func(u *config.User) { u.AllowUserFileCreate = new(false) }),
+			http.MethodPut, "/private/new.txt", http.StatusForbidden},
+		{"overwrite denied", without(func(u *config.User) { u.AllowUserFileOverwrite = new(false) }),
+			http.MethodPut, "/private/hello.txt", http.StatusForbidden},
+		// the rights are read separately, so the one does not stand in for the other
+		{"create is not overwrite", without(func(u *config.User) { u.AllowUserFileCreate = new(false) }),
+			http.MethodPut, "/private/hello.txt", http.StatusOK},
+		{"overwrite is not create", without(func(u *config.User) { u.AllowUserFileOverwrite = new(false) }),
+			http.MethodPut, "/private/new.txt", http.StatusOK},
+		{"file delete denied", without(func(u *config.User) { u.AllowUserFileDelete = new(false) }),
+			http.MethodDelete, "/private/hello.txt", http.StatusForbidden},
+		{"folder delete denied", without(func(u *config.User) { u.AllowUserFolderDelete = new(false) }),
+			http.MethodDelete, "/private/empty/", http.StatusForbidden},
+		{"file delete is not folder delete", without(func(u *config.User) { u.AllowUserFileDelete = new(false) }),
+			http.MethodDelete, "/private/empty/", http.StatusOK},
+		{"folder delete is not file delete", without(func(u *config.User) { u.AllowUserFolderDelete = new(false) }),
+			http.MethodDelete, "/private/hello.txt", http.StatusOK},
+		{"mkcol denied", without(func(u *config.User) { u.AllowUserFolderCreate = new(false) }),
+			methodMkcol, "/private/made/", http.StatusForbidden},
+		{"path denied", without(func(u *config.User) { u.Paths = []string{"^/elsewhere/.*"} }),
+			http.MethodGet, "/private/hello.txt", http.StatusForbidden},
+		{"no path at all", without(func(u *config.User) { u.Paths = nil }),
+			http.MethodGet, "/private/hello.txt", http.StatusForbidden},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			server := newServer(t, func(cfg *config.HTTP) {
-				cfg.Users = []config.HTTPUser{tc.user}
+			server := newServer(t, func(cfg *httpConfig) {
+				cfg.Users = []config.User{tc.user}
 			})
 			server.write(t, "private/hello.txt", "hello")
+			server.mkdir(t, "private/empty")
 
-			path := "/private/hello.txt"
+			var body io.Reader
 			if tc.method == http.MethodPut {
-				path = "/private/new.txt"
+				body = strings.NewReader("x")
 			}
-			req, _ := http.NewRequest(tc.method, server.url(path), tc.body)
+			req, _ := http.NewRequest(tc.method, server.url(tc.path), body)
 			req.SetBasicAuth("john", "doe")
 			req.Header.Set("Content-Type", "application/octet-stream")
 			if res := do(t, req); res.StatusCode != tc.want {
@@ -270,7 +326,7 @@ func TestPermissionsAreEnforced(t *testing.T) {
 // The served folder is the whole of the filesystem a client can reach, whether
 // it climbs out with .. or follows a symbolic link out.
 func TestConfinement(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		cfg.MethodsRequireAuth = nil
 		cfg.PathsRequireAuth = nil
 	})
@@ -300,10 +356,11 @@ func TestConfinement(t *testing.T) {
 // A path regex is matched after normalization, so ".." cannot be used to get
 // inside a pattern and then climb out of it again.
 func TestPathPatternsCannotBeWalkedAround(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		cfg.PathsRequireAuth = []string{"^/.*"}
-		cfg.Users = []config.HTTPUser{{
-			Username: "john", Password: "doe", Paths: []string{"^/public/.*"},
+		cfg.Users = []config.User{{
+			Username: "john", Password: "doe", HTTP: true, Paths: []string{"^/public/.*"},
+			AllowUserFileRetrieve: new(true),
 		}}
 	})
 	server.write(t, "public/fine.txt", "fine")
@@ -339,7 +396,7 @@ func TestCleanupKeepsTheNewest(t *testing.T) {
 		}
 	}
 
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		cfg.Basefolder = base
 		cfg.Cleanup = []config.Cleanup{{Path: "/iso", Keep: 2}}
 	})
@@ -366,7 +423,7 @@ func TestCleanupKeepsTheNewest(t *testing.T) {
 // body directly, so a limit put on a reader derived from it would leave a
 // multipart upload unbounded.
 func TestUploadSizeLimitCoversMultipart(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) { cfg.MaxUploadSize = 64 })
+	server := newServer(t, func(cfg *httpConfig) { cfg.MaxUploadSize = 64 })
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -407,7 +464,7 @@ func TestUploadSizeLimitCoversMultipart(t *testing.T) {
 
 // An upload above the limit is what the client did, not a server error.
 func TestUploadTooLargeIsReportedAsSuch(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) { cfg.MaxUploadSize = 8 })
+	server := newServer(t, func(cfg *httpConfig) { cfg.MaxUploadSize = 8 })
 
 	req, _ := http.NewRequest(http.MethodPut, server.url("/private/big.txt"),
 		strings.NewReader("far more than eight bytes"))
@@ -421,7 +478,7 @@ func TestUploadTooLargeIsReportedAsSuch(t *testing.T) {
 // The links in a listing are relative, so a folder reached without its trailing
 // slash is redirected to the form they are relative to.
 func TestFolderRedirectsToTheSlashedForm(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) { cfg.PathsRequireAuth = nil })
+	server := newServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
 	server.write(t, "photos/sub/inside.txt", "inside")
 
 	client := &http.Client{
@@ -463,7 +520,7 @@ func TestDispositionOfANonASCIIName(t *testing.T) {
 // same file has to be accepted whether it is sent as octet-stream or wrapped in
 // a multipart form, whose boundaries and headers are not part of it.
 func TestUploadSizeLimitCountsTheFileNotTheEnvelope(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) { cfg.MaxUploadSize = 64 })
+	server := newServer(t, func(cfg *httpConfig) { cfg.MaxUploadSize = 64 })
 	content := strings.Repeat("z", 60)
 
 	var body bytes.Buffer

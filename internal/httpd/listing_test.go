@@ -14,7 +14,7 @@ import (
 )
 
 func TestDirectoryListing(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		cfg.MethodsRequireAuth = nil
 		cfg.PathsRequireAuth = nil
 	})
@@ -326,8 +326,8 @@ func TestReadDirectoryKeepsTheLegacyOrder(t *testing.T) {
 }
 
 func TestDirectoryReaderEndpoint(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{fullUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 	server.write(t, "area/listed/one.txt", "one")
 	server.write(t, "area/listed/two.iso", "two")
@@ -383,7 +383,7 @@ func TestOtherPostsAreNotFound(t *testing.T) {
 }
 
 func TestUnsupportedMethod(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) { cfg.MethodsRequireAuth = nil })
+	server := newServer(t, func(cfg *httpConfig) { cfg.MethodsRequireAuth = nil })
 
 	req, _ := http.NewRequest(http.MethodPatch, server.url("/"), nil)
 	res := do(t, req)
@@ -428,9 +428,9 @@ func TestTypeOf(t *testing.T) {
 
 // The header says who is looking at the page, and offers the way in or out.
 func TestTheListingShowsWhoIsSignedIn(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		cfg.PathsRequireAuth = nil
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	server.write(t, "notes.txt", "hello")
 
@@ -462,9 +462,9 @@ func TestTheListingShowsWhoIsSignedIn(t *testing.T) {
 // The listing depends on the cookie now, so a shared cache must not hand one
 // browser's copy to another.
 func TestTheListingVariesOnTheCookie(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		cfg.PathsRequireAuth = nil
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	res, _ := get(t, server, "/")
 	if !strings.Contains(res.Header.Get("Vary"), "Cookie") {
@@ -475,9 +475,9 @@ func TestTheListingVariesOnTheCookie(t *testing.T) {
 // Logging in is the most core control on the page, so neither it nor the
 // logout may be one of the things that only work once the script has run.
 func TestTheLoginControlsWorkWithoutJavaScript(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		cfg.PathsRequireAuth = nil
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 
 	for _, item := range []struct {

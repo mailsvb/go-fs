@@ -82,8 +82,9 @@ func baseConfig(t *testing.T) config.Config {
 	cfg.HTTP.Basefolder = folder
 	cfg.HTTP.LoginFailureDelay = 0
 	cfg.HTTP.PathsRequireAuth = []string{"^/private/.*"}
-	cfg.HTTP.Users = []config.HTTPUser{{
-		Username: "john", Password: "doe", Paths: []string{"^/.*"},
+	cfg.Users = []config.User{{
+		Username: "john", Password: "doe", HTTP: true, Paths: []string{"^/.*"},
+		AllowUserFileRetrieve: new(true),
 	}}
 	cfg.TFTP.Basefolder = folder
 	return cfg
@@ -180,8 +181,9 @@ func TestApplyReloadsOrRestarts(t *testing.T) {
 	}
 	port := httpPort(t, sup)
 
-	cfg.HTTP.Users = append(cfg.HTTP.Users, config.HTTPUser{
-		Username: "jane", Password: "secret", Paths: []string{"^/.*"},
+	cfg.Users = append(cfg.Users, config.User{
+		Username: "jane", Password: "secret", HTTP: true, Paths: []string{"^/.*"},
+		AllowUserFileRetrieve: new(true),
 	})
 	if err := sup.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
@@ -197,6 +199,34 @@ func TestApplyReloadsOrRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	logs.waitFor(t, "server restarted server=http")
+}
+
+// Each server is handed the accounts that switch it on, and a switch flipped
+// in the file reaches it on the next reload.
+func TestAccountsReachOnlyTheServersTheySwitchOn(t *testing.T) {
+	sup, logs, ctx := newSupervisor(t)
+	cfg := baseConfig(t)
+	if err := os.MkdirAll(filepath.Join(cfg.HTTP.Basefolder, "private"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := sup.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	port := httpPort(t, sup)
+
+	if res := fetch(t, port, "/private/", "john", "doe"); res.StatusCode != http.StatusOK {
+		t.Fatalf("john is switched on for http, got %d", res.StatusCode)
+	}
+
+	cfg.Users[0].HTTP = false
+	cfg.Users[0].FTP = true
+	if err := sup.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	logs.waitFor(t, "server reloaded server=http")
+	if res := fetch(t, port, "/private/", "john", "doe"); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("john is switched off for http, got %d", res.StatusCode)
+	}
 }
 
 // The whole point: an account change must not disturb a transfer in flight.
@@ -224,8 +254,9 @@ func TestReloadDoesNotDisturbATransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg.HTTP.Users = append(cfg.HTTP.Users, config.HTTPUser{
-		Username: "jane", Password: "secret", Paths: []string{"^/.*"},
+	cfg.Users = append(cfg.Users, config.User{
+		Username: "jane", Password: "secret", HTTP: true, Paths: []string{"^/.*"},
+		AllowUserFileRetrieve: new(true),
 	})
 	if err := sup.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)

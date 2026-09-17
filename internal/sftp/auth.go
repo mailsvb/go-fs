@@ -12,8 +12,8 @@ import (
 	"go-fs/internal/vfs"
 )
 
-// account is one resolved entry of sftp.users: its credentials, its rights and
-// the folder it sees.
+// account is one resolved entry of [[users]] that sets sftp: its credentials,
+// its rights and the folder it sees.
 type account struct {
 	name     string
 	password string
@@ -29,12 +29,13 @@ func (a *account) canPassword() bool { return a.password != "" }
 
 // buildAccounts resolves the configured users once, at startup, so that a
 // malformed key or a missing folder is an error the operator sees immediately
-// instead of a login that never succeeds.
-func buildAccounts(cfg config.SFTP, serverRoot *vfs.Root) (map[string]*account, error) {
-	accounts := make(map[string]*account, len(cfg.Users))
-	for i, user := range cfg.Users {
+// instead of a login that never succeeds. An error names the account rather
+// than its position: the list is the file's filtered down to this server.
+func buildAccounts(users []config.User, serverRoot *vfs.Root) (map[string]*account, error) {
+	accounts := make(map[string]*account, len(users))
+	for _, user := range users {
 		if _, taken := accounts[user.Username]; taken {
-			return nil, fmt.Errorf("sftp.users[%d]: %q is configured twice", i, user.Username)
+			return nil, fmt.Errorf("users %q is configured twice", user.Username)
 		}
 
 		resolved := &account{
@@ -46,20 +47,20 @@ func buildAccounts(cfg config.SFTP, serverRoot *vfs.Root) (map[string]*account, 
 		if user.Basefolder != "" {
 			root, err := vfs.New(user.Basefolder)
 			if err != nil {
-				return nil, fmt.Errorf("sftp.users[%d].basefolder: %w", i, err)
+				return nil, fmt.Errorf("users %q basefolder: %w", user.Username, err)
 			}
 			resolved.root = root
 		}
 		for k, entry := range user.AuthorizedKeys {
 			key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(entry))
 			if err != nil {
-				return nil, fmt.Errorf("sftp.users[%d].authorizedKeys[%d]: %w", i, k, err)
+				return nil, fmt.Errorf("users %q authorizedKeys[%d]: %w", user.Username, k, err)
 			}
 			resolved.keys = append(resolved.keys, key)
 		}
 		if !resolved.canPassword() && len(resolved.keys) == 0 {
-			return nil, fmt.Errorf("sftp.users[%d]: %q has neither a password nor an authorized key, "+
-				"so it could never log in", i, user.Username)
+			return nil, fmt.Errorf("users %q has neither a password nor an authorized key, "+
+				"so it could never log in", user.Username)
 		}
 		accounts[user.Username] = resolved
 	}

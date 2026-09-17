@@ -25,9 +25,13 @@ type Section struct {
 	Label  string  `json:"label"`
 	Help   string  `json:"help,omitempty"`
 	Fields []Field `json:"fields"`
-	// Tables are the tables that repeat, [[ftp.users]] and the like. The tab
-	// shows each of them as a list with one record per entry.
+	// Tables are the tables that repeat, [[http.cleanup]] and the like. The
+	// tab shows each of them as a list with one record per entry.
 	Tables []Table `json:"tables"`
+	// Direct says the section is itself a repeated table, [[users]] at the top
+	// of the file: its value is the list of records rather than a map of
+	// keys, and Tables holds exactly one entry describing them.
+	Direct bool `json:"direct,omitempty"`
 }
 
 // Table is a repeated table inside a section.
@@ -56,6 +60,11 @@ type Field struct {
 	// Pair is the key of the private key belonging to a certificate, which is
 	// what lets one Generate fill both halves of a pair.
 	Pair string `json:"pair,omitempty"`
+	// Summary marks a field of a record that says what the record is when it
+	// is folded up: its first text, and every plain switch. The page knows
+	// the name of no setting, so which fields those are is decided here, by
+	// their shape.
+	Summary bool `json:"summary,omitempty"`
 
 	// index locates the field in its struct, so that reading and writing a
 	// value walks the same path the schema was built from.
@@ -81,7 +90,25 @@ func build() (Schema, []string) {
 	for i := range configType.NumField() {
 		field := configType.Field(i)
 		key := tomlName(field)
-		if key == "" || field.Type.Kind() != reflect.Struct {
+		switch {
+		case key == "":
+			skipped = append(skipped, field.Name)
+			continue
+
+		case field.Type.Kind() == reflect.Slice && field.Type.Elem().Kind() == reflect.Struct:
+			// a list at the top of the file is a tab of its own, holding
+			// nothing but its records
+			table, missed := buildTable(field, key, i)
+			// the tab carries the description; the list under it is the tab
+			table.Help = ""
+			schema.Sections = append(schema.Sections, Section{
+				Key: key, Label: strings.ToUpper(key), Help: help(key, ""),
+				Fields: []Field{}, Tables: []Table{table}, Direct: true,
+			})
+			skipped = append(skipped, missed...)
+			continue
+
+		case field.Type.Kind() != reflect.Struct:
 			skipped = append(skipped, field.Name)
 			continue
 		}
@@ -122,6 +149,7 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 		index:  index,
 		Fields: make([]Field, 0, element.NumField()),
 	}
+	hasText := false
 	for i := range element.NumField() {
 		inner := element.Field(i)
 		name := tomlName(inner)
@@ -133,8 +161,15 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 			skipped = append(skipped, element.Name()+"."+inner.Name)
 			continue
 		}
-		table.Fields = append(table.Fields,
-			newField(name, kind, i, path+"."+name, element.Name()+"."+inner.Name))
+		field := newField(name, kind, i, path+"."+name, element.Name()+"."+inner.Name)
+		// what names a folded record: its first text (the username, the path)
+		// and the switches, which are the plain bools; the pointers are the
+		// rights, and a record is not summed up by its rights
+		field.Summary = (kind == kindText && !hasText) || inner.Type.Kind() == reflect.Bool
+		if kind == kindText {
+			hasText = true
+		}
+		table.Fields = append(table.Fields, field)
 	}
 	return table, skipped
 }
@@ -246,6 +281,10 @@ func (s Schema) Values(cfg config.Config) map[string]any {
 	root := reflect.ValueOf(cfg)
 	values := make(map[string]any, len(s.Sections))
 	for i, section := range s.Sections {
+		if section.Direct {
+			values[section.Key] = section.Tables[0].records(root.Field(i))
+			continue
+		}
 		values[section.Key] = section.values(root.Field(i))
 	}
 	return values
@@ -280,18 +319,22 @@ func (s Section) values(from reflect.Value) map[string]any {
 		values[field.Key] = read(from.Field(field.index))
 	}
 	for _, table := range s.Tables {
-		slice := from.Field(table.index)
-		records := make([]any, 0, slice.Len())
-		for i := range slice.Len() {
-			record := make(map[string]any, len(table.Fields))
-			for _, field := range table.Fields {
-				record[field.Key] = read(slice.Index(i).Field(field.index))
-			}
-			records = append(records, record)
-		}
-		values[table.Key] = records
+		values[table.Key] = table.records(from.Field(table.index))
 	}
 	return values
+}
+
+// records renders one repeated table, one map per entry.
+func (t Table) records(slice reflect.Value) []any {
+	records := make([]any, 0, slice.Len())
+	for i := range slice.Len() {
+		record := make(map[string]any, len(t.Fields))
+		for _, field := range t.Fields {
+			record[field.Key] = read(slice.Index(i).Field(field.index))
+		}
+		records = append(records, record)
+	}
+	return records
 }
 
 // read turns one field into a value the browser can hold. A pointer to a bool
@@ -323,6 +366,16 @@ func (s Schema) Apply(values map[string]any) (config.Config, error) {
 	cfg := config.Default()
 	root := reflect.ValueOf(&cfg).Elem()
 	for i, section := range s.Sections {
+		if section.Direct {
+			raw, ok := values[section.Key]
+			if !ok {
+				continue
+			}
+			if err := section.Tables[0].apply(root.Field(i), raw, section.Key); err != nil {
+				return cfg, err
+			}
+			continue
+		}
 		posted, ok := values[section.Key].(map[string]any)
 		if !ok {
 			continue
@@ -350,29 +403,37 @@ func (s Section) apply(into reflect.Value, posted map[string]any) error {
 		if !ok {
 			continue
 		}
-		records, ok := raw.([]any)
-		if !ok {
-			return fmt.Errorf("%s.%s is not a list of records", s.Key, table.Key)
+		if err := table.apply(into.Field(table.index), raw, s.Key+"."+table.Key); err != nil {
+			return err
 		}
-		slice := into.Field(table.index)
-		built := reflect.MakeSlice(slice.Type(), len(records), len(records))
-		for i, entry := range records {
-			fields, ok := entry.(map[string]any)
-			if !ok {
-				return fmt.Errorf("%s.%s[%d] is not a record", s.Key, table.Key, i)
-			}
-			for _, field := range table.Fields {
-				value, ok := fields[field.Key]
-				if !ok {
-					continue
-				}
-				if err := write(built.Index(i).Field(field.index), value); err != nil {
-					return fmt.Errorf("%s.%s[%d].%s: %w", s.Key, table.Key, i, field.Key, err)
-				}
-			}
-		}
-		slice.Set(built)
 	}
+	return nil
+}
+
+// apply replaces one repeated table with what the page posted for it. path
+// names the table in an error, "http.cleanup" or "users".
+func (t Table) apply(slice reflect.Value, raw any, path string) error {
+	records, ok := raw.([]any)
+	if !ok {
+		return fmt.Errorf("%s is not a list of records", path)
+	}
+	built := reflect.MakeSlice(slice.Type(), len(records), len(records))
+	for i, entry := range records {
+		fields, ok := entry.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s[%d] is not a record", path, i)
+		}
+		for _, field := range t.Fields {
+			value, ok := fields[field.Key]
+			if !ok {
+				continue
+			}
+			if err := write(built.Index(i).Field(field.index), value); err != nil {
+				return fmt.Errorf("%s[%d].%s: %w", path, i, field.Key, err)
+			}
+		}
+	}
+	slice.Set(built)
 	return nil
 }
 

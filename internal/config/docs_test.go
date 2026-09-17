@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The admin interface labels its generated form with these, so an empty map
 // would leave the whole page undocumented.
@@ -16,15 +19,18 @@ func TestTemplateDocs(t *testing.T) {
 		}
 	}
 	// a table header carries the description of the table itself
-	if docs["ftp.users"] == "" || docs["sftp"] == "" {
+	if docs["users"] == "" || docs["sftp"] == "" {
 		t.Error("a section or a repeated table has no description")
 	}
 	// the fields of a commented out example are read as well
-	if docs["sftp.users.basefolder"] == "" {
+	if docs["users.basefolder"] == "" {
 		t.Error("a key of a commented out example is not documented")
 	}
-	// a multi-line array value is not read as prose
-	if got := docs["sftp.users.allowUserFileRetrieve"]; got != "" {
+	// a multi-line array value is not read as prose: the first [[users]]
+	// example documents allowUserFileRetrieve along with its siblings, and
+	// the key-only example that follows it must not replace that with the
+	// lines of its authorizedKeys array
+	if got := docs["users.allowUserFileRetrieve"]; strings.Contains(got, "ssh-ed25519") {
 		t.Errorf("the lines of an array leaked into a description: %q", got)
 	}
 	if len(docs) < 50 {
@@ -36,8 +42,8 @@ func TestTemplateDocs(t *testing.T) {
 // described by the comment above it in the source.
 func TestDocs(t *testing.T) {
 	docs := Docs()
-	if docs["HTTPUser.Paths"] == "" {
-		t.Error("HTTPUser.Paths has no description")
+	if docs["User.Paths"] == "" {
+		t.Error("User.Paths has no description")
 	}
 	if len(docs) < 20 {
 		t.Errorf("only %d fields are documented", len(docs))

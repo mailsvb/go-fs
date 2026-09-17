@@ -118,16 +118,21 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 }
 
 // handlePut stores an uploaded file. A body of octet-stream is the file; a
-// multipart body carries it in a part. Folders above it are created, and a
-// target that already exists is refused, as in the Node implementation.
-func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
+// multipart body carries it in a part. Folders above it are created.
+//
+// replace says the dispatch found the name taken and the account allowed to
+// replace what is there; without it a name that is taken is refused, as in the
+// Node implementation. The file is opened so that the two cannot be confused: a
+// create fails on a name taken since the check, rather than truncating it.
+func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request,
+	target vfs.Target, user *account, replace bool) {
 	if rangeHeader := r.Header.Get("Content-Range"); rangeHeader != "" {
-		s.handleChunkedPut(set, w, r, target, user, rangeHeader)
+		s.handleChunkedPut(set, w, r, target, user, rangeHeader, replace)
 		return
 	}
-	if _, err := os.Stat(target.Path); err == nil {
+	if info, err := os.Stat(target.Path); err == nil && (!replace || !info.Mode().IsRegular()) {
 		// the original falls through to its not-found handler here
-		s.log.Debug("http upload refused, the file exists", "file", target.Virtual)
+		s.log.Debug("http upload refused, the name is taken", "file", target.Virtual)
 		http.NotFound(w, r)
 		return
 	}
@@ -220,7 +225,13 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 		body = io.LimitReader(body, set.cfg.MaxUploadSize+1)
 	}
 	started := time.Now()
-	written, err := s.store(target.Path, body)
+	written, err := s.store(target.Path, body, replace)
+	if errors.Is(err, os.ErrExist) {
+		// taken between the check and the open
+		s.log.Debug("http upload refused, the name is taken", "file", target.Virtual)
+		http.NotFound(w, r)
+		return
+	}
 	if err == nil && set.cfg.MaxUploadSize > 0 && written > set.cfg.MaxUploadSize {
 		_ = os.Remove(target.Path)
 		s.tooLarge(set, w, target)
@@ -249,7 +260,7 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 	}
 
 	s.log.Info("http upload", "user", nameOf(user), "file", target.Virtual,
-		"bytes", written, "address", addressOf(r),
+		"bytes", written, "replaced", replace, "address", addressOf(r),
 		"took", time.Since(started).Round(time.Millisecond))
 	w.WriteHeader(http.StatusOK)
 }
@@ -293,9 +304,13 @@ func parseContentRange(header string) (contentRange, bool) {
 // with 416 and told what size would have fit, so a client can resynchronize
 // instead of failing outright. The chunk that reaches the last byte
 // finalizes the upload by renaming the staging file onto the real target,
-// under the same no-overwrite rule a whole-file PUT already enforces.
+// under the same rule about a name that is taken a whole-file PUT enforces:
+// refused unless the dispatch found the account allowed to replace it. Every
+// chunk is its own request and is judged on its own, so an upload onto a name
+// that is taken needs the right on every chunk, and one that is not needs it
+// on none.
 func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.Request,
-	target vfs.Target, user *account, header string) {
+	target vfs.Target, user *account, header string, replace bool) {
 	if set.cfg.MaxChunkSize <= 0 {
 		s.log.Debug("http chunked upload refused, chunking is disabled", "file", target.Virtual)
 		http.NotFound(w, r)
@@ -330,8 +345,8 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 	defer lock.Unlock()
 
 	if rng.start == 0 {
-		if _, err := os.Stat(target.Path); err == nil {
-			s.log.Debug("http upload refused, the file exists", "file", target.Virtual)
+		if info, err := os.Stat(target.Path); err == nil && (!replace || !info.Mode().IsRegular()) {
+			s.log.Debug("http upload refused, the name is taken", "file", target.Virtual)
 			http.NotFound(w, r)
 			return
 		}
@@ -448,22 +463,23 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	if _, err := os.Stat(target.Path); err == nil {
+	if info, err := os.Stat(target.Path); err == nil && (!replace || !info.Mode().IsRegular()) {
 		// the name was taken while this upload was in progress — the same
 		// refusal a whole-file PUT gives; the staged bytes are left in place
 		// rather than discarded, in case the client retries under another name
-		s.log.Debug("http upload refused, the file exists", "file", target.Virtual)
+		s.log.Debug("http upload refused, the name is taken", "file", target.Virtual)
 		http.NotFound(w, r)
 		return
 	}
-	if err := finalizeUpload(staging, target.Path); err != nil {
+	if err := finalizeUpload(staging, target.Path, replace); err != nil {
 		s.log.Error("http cannot finalize the upload", "file", target.Virtual, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
 
 	s.log.Info("http upload", "user", nameOf(user), "file", target.Virtual, "bytes", rng.total,
-		"chunked", true, "address", addressOf(r), "took", time.Since(started).Round(time.Millisecond))
+		"chunked", true, "replaced", replace, "address", addressOf(r),
+		"took", time.Since(started).Round(time.Millisecond))
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -514,26 +530,30 @@ func stagingPath(set *settings, virtual string) string {
 // filesystem than basefolder causes: the docs already warn against that, but
 // a chunked upload should still be able to finish rather than sitting fully
 // staged with no way to complete.
-func finalizeUpload(staging, target string) error {
+//
+// replace is whether the target may already exist. The rename replaces what is
+// there either way, under the check the caller made a moment earlier and the
+// lock it holds; the copy is where the flag is enforced.
+func finalizeUpload(staging, target string, replace bool) error {
 	if err := os.Rename(staging, target); err == nil {
 		return nil
 	}
-	if err := copyFile(staging, target); err != nil {
+	if err := copyFile(staging, target, replace); err != nil {
 		return err
 	}
 	return os.Remove(staging)
 }
 
-// copyFile copies src onto dst, refusing to replace a dst that already
-// exists — the same no-overwrite guarantee the rename path gets for free
-// from the check finalizeUpload's caller already made just before it.
-func copyFile(src, dst string) error {
+// copyFile copies src onto dst. Without replace it refuses a dst that already
+// exists, which is what keeps the guarantee the caller's exists check made a
+// moment earlier; with it the file is replaced in place.
+func copyFile(src, dst string, replace bool) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	out, err := os.OpenFile(dst, openFlags(replace), 0o644)
 	if err != nil {
 		return err
 	}
@@ -659,9 +679,10 @@ func (s *Server) tooLarge(set *settings, w http.ResponseWriter, target vfs.Targe
 		set.cfg.MaxUploadSize), http.StatusRequestEntityTooLarge)
 }
 
-// store writes a body to its final name.
-func (s *Server) store(osPath string, body io.Reader) (int64, error) {
-	file, err := os.OpenFile(osPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+// store writes a body to its final name. Without replace a name that is taken
+// is an error rather than a file truncated; with it the file is written over.
+func (s *Server) store(osPath string, body io.Reader, replace bool) (int64, error) {
+	file, err := os.OpenFile(osPath, openFlags(replace), 0o644)
 	if err != nil {
 		return 0, err
 	}
@@ -670,6 +691,15 @@ func (s *Server) store(osPath string, body io.Reader) (int64, error) {
 		err = closeErr
 	}
 	return written, err
+}
+
+// openFlags is how an upload opens its target: creating it, and failing if
+// the name is taken, or replacing what is there.
+func openFlags(replace bool) int {
+	if replace {
+		return os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	return os.O_WRONLY | os.O_CREATE | os.O_EXCL
 }
 
 // firstFilePart takes whatever file part the request carries, whatever the
@@ -849,7 +879,7 @@ func (s *Server) destinationOf(set *settings, w http.ResponseWriter, r *http.Req
 	}
 	// where the name lands is checked as well as where it came from, so a
 	// rename cannot carry a file out of the scope of the account doing it
-	if !s.permits(set, user, methodMove, destination.Virtual) {
+	if !s.permits(set, user, methodMove, destination.Virtual, actRename) {
 		s.log.Debug("http rename destination not allowed for the account",
 			"user", nameOf(user), "path", destination.Virtual)
 		http.Error(w, "Forbidden", http.StatusForbidden)

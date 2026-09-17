@@ -48,30 +48,30 @@ var services = []entry{
 		name:    "ftp",
 		enabled: func(e env) bool { return e.cfg.FTP.Enabled || e.cfg.FTPS.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return ftp.New(e.cfg.FTP, e.cfg.FTPS, log)
+			return ftp.New(e.cfg.FTP, e.cfg.FTPS, e.cfg.FTPUsers(), log)
 		},
 		reload: func(s service.Server, e env) error {
-			return s.(*ftp.Server).Reload(e.cfg.FTP, e.cfg.FTPS)
+			return s.(*ftp.Server).Reload(e.cfg.FTP, e.cfg.FTPS, e.cfg.FTPUsers())
 		},
 	},
 	{
 		name:    "sftp",
 		enabled: func(e env) bool { return e.cfg.SFTP.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return sftp.New(e.cfg.SFTP, log)
+			return sftp.New(e.cfg.SFTP, e.cfg.SFTPUsers(), log)
 		},
 		reload: func(s service.Server, e env) error {
-			return s.(*sftp.Server).Reload(e.cfg.SFTP)
+			return s.(*sftp.Server).Reload(e.cfg.SFTP, e.cfg.SFTPUsers())
 		},
 	},
 	{
 		name:    "http",
 		enabled: func(e env) bool { return e.cfg.HTTP.Enabled || e.cfg.HTTPS.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return httpd.New(e.cfg.HTTP, e.cfg.HTTPS, log)
+			return httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers(), log)
 		},
 		reload: func(s service.Server, e env) error {
-			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS)
+			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers())
 		},
 	},
 	{

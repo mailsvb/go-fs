@@ -17,10 +17,10 @@ import (
 // The form hands out a token, and the token stands in for the credentials on
 // every request after it.
 func TestTheLoginFormMintsASessionToken(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		user := cookieUser("john", "doe")
 		user.CookiePath = "/private/"
-		cfg.Users = []config.HTTPUser{user}
+		cfg.Users = []config.User{user}
 	})
 	server.write(t, "private/secret.txt", "secret")
 
@@ -48,8 +48,8 @@ func TestTheLoginFormMintsASessionToken(t *testing.T) {
 // A browser is never shown its own password box: it is sent to a page of this
 // server's own, and no answer in the exchange carries WWW-Authenticate.
 func TestTheLoginPageReplacesTheBrowserPasswordBox(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 
@@ -84,8 +84,8 @@ func TestTheLoginPageReplacesTheBrowserPasswordBox(t *testing.T) {
 
 // A program is challenged exactly as it always was.
 func TestANonBrowserStillGetsTheDigestChallenge(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 
@@ -102,8 +102,8 @@ func TestANonBrowserStillGetsTheDigestChallenge(t *testing.T) {
 // Downloading with Basic keeps working, and is not handed a session it never
 // asked for.
 func TestDownloadsStillWorkWithBasicAuthentication(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 
@@ -120,8 +120,8 @@ func TestDownloadsStillWorkWithBasicAuthentication(t *testing.T) {
 }
 
 func TestBasicAuthenticationNeverMintsAToken(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 
@@ -139,8 +139,8 @@ func TestBasicAuthenticationNeverMintsAToken(t *testing.T) {
 }
 
 func TestLogoutClearsTheSessionToken(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 	session := login(t, server, "/private/", "john", "doe")
@@ -169,8 +169,8 @@ func TestLogoutClearsTheSessionToken(t *testing.T) {
 // Logging out cannot be a GET: browsers prefetch links, and a prefetched
 // logout signs people out for reading a page.
 func TestLogoutIsNotAGet(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	res := browserGet(t, server, "/?go-fs=logout")
 	if res.StatusCode != http.StatusMethodNotAllowed {
@@ -181,8 +181,8 @@ func TestLogoutIsNotAGet(t *testing.T) {
 // The token names the account and nothing else: the rights are looked up from
 // the live configuration, so there is nothing in it that could go stale.
 func TestTheTokenCarriesTheNameAndNotTheRights(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	session := login(t, server, "/private/", "john", "doe")
 
@@ -226,11 +226,11 @@ func TestTheTokenCarriesTheNameAndNotTheRights(t *testing.T) {
 // A token carries the rights of its account as they are right now, so a right
 // taken away by a reload reaches a browser that already holds one.
 func TestASessionTokenKeepsTheAccountsLimits(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		cfg.PathsRequireAuth = []string{"^/private/.*", "^/other/.*"}
 		user := cookieUser("john", "doe")
 		user.Paths = []string{"^/private/.*"}
-		cfg.Users = []config.HTTPUser{user}
+		cfg.Users = []config.User{user}
 	})
 	server.write(t, "private/secret.txt", "secret")
 	server.write(t, "other/secret.txt", "other")
@@ -243,17 +243,16 @@ func TestASessionTokenKeepsTheAccountsLimits(t *testing.T) {
 }
 
 func TestASessionTokenFollowsTheAccount(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 	session := login(t, server, "/private/secret.txt", "john", "doe")
 
-	reload := func(users ...config.HTTPUser) {
+	reload := func(users ...config.User) {
 		t.Helper()
 		next := server.settings().cfg
-		next.Users = users
-		if err := server.Reload(next, server.settings().https); err != nil {
+		if err := server.Reload(next, server.settings().https, users); err != nil {
 			t.Fatalf("Reload: %v", err)
 		}
 	}
@@ -285,15 +284,14 @@ func TestASessionTokenFollowsTheAccount(t *testing.T) {
 // Changing a password signs out the browsers that were logged in under the old
 // one, which is the only handle there is on a token already handed out.
 func TestASessionTokenDoesNotSurviveAPasswordChange(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 	session := login(t, server, "/private/secret.txt", "john", "doe")
 
 	next := server.settings().cfg
-	next.Users = []config.HTTPUser{cookieUser("john", "something else")}
-	if err := server.Reload(next, server.settings().https); err != nil {
+	if err := server.Reload(next, server.settings().https, []config.User{cookieUser("john", "something else")}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 
@@ -308,15 +306,15 @@ func TestASessionTokenDoesNotSurviveAPasswordChange(t *testing.T) {
 
 // Taking browser login away from an account takes its tokens with it.
 func TestASessionTokenIsRefusedOnceTheAccountMayNotLogIn(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe"), cookieUser("max", "m")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe"), cookieUser("max", "m")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 	session := login(t, server, "/private/secret.txt", "john", "doe")
 
 	next := server.settings().cfg
-	next.Users = []config.HTTPUser{fullUser("john", "doe"), cookieUser("max", "m")}
-	if err := server.Reload(next, server.settings().https); err != nil {
+	users := []config.User{fullUser("john", "doe"), cookieUser("max", "m")}
+	if err := server.Reload(next, server.settings().https, users); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	res := withSession(t, server, http.MethodGet, "/private/secret.txt", session)
@@ -328,8 +326,8 @@ func TestASessionTokenIsRefusedOnceTheAccountMayNotLogIn(t *testing.T) {
 // An account that may not hold a session cannot get one out of the form
 // either: it is reachable with Basic or Digest and nothing else.
 func TestAnAccountWithoutCookieCannotUseTheForm(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe"), fullUser("max", "m")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe"), fullUser("max", "m")}
 	})
 	res := postLogin(t, server, "/private/", "max", "m")
 	if res.StatusCode != http.StatusOK {
@@ -341,8 +339,8 @@ func TestAnAccountWithoutCookieCannotUseTheForm(t *testing.T) {
 }
 
 func TestALoginWithTheWrongPasswordIsRefused(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	res := postLogin(t, server, "/private/", "john", "not it")
 	// the form comes back rather than a 401, which would have to carry the
@@ -385,8 +383,8 @@ func TestNothingIsOfferedWhenNoAccountMayLogIn(t *testing.T) {
 // A signed token is the only thing accepted. These are the ways of writing one
 // that has to fail.
 func TestForgedSessionTokensAreRefused(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 	user := server.settings().accounts[0]
@@ -461,8 +459,8 @@ func TestForgedSessionTokensAreRefused(t *testing.T) {
 // A browser whose token has stopped working is signed out rather than
 // challenged: it lands on the login page, with the dead cookie cleared.
 func TestABrowserWithADeadTokenIsSentToTheLoginPage(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 
@@ -489,8 +487,8 @@ func TestABrowserWithADeadTokenIsSentToTheLoginPage(t *testing.T) {
 }
 
 func TestAnExpiredTokenIsRefusedByRead(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	user := server.settings().accounts[0]
 	token, _, err := server.tokens.mint(user, -time.Minute)
@@ -509,9 +507,9 @@ func TestTwoServersWithTheSameSecretShareALogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateSessionSecret: %v", err)
 	}
-	tune := func(cfg *config.HTTP) {
+	tune := func(cfg *httpConfig) {
 		cfg.SessionTokenSecret = secret
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	}
 	first := newServer(t, tune)
 	second := newServer(t, tune)
@@ -525,20 +523,20 @@ func TestTwoServersWithTheSameSecretShareALogin(t *testing.T) {
 }
 
 func TestAGeneratedSigningKeyIsWarnedAbout(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	if server.logs.findLike("no http.httpSessionTokenSecret configured") == nil {
 		t.Error("a generated signing key was not warned about")
 	}
 
-	configured := newServer(t, func(cfg *config.HTTP) {
+	configured := newServer(t, func(cfg *httpConfig) {
 		secret, err := config.GenerateSessionSecret()
 		if err != nil {
 			t.Fatalf("GenerateSessionSecret: %v", err)
 		}
 		cfg.SessionTokenSecret = secret
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	if configured.logs.findLike("no http.httpSessionTokenSecret configured") != nil {
 		t.Error("a configured signing key was warned about")
@@ -548,8 +546,8 @@ func TestAGeneratedSigningKeyIsWarnedAbout(t *testing.T) {
 // The login and logout forms are the only ones a cross site page could post
 // to, so they are guarded like every other thing that changes something.
 func TestLoginFromAnotherSiteIsRefused(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 
 	for _, item := range []struct {
@@ -580,8 +578,8 @@ func TestLoginFromAnotherSiteIsRefused(t *testing.T) {
 // A browser says Sec-Fetch-Site on every request and a program says none, so
 // this refuses a mutation from another site even where there is no Origin.
 func TestAMutationFromAnotherSiteIsRefusedWithoutAnOrigin(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	session := login(t, server, "/", "john", "doe")
 
@@ -597,9 +595,9 @@ func TestAMutationFromAnotherSiteIsRefusedWithoutAnOrigin(t *testing.T) {
 // The marker is only a marker where it names an endpoint: a file whose name
 // carries a go-fs query is still that file.
 func TestAnUnknownMarkerIsNotAnEndpoint(t *testing.T) {
-	server := newServer(t, func(cfg *config.HTTP) {
+	server := newServer(t, func(cfg *httpConfig) {
 		cfg.PathsRequireAuth = nil
-		cfg.Users = []config.HTTPUser{cookieUser("john", "doe")}
+		cfg.Users = []config.User{cookieUser("john", "doe")}
 	})
 	server.write(t, "notes.txt", "hello")
 

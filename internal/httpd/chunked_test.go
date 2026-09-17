@@ -15,10 +15,10 @@ import (
 
 // chunkedServer is newServer with a staging folder of its own, isolated from
 // the OS temp directory every other test would otherwise share.
-func chunkedServer(t *testing.T, tune func(*config.HTTP)) *testServer {
+func chunkedServer(t *testing.T, tune func(*httpConfig)) *testServer {
 	t.Helper()
 	staging := t.TempDir()
-	return newServer(t, func(cfg *config.HTTP) {
+	return newServer(t, func(cfg *httpConfig) {
 		cfg.UploadStagingFolder = staging
 		if tune != nil {
 			tune(cfg)
@@ -111,7 +111,7 @@ func TestChunkedUploadOutOfOrderChunkIsRejected(t *testing.T) {
 // A chunk that fails partway through is undone back to its own start, not the
 // whole upload, so retrying the exact same Content-Range always works.
 func TestChunkedUploadRetriesAFailedChunk(t *testing.T) {
-	server := chunkedServer(t, func(cfg *config.HTTP) { cfg.ReadTimeout = 1 })
+	server := chunkedServer(t, func(cfg *httpConfig) { cfg.ReadTimeout = 1 })
 
 	req, _ := http.NewRequest(http.MethodPut, server.url("/private/big.iso"),
 		&trickleReader{chunks: [][]byte{[]byte("ab"), []byte("cd")}, delay: 2 * time.Second})
@@ -140,7 +140,7 @@ func TestChunkedUploadRetriesAFailedChunk(t *testing.T) {
 // A slow-but-steady chunk survives being slower overall than readTimeout, the
 // same guarantee the whole-file path already has, just per chunk here.
 func TestChunkedUploadSurvivesBeingSlowerThanReadTimeout(t *testing.T) {
-	server := chunkedServer(t, func(cfg *config.HTTP) { cfg.ReadTimeout = 1 })
+	server := chunkedServer(t, func(cfg *httpConfig) { cfg.ReadTimeout = 1 })
 
 	req, _ := http.NewRequest(http.MethodPut, server.url("/private/slow.iso"),
 		&trickleReader{chunks: [][]byte{[]byte("a"), []byte("b"), []byte("c"), []byte("d")},
@@ -207,7 +207,7 @@ func TestChunkedUploadFinalizeRaceOnlyOneWins(t *testing.T) {
 
 // maxChunkSize bounds a single chunk, independently of maxUploadSize.
 func TestChunkedUploadMaxChunkSizeIsEnforced(t *testing.T) {
-	server := chunkedServer(t, func(cfg *config.HTTP) { cfg.MaxChunkSize = 4 })
+	server := chunkedServer(t, func(cfg *httpConfig) { cfg.MaxChunkSize = 4 })
 
 	res := putChunk(t, server, "/private/limited.iso", 0, 9, 10, "0123456789")
 	if res.StatusCode != http.StatusRequestEntityTooLarge {
@@ -222,7 +222,7 @@ func TestChunkedUploadMaxChunkSizeIsEnforced(t *testing.T) {
 // A declared total over maxUploadSize is refused on the first chunk, before
 // anything is staged — a client cannot chunk its way past the file-size limit.
 func TestChunkedUploadRefusesATotalOverMaxUploadSize(t *testing.T) {
-	server := chunkedServer(t, func(cfg *config.HTTP) {
+	server := chunkedServer(t, func(cfg *httpConfig) {
 		cfg.MaxUploadSize = 5
 		cfg.MaxChunkSize = 100
 	})
@@ -283,7 +283,7 @@ func TestCopyFileCopiesContent(t *testing.T) {
 	if err := os.WriteFile(src, []byte("hello"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyFile(src, dst); err != nil {
+	if err := copyFile(src, dst, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(dst)
@@ -305,7 +305,7 @@ func TestCopyFileRefusesToOverwrite(t *testing.T) {
 	if err := os.WriteFile(dst, []byte("original"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyFile(src, dst); err == nil {
+	if err := copyFile(src, dst, false); err == nil {
 		t.Fatal("copying onto an existing file has to fail")
 	}
 	got, err := os.ReadFile(dst)
@@ -317,11 +317,70 @@ func TestCopyFileRefusesToOverwrite(t *testing.T) {
 	}
 }
 
+func TestCopyFileReplacesWhenAsked(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	dst := filepath.Join(dir, "dst")
+	if err := os.WriteFile(src, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("the original is longer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(src, dst, true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new" {
+		t.Errorf("dst holds %q, want it replaced whole", got)
+	}
+}
+
+// A chunked upload onto a name that is taken follows the same rule as a whole
+// one: the account needs allowUserFileOverwrite, and then the file is replaced
+// when the last chunk lands.
+func TestChunkedUploadReplacesOnlyWithTheRight(t *testing.T) {
+	t.Run("with the right", func(t *testing.T) {
+		server := chunkedServer(t, nil)
+		server.write(t, "exists.txt", "the original is longer")
+		if res := putChunk(t, server, "/exists.txt", 0, 3, 8, "abcd"); res.StatusCode != http.StatusOK {
+			t.Fatalf("first chunk status = %d, want 200", res.StatusCode)
+		}
+		if got := server.read(t, "exists.txt"); got != "the original is longer" {
+			t.Errorf("the file was changed before the upload was complete: %q", got)
+		}
+		if res := putChunk(t, server, "/exists.txt", 4, 7, 8, "efgh"); res.StatusCode != http.StatusCreated {
+			t.Fatalf("last chunk status = %d, want 201", res.StatusCode)
+		}
+		if got := server.read(t, "exists.txt"); got != "abcdefgh" {
+			t.Errorf("stored %q", got)
+		}
+	})
+
+	t.Run("without the right", func(t *testing.T) {
+		server := chunkedServer(t, func(cfg *httpConfig) {
+			user := fullUser("john", "doe")
+			user.AllowUserFileOverwrite = new(false)
+			cfg.Users = []config.User{user}
+		})
+		server.write(t, "exists.txt", "original")
+		if res := putChunk(t, server, "/exists.txt", 0, 3, 8, "abcd"); res.StatusCode != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", res.StatusCode)
+		}
+		if got := server.read(t, "exists.txt"); got != "original" {
+			t.Errorf("the file was changed to %q", got)
+		}
+	})
+}
+
 // The staging sweep removes a chunked upload nobody has touched in a long
 // time, and leaves an upload still in progress alone.
 func TestChunkedUploadCleanupSweepsAnAbandonedStagingFile(t *testing.T) {
 	staging := t.TempDir()
-	server := newServer(t, func(cfg *config.HTTP) { cfg.UploadStagingFolder = staging })
+	server := newServer(t, func(cfg *httpConfig) { cfg.UploadStagingFolder = staging })
 
 	old := filepath.Join(staging, "abandoned.part")
 	if err := os.WriteFile(old, []byte("orphan"), 0o600); err != nil {

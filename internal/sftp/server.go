@@ -62,14 +62,14 @@ func (s *Server) settings() *settings {
 
 // Reload swaps the accounts and the limits. The port, the folder and the host
 // key cannot change under a running listener, so those report ErrNeedsRestart.
-func (s *Server) Reload(cfg config.SFTP) error {
+func (s *Server) Reload(cfg config.SFTP, accounts []config.User) error {
 	current := s.settings().cfg
 	if cfg.Enabled != current.Enabled || cfg.Port != current.Port ||
 		cfg.Address != current.Address ||
 		cfg.Basefolder != current.Basefolder || cfg.HostKey != current.HostKey {
 		return service.ErrNeedsRestart
 	}
-	users, err := buildAccounts(cfg, s.root)
+	users, err := buildAccounts(accounts, s.root)
 	if err != nil {
 		// a broken account leaves the running one in place
 		return err
@@ -78,13 +78,15 @@ func (s *Server) Reload(cfg config.SFTP) error {
 	return nil
 }
 
-func New(cfg config.SFTP, logger *slog.Logger) (*Server, error) {
+// New prepares a server. accounts are the [[users]] entries that set sftp,
+// which the supervisor hands over already filtered.
+func New(cfg config.SFTP, accounts []config.User, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
 		return nil, fmt.Errorf("sftp.basefolder: %w", err)
 	}
 
-	users, err := buildAccounts(cfg, root)
+	users, err := buildAccounts(accounts, root)
 	if err != nil {
 		return nil, err
 	}

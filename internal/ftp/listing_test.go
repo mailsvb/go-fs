@@ -278,7 +278,7 @@ func TestFolderCommands(t *testing.T) {
 
 func TestFolderCommandsWithoutPermission(t *testing.T) {
 	no := false
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		user := fullUser("john")
 		user.AllowUserFolderCreate = &no
 		user.AllowUserFolderDelete = &no

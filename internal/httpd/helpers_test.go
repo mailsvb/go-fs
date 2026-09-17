@@ -97,33 +97,47 @@ type testServer struct {
 }
 
 // fullUser is an account that may reach everything and do everything.
-func fullUser(name, password string) config.HTTPUser {
-	return config.HTTPUser{
-		Username:            name,
-		Password:            password,
-		Paths:               []string{"^/.*"},
-		AllowUserFileUpload: true,
-		AllowUserFileDelete: true,
+// Permissions deny by default, so a test about one restriction starts here and
+// takes that single right away.
+func fullUser(name, password string) config.User {
+	return config.User{
+		Username:               name,
+		Password:               password,
+		HTTP:                   true,
+		Paths:                  []string{"^/.*"},
+		AllowUserFileCreate:    new(true),
+		AllowUserFileRetrieve:  new(true),
+		AllowUserFileOverwrite: new(true),
+		AllowUserFileDelete:    new(true),
+		AllowUserFolderDelete:  new(true),
+		AllowUserFolderCreate:  new(true),
 	}
+}
+
+// httpConfig is the [http] section together with the accounts the file keeps
+// under [[users]], so that one closure tunes both.
+type httpConfig struct {
+	config.HTTP
+	Users []config.User
 }
 
 // newServer starts a server on an ephemeral port. By default nothing is
 // public: every method needs the account "john"/"doe".
-func newServer(t *testing.T, tune func(*config.HTTP)) *testServer {
+func newServer(t *testing.T, tune func(*httpConfig)) *testServer {
 	t.Helper()
 	return newServerWith(t, tune, nil)
 }
 
-func newServerWith(t *testing.T, tune func(*config.HTTP), tuneTLS func(*config.HTTPS)) *testServer {
+func newServerWith(t *testing.T, tune func(*httpConfig), tuneTLS func(*config.HTTPS)) *testServer {
 	t.Helper()
 	base := t.TempDir()
-	cfg := config.Default().HTTP
+	cfg := httpConfig{HTTP: config.Default().HTTP}
 	cfg.Enabled = true
 	cfg.Port = 0
 	cfg.Basefolder = base
 	cfg.LoginFailureDelay = 0
 	cfg.PathsRequireAuth = []string{"^/private/.*"}
-	cfg.Users = []config.HTTPUser{fullUser("john", "doe")}
+	cfg.Users = []config.User{fullUser("john", "doe")}
 	if tune != nil {
 		tune(&cfg)
 	}
@@ -137,7 +151,7 @@ func newServerWith(t *testing.T, tune func(*config.HTTP), tuneTLS func(*config.H
 	}
 
 	logs := &logStore{}
-	server, err := New(cfg, https, slog.New(&recorder{store: logs}))
+	server, err := New(cfg.HTTP, https, cfg.Users, slog.New(&recorder{store: logs}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -164,6 +178,14 @@ func (s *testServer) write(t *testing.T, name, content string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// mkdir puts an empty folder into the served folder.
+func (s *testServer) mkdir(t *testing.T, name string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(s.base, filepath.FromSlash(name)), 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (s *testServer) read(t *testing.T, name string) string {
@@ -300,17 +322,19 @@ var _ = url.PathEscape
 
 // publicServer makes everything public, which is what the listing tests need:
 // they are about the page rather than about who may see it.
-func publicServer(cfg *config.HTTP) {
+func publicServer(cfg *httpConfig) {
 	cfg.MethodsRequireAuth = nil
 	cfg.PathsRequireAuth = nil
 }
 
 // readOnlyUser may reach everything and change nothing.
-func readOnlyUser(name, password string) config.HTTPUser {
-	return config.HTTPUser{
-		Username: name,
-		Password: password,
-		Paths:    []string{"^/.*"},
+func readOnlyUser(name, password string) config.User {
+	return config.User{
+		Username:              name,
+		Password:              password,
+		HTTP:                  true,
+		Paths:                 []string{"^/.*"},
+		AllowUserFileRetrieve: new(true),
 	}
 }
 
@@ -370,7 +394,7 @@ func bodyOf(t *testing.T, res *http.Response) string {
 }
 
 // cookieUser is an account that may use the login form.
-func cookieUser(name, password string) config.HTTPUser {
+func cookieUser(name, password string) config.User {
 	user := fullUser(name, password)
 	user.Cookie = true
 	return user

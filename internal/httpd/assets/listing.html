@@ -78,7 +78,7 @@
       {{if $.Rights.Any}}
       <td class="c-acts needs-js">
         {{if $.Rights.Rename}}<button type="button" data-do="rename" title="Rename" aria-label="Rename {{.Name}}"><svg class="ic"><use href="#i-pencil"/></svg></button>{{end}}
-        {{if $.Rights.Delete}}<button type="button" class="remove" data-do="delete" title="Delete" aria-label="Delete {{.Name}}"><svg class="ic"><use href="#i-trash"/></svg></button>{{end}}
+        {{if (or (and .IsDir $.Rights.DeleteFolder) (and (not .IsDir) $.Rights.DeleteFile))}}<button type="button" class="remove" data-do="delete" title="Delete" aria-label="Delete {{.Name}}"><svg class="ic"><use href="#i-trash"/></svg></button>{{end}}
       </td>
       {{end}}
     </tr>

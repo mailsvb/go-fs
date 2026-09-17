@@ -92,7 +92,7 @@ var (
 // TemplateDocs maps a key of the configuration file to the comment above it in
 // the shipped template, as a single line. Keys are the path the file uses, so
 // "ftp.maxConnections", and a repeated table contributes its fields once,
-// "ftp.users.username".
+// "users.username".
 //
 // The template is the fuller of the two descriptions and the one written for
 // whoever edits the file, so the admin interface prefers it and falls back to

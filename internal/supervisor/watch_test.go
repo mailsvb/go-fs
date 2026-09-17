@@ -65,17 +65,21 @@ func startFromFile(t *testing.T, sup *Supervisor, ctx context.Context, path stri
 }
 
 const johnOnly = `
-[[http.users]]
+[[users]]
 username = "john"
 password = "doe"
+http = true
 paths = ["^/.*"]
+allowUserFileRetrieve = true
 `
 
 const johnAndJane = johnOnly + `
-[[http.users]]
+[[users]]
 username = "jane"
 password = "secret"
+http = true
 paths = ["^/.*"]
+allowUserFileRetrieve = true
 `
 
 // A change to the file is picked up and applied.

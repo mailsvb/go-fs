@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"go-fs/internal/config"
 	"go-fs/internal/service"
 )
 
@@ -65,7 +64,7 @@ func sourcePortOf(t *testing.T, data net.Conn) int {
 // ephemeral range.
 func TestActiveSourcePortIsUsed(t *testing.T) {
 	source := reserveDataPorts(1)
-	server := newServer(t, func(cfg *config.FTP) { cfg.ActiveSourcePort = source })
+	server := newServer(t, func(cfg *ftpConfig) { cfg.ActiveSourcePort = source })
 	server.write(t, "hello.txt", "active data")
 
 	for _, mode := range []string{"PORT", "EPRT"} {
@@ -102,7 +101,7 @@ func TestActiveSourcePortIsUsed(t *testing.T) {
 // cannot bind the port, which the first one leaves in TIME_WAIT.
 func TestActiveSourcePortIsReusedBackToBack(t *testing.T) {
 	source := reserveDataPorts(1)
-	server := newServer(t, func(cfg *config.FTP) { cfg.ActiveSourcePort = source })
+	server := newServer(t, func(cfg *ftpConfig) { cfg.ActiveSourcePort = source })
 	server.write(t, "hello.txt", "again and again")
 
 	c := connect(t, server)
@@ -130,7 +129,7 @@ func TestActiveSourcePortIsReusedBackToBack(t *testing.T) {
 // local port at the same time, and differ only in where they connect to.
 func TestActiveSourcePortServesTwoAtOnce(t *testing.T) {
 	source := reserveDataPorts(1)
-	server := newServer(t, func(cfg *config.FTP) { cfg.ActiveSourcePort = source })
+	server := newServer(t, func(cfg *ftpConfig) { cfg.ActiveSourcePort = source })
 	server.write(t, "hello.txt", "shared port")
 
 	first, firstData := activeListener(t)
@@ -188,7 +187,7 @@ func TestActiveSourcePortZeroTakesAnEphemeralPort(t *testing.T) {
 // A passive transfer is accepted inside the configured range and nowhere else.
 func TestPassiveRangeIsHonoured(t *testing.T) {
 	first := reserveDataPorts(3)
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		cfg.PassiveMinPort = first
 		cfg.PassiveMaxPort = first + 2
 	})
@@ -236,7 +235,7 @@ func passivePort(c *client) int {
 // second channel has nowhere to go rather than straying outside the range.
 func TestPassiveRangeOfOnePortIsExact(t *testing.T) {
 	only := reserveDataPorts(1)
-	server := newServer(t, func(cfg *config.FTP) {
+	server := newServer(t, func(cfg *ftpConfig) {
 		cfg.PassiveMinPort = only
 		cfg.PassiveMaxPort = only
 		cfg.MaxConnections = 2
@@ -272,7 +271,7 @@ func TestNarrowPassiveRangeIsWarnedAboutOnReload(t *testing.T) {
 	next := server.settings().cfg
 	next.PassiveMinPort = reserveDataPorts(1)
 	next.PassiveMaxPort = next.PassiveMinPort
-	if err := server.Reload(next, server.settings().ftps); err != nil {
+	if err := server.Reload(next, server.settings().ftps, server.settings().users); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if len(server.logs.matching("holds fewer ports than")) == 0 {
@@ -288,10 +287,10 @@ func TestDataPortsReloadWithoutARestart(t *testing.T) {
 	next.PassiveMinPort = reserveDataPorts(2)
 	next.PassiveMaxPort = next.PassiveMinPort + 1
 	next.ActiveSourcePort = reserveDataPorts(1)
-	if err := server.Reload(next, server.settings().ftps); err != nil {
+	if err := server.Reload(next, server.settings().ftps, server.settings().users); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
-	if err := server.Reload(next, server.settings().ftps); err == service.ErrNeedsRestart {
+	if err := server.Reload(next, server.settings().ftps, server.settings().users); err == service.ErrNeedsRestart {
 		t.Fatal("the data ports should not need a restart")
 	}
 

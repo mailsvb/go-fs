@@ -93,6 +93,7 @@ func fullUser(name, password string) config.User {
 	return config.User{
 		Username:               name,
 		Password:               password,
+		SFTP:                   true,
 		AllowUserFileCreate:    &yes,
 		AllowUserFileRetrieve:  &yes,
 		AllowUserFileOverwrite: &yes,
@@ -102,12 +103,19 @@ func fullUser(name, password string) config.User {
 	}
 }
 
+// sftpConfig is the [sftp] section together with the accounts the file keeps
+// under [[users]], so that one closure tunes both.
+type sftpConfig struct {
+	config.SFTP
+	Users []config.User
+}
+
 // newServer starts a server on an ephemeral port with a single account
 // "john"/"doe" that may do everything.
-func newServer(t *testing.T, tune func(*config.SFTP)) *testServer {
+func newServer(t *testing.T, tune func(*sftpConfig)) *testServer {
 	t.Helper()
 	base := t.TempDir()
-	cfg := config.Default().SFTP
+	cfg := sftpConfig{SFTP: config.Default().SFTP}
 	cfg.Enabled = true
 	cfg.Port = 0
 	cfg.Basefolder = base
@@ -121,7 +129,7 @@ func newServer(t *testing.T, tune func(*config.SFTP)) *testServer {
 	}
 
 	logs := &logStore{}
-	server, err := New(cfg, slog.New(&recorder{store: logs}))
+	server, err := New(cfg.SFTP, cfg.Users, slog.New(&recorder{store: logs}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
