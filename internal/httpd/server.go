@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"strconv"
 	"sync"
@@ -58,6 +59,9 @@ type Server struct {
 	// nonceKey signs the digest nonces this server hands out, so that a nonce
 	// carries its own age and needs nothing to be remembered about it.
 	nonceKey []byte
+	// logins counts the wrong passwords each client address has sent, and
+	// locks the ones that sent too many.
+	logins *loginTracker
 	// admin is the interface that edits the configuration file, served under
 	// the go-fs marker to a session of an account that sets isAdmin. It is nil
 	// when there is no file to edit, which is what a test builds.
@@ -91,6 +95,9 @@ type settings struct {
 	https          config.HTTPS
 	accounts       []*account
 	protectedPaths []*regexp.Regexp
+	// proxies are http.trustedProxies compiled, the addresses whose
+	// X-Forwarded-For and X-Forwarded-Proto are believed.
+	proxies []netip.Prefix
 }
 
 func (s *Server) settings() *settings {
@@ -113,7 +120,16 @@ func newSettings(cfg config.HTTP, https config.HTTPS, users []config.User) (*set
 		}
 		protected = append(protected, compiled)
 	}
-	return &settings{cfg: cfg, https: https, accounts: accounts, protectedPaths: protected}, nil
+	proxies := make([]netip.Prefix, 0, len(cfg.TrustedProxies))
+	for i, entry := range cfg.TrustedProxies {
+		prefix, err := config.ParseProxy(entry)
+		if err != nil {
+			return nil, fmt.Errorf("http.trustedProxies[%d]: %w", i, err)
+		}
+		proxies = append(proxies, prefix)
+	}
+	return &settings{cfg: cfg, https: https, accounts: accounts,
+		protectedPaths: protected, proxies: proxies}, nil
 }
 
 // Reload swaps the accounts, the paths and the limits that are read per
@@ -140,7 +156,9 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User
 	}
 	// the token lifetime needs nothing done to it: it is read from the
 	// snapshot when a token is minted, so a reload changes what is issued from
-	// here on and leaves a live token with the expiry it was signed with
+	// here on and leaves a live token with the expiry it was signed with. The
+	// login lock is the same: its two settings are read at every failure, and
+	// an address that is locked stays locked for as long as it was told
 	s.snapshot.Store(next)
 	return nil
 }
@@ -173,6 +191,7 @@ func New(cfg config.HTTP, https config.HTTPS, users []config.User, configPath st
 		log:      logger,
 		tokens:   tokens,
 		nonceKey: nonceKey,
+		logins:   newLoginTracker(),
 		done:     make(chan struct{}),
 	}
 	if configPath != "" {
@@ -427,22 +446,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet, http.MethodHead:
 		s.handleGet(set, w, r, target, cred)
 	case http.MethodPut:
-		if !s.sameSite(w, r) {
+		if !s.sameSite(set, w, r) {
 			return
 		}
 		s.handlePut(set, w, r, target, user, act == actOverwrite)
 	case http.MethodDelete:
-		if !s.sameSite(w, r) {
+		if !s.sameSite(set, w, r) {
 			return
 		}
 		s.handleDelete(set, w, r, target, user)
 	case methodMkcol:
-		if !s.sameSite(w, r) {
+		if !s.sameSite(set, w, r) {
 			return
 		}
-		s.handleMkcol(w, r, target, user)
+		s.handleMkcol(set, w, r, target, user)
 	case methodMove:
-		if !s.sameSite(w, r) {
+		if !s.sameSite(set, w, r) {
 			return
 		}
 		s.handleMove(set, w, r, target, user)
@@ -559,7 +578,9 @@ func nameOf(user *account) string {
 	return user.name
 }
 
-// addressOf is the client address without its port.
+// addressOf is the address the connection came from, without its port. It is
+// what the connection records use; everything that says who a request is from
+// uses clientAddress, which looks through a trusted proxy.
 func addressOf(r *http.Request) string {
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host

@@ -17,6 +17,7 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/base64"
@@ -349,7 +350,23 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
+// clientKey is where the file server puts the address it resolved for a
+// request, which is the client behind a trusted proxy rather than the proxy.
+type clientKey struct{}
+
+// WithClient records who a request is from, for the log lines this package
+// writes. The file server calls it before handing a request over, since it is
+// the one that knows which proxies to look through.
+func WithClient(ctx context.Context, address string) context.Context {
+	return context.WithValue(ctx, clientKey{}, address)
+}
+
+// addressOf is who a request is from: what the file server recorded, or the
+// connection's own address when it recorded nothing.
 func addressOf(r *http.Request) string {
+	if address, ok := r.Context().Value(clientKey{}).(string); ok && address != "" {
+		return address
+	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
 	}

@@ -110,11 +110,11 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		}
 		s.log.Info("http download", "user", nameOf(user), "file", target.Virtual,
 			"bytes", recorder.bytes, "size", info.Size(), "status", recorder.status,
-			"address", addressOf(r), "took", time.Since(started).Round(time.Millisecond))
+			"address", clientAddress(set, r), "took", time.Since(started).Round(time.Millisecond))
 		return
 	}
 	s.log.Info("http download", "user", nameOf(user), "file", target.Virtual,
-		"bytes", info.Size(), "address", addressOf(r))
+		"bytes", info.Size(), "address", clientAddress(set, r))
 }
 
 // handlePut stores an uploaded file. A body of octet-stream is the file; a
@@ -248,19 +248,19 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 			// the client went away halfway, which is its doing and no fault
 			// of the server: an info record, with what had arrived by then
 			s.log.Info("http upload failed", "user", nameOf(user), "file", target.Virtual,
-				"bytes", written, "address", addressOf(r),
+				"bytes", written, "address", clientAddress(set, r),
 				"took", time.Since(started).Round(time.Millisecond), "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
 		s.log.Error("http upload failed", "user", nameOf(user), "file", target.Virtual,
-			"bytes", written, "address", addressOf(r), "error", err)
+			"bytes", written, "address", clientAddress(set, r), "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
 
 	s.log.Info("http upload", "user", nameOf(user), "file", target.Virtual,
-		"bytes", written, "replaced", replace, "address", addressOf(r),
+		"bytes", written, "replaced", replace, "address", clientAddress(set, r),
 		"took", time.Since(started).Round(time.Millisecond))
 	w.WriteHeader(http.StatusOK)
 }
@@ -434,13 +434,13 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 			if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || isClientGone(err) {
 				s.log.Info("http chunked upload failed", "user", nameOf(user), "file", target.Virtual,
 					"start", rng.start, "end", rng.end, "total", rng.total, "bytes", written,
-					"address", addressOf(r), "took", time.Since(started).Round(time.Millisecond), "error", err)
+					"address", clientAddress(set, r), "took", time.Since(started).Round(time.Millisecond), "error", err)
 				http.Error(w, "Server Error", http.StatusInternalServerError)
 				return
 			}
 			s.log.Error("http chunked upload failed", "user", nameOf(user), "file", target.Virtual,
 				"start", rng.start, "end", rng.end, "total", rng.total, "bytes", written,
-				"address", addressOf(r), "error", err)
+				"address", clientAddress(set, r), "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -448,7 +448,7 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 
 	if rng.end+1 < rng.total {
 		s.log.Debug("http chunk stored", "user", nameOf(user), "file", target.Virtual,
-			"start", rng.start, "end", rng.end, "total", rng.total, "address", addressOf(r),
+			"start", rng.start, "end", rng.end, "total", rng.total, "address", clientAddress(set, r),
 			"took", time.Since(started).Round(time.Millisecond))
 		w.WriteHeader(http.StatusOK)
 		return
@@ -478,7 +478,7 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 	}
 
 	s.log.Info("http upload", "user", nameOf(user), "file", target.Virtual, "bytes", rng.total,
-		"chunked", true, "replaced", replace, "address", addressOf(r),
+		"chunked", true, "replaced", replace, "address", clientAddress(set, r),
 		"took", time.Since(started).Round(time.Millisecond))
 	w.WriteHeader(http.StatusCreated)
 }
@@ -763,13 +763,13 @@ func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Requ
 	}
 
 	s.log.Info("http delete", "user", nameOf(user), "path", target.Virtual,
-		"folder", info.IsDir(), "bytes", info.Size(), "address", addressOf(r))
+		"folder", info.IsDir(), "bytes", info.Size(), "address", clientAddress(set, r))
 	w.WriteHeader(http.StatusOK)
 }
 
 // handleMkcol creates a folder, which is the one thing PUT cannot do: it makes
 // the folders above a file, so there is no way to ask it for an empty one.
-func (s *Server) handleMkcol(w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
+func (s *Server) handleMkcol(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
 	if r.ContentLength != 0 {
 		// RFC 4918: a body here describes something this server does not know
 		s.log.Debug("http mkdir refused, the request has a body", "folder", target.Virtual)
@@ -800,7 +800,7 @@ func (s *Server) handleMkcol(w http.ResponseWriter, r *http.Request, target vfs.
 	}
 
 	s.log.Info("http mkdir", "user", nameOf(user), "folder", target.Virtual,
-		"address", addressOf(r))
+		"address", clientAddress(set, r))
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -840,7 +840,7 @@ func (s *Server) handleMove(set *settings, w http.ResponseWriter, r *http.Reques
 	}
 
 	s.log.Info("http rename", "user", nameOf(user), "from", target.Virtual,
-		"to", destination.Virtual, "address", addressOf(r))
+		"to", destination.Virtual, "address", clientAddress(set, r))
 	w.WriteHeader(http.StatusNoContent)
 }
 

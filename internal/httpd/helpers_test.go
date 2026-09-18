@@ -139,6 +139,9 @@ func newServerWith(t *testing.T, tune func(*httpConfig), tuneTLS func(*config.HT
 	cfg.Port = 0
 	cfg.Basefolder = base
 	cfg.LoginFailureDelay = 0
+	// every test's client is 127.0.0.1, so the login lock is off unless a
+	// test is about it
+	cfg.LoginAttempts = 0
 	cfg.PathsRequireAuth = []string{"^/private/.*"}
 	cfg.Users = []config.User{fullUser("john", "doe")}
 	if tune != nil {
@@ -462,5 +465,40 @@ func withSession(t *testing.T, server *testServer, method, path string, session 
 		t.Fatal(err)
 	}
 	req.AddCookie(session)
+	return do(t, req)
+}
+
+// fixClock pins the login tracker's clock and returns a way to move it, so a
+// test about the lock never waits. It has to be called before any request.
+func fixClock(server *testServer) func(time.Duration) {
+	var mu sync.Mutex
+	now := time.Now()
+	server.logins.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return now
+	}
+	return func(by time.Duration) {
+		mu.Lock()
+		defer mu.Unlock()
+		now = now.Add(by)
+	}
+}
+
+// forwarded sends a request with the headers a reverse proxy would add, and
+// Basic credentials when a name is given.
+func forwarded(t *testing.T, server *testServer, method, path string, headers map[string]string, name, password string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, server.url(path), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	if name != "" {
+		req.Header.Set("Authorization", "Basic "+
+			base64.StdEncoding.EncodeToString([]byte(name+":"+password)))
+	}
 	return do(t, req)
 }

@@ -279,6 +279,18 @@ httpSessionTokenLifetime = 3600
 httpSessionTokenSecret = ""
 # seconds to wait before answering a request that could not be authenticated
 loginFailureDelay = 1
+# Wrong passwords a client address may send in loginLockout seconds before it
+# is refused; 0 turns the lock off. The lock answers at once, so it also bounds
+# how many loginFailureDelay waits one address can cause.
+loginAttempts = 5
+# seconds a locked address is refused, and the window the attempts are counted
+# over
+loginLockout = 60
+# Addresses or CIDR ranges of the proxies in front of this server, e.g.
+# ["127.0.0.1", "10.0.0.0/8"]. A request from one of them is recorded under
+# the client named in X-Forwarded-For, and X-Forwarded-Proto = https marks
+# the session cookie Secure. From anywhere else both headers are ignored.
+trustedProxies = []
 
 # Methods that always need an account. MKCOL and MOVE do not have to be listed:
 # MKCOL is protected wherever PUT is and MOVE wherever PUT or DELETE is.

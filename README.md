@@ -246,7 +246,7 @@ Three things to know about it:
   on an address other than the loopback one, the admin session and every
   password on the page cross the network in the clear, and the server says so
   at startup. Keep the plain port on `127.0.0.1`, or behind a proxy that
-  terminates TLS, or off.
+  terminates TLS and is listed in `http.trustedProxies`, or off.
 * **The file it edits holds every private key.** That is what makes the upload
   below possible, and it is a reason to keep the file at `chmod 600`.
 
@@ -346,6 +346,8 @@ data connection owes nothing on the control one.
 | `ftp.idleTimeout` | `600` | an idle control connection does not hold a slot forever, though a running transfer is never idle |
 | `ftp.transferIdleTimeout` | `300` | a transfer that stalls gives its slot back, however long a moving one takes |
 | `ftp.loginFailureDelay` | `1` | a wrong password is answered after a second, which slows guessing |
+| `http.loginAttempts`, `http.loginLockout` | `5`, `60` | an address that sends five wrong passwords in a minute is refused for a minute, at once |
+| `http.trustedProxies` | `[]` | a forwarded address, and a forwarded `https`, is believed only from a proxy listed here |
 | `users[].ftp`, `users[].sftp`, `users[].http` | `false` | an account logs in only to the servers it switches on |
 | `users[].allowUser*` | `false` | an account is granted only the rights its table lists |
 | `sftp.enabled`, `http.enabled` | `false` | both are off by default, so an upgrade never opens a port on its own |
@@ -479,6 +481,9 @@ methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 pathsRequireAuth = ["^/private/.*"]
 httpSessionTokenLifetime = 3600
 httpSessionTokenSecret = ""
+loginAttempts = 5
+loginLockout = 60
+trustedProxies = []
 ```
 
 A request is **public** unless its method is in `methodsRequireAuth` or its path
@@ -514,6 +519,22 @@ for and to a nonce that is good for five minutes, so a header captured off the
 wire cannot be turned on another path or replayed later; a client that still has
 the credentials answers the stale challenge without asking anyone. `curl -u`,
 scripts and the legacy client are unaffected by everything below.
+
+**Wrong passwords are counted per client address.** The login form, Basic and
+Digest share one count: an address that sends `loginAttempts` of them inside
+`loginLockout` seconds is refused for that long, at once and without a look at
+what it sent. A program is answered `429` with `Retry-After`, and no challenge,
+since a challenge asks for the very thing the lock refuses to read; a browser
+is sent to the login page, which says so. A stale digest nonce is not a wrong
+password and is not counted, a right password clears the count, and a session
+token is never refused, so someone logged in behind the same address as a
+guesser keeps their login. `loginFailureDelay` still holds every counted
+failure for a second; the lock is what bounds how many of those one address
+can cause. `loginAttempts = 0` switches the lock off.
+
+The credential check takes the same time whichever name is sent: the name and
+the password are compared for every account, so an account that exists is
+refused no faster than one that does not.
 
 ### Logging in from a browser
 
@@ -556,6 +577,21 @@ clears the browser's own copy, but a stolen token works until it expires. The
 three things that do cut one short are that lifetime, changing the account's
 password — which changes the fingerprint, so every browser logged in under the
 old one is signed out — and setting `cookie = false`.
+
+**Behind a reverse proxy**, list it in `trustedProxies`, as an address or a
+CIDR range. A request from one of them is recorded, counted and locked under
+the client named in `X-Forwarded-For` — the rightmost entry that is not itself
+a listed proxy, since the leftmost is whatever the client wrote — and
+`X-Forwarded-Proto: https` marks the session cookie `Secure`, as the server's
+own TLS listener does. From any other address both headers are the client's
+word and are ignored, so without the setting every client behind a proxy
+shares the proxy's address and the cookie is only `Secure` on `[https]`.
+
+A browser that still remembers Basic credentials from before the login form
+existed sends them with everything. Beside a session for the same account they
+count as that session, so the page offers its logout and the admin interface
+opens; beside a session for another account, or none, the header is what it
+always was.
 
 `httpSessionTokenSecret` is the signing key, base64 of at least 32 random bytes:
 

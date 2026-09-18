@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -338,6 +339,17 @@ type HTTP struct {
 	// LoginFailureDelay is the delay in seconds before a rejected request is
 	// answered, which slows down guessing.
 	LoginFailureDelay int `toml:"loginFailureDelay"`
+	// LoginAttempts is how many wrong passwords a client address may send in
+	// LoginLockout seconds before it is refused. 0 turns the lock off.
+	LoginAttempts int `toml:"loginAttempts"`
+	// LoginLockout is how long a locked client is refused, in seconds. It is
+	// also the window the attempts are counted over.
+	LoginLockout int `toml:"loginLockout"`
+	// TrustedProxies are the addresses, or CIDR ranges, of the proxies in front
+	// of this server. A request from one of them is recorded under the client
+	// in X-Forwarded-For, and X-Forwarded-Proto says whether the session cookie
+	// is marked Secure. From anywhere else both headers are ignored.
+	TrustedProxies []string `toml:"trustedProxies"`
 
 	// MethodsRequireAuth are the methods that always need an account. MKCOL
 	// and MOVE do not have to be listed: MKCOL is protected wherever PUT is,
@@ -441,6 +453,8 @@ func Default() Config {
 			MaxChunkSize:         50 << 20, // 50 MB
 			SessionTokenLifetime: 3600,
 			LoginFailureDelay:    1,
+			LoginAttempts:        5,
+			LoginLockout:         60,
 			MethodsRequireAuth:   []string{"PUT", "DELETE", "POST", "MKCOL", "MOVE"},
 		},
 		HTTPS: HTTPS{
@@ -771,6 +785,17 @@ func (c Config) validateHTTP() error {
 			return fmt.Errorf("http.httpSessionTokenSecret: %w", err)
 		}
 	}
+	if h.LoginAttempts < 0 {
+		return errors.New("http.loginAttempts cannot be negative")
+	}
+	if h.LoginLockout < 1 {
+		return errors.New("http.loginLockout has to be at least 1")
+	}
+	for i, proxy := range h.TrustedProxies {
+		if _, err := ParseProxy(proxy); err != nil {
+			return fmt.Errorf("http.trustedProxies[%d]: %w", i, err)
+		}
+	}
 	if h.MaxUploadSize < 0 {
 		return errors.New("http.maxUploadSize cannot be negative")
 	}
@@ -800,6 +825,26 @@ func (c Config) validateHTTP() error {
 		}
 	}
 	return checkFolder("http.basefolder", h.Basefolder)
+}
+
+// ParseProxy reads one entry of http.trustedProxies: an address, or a CIDR
+// range. A single address is returned as the range that holds only it, so the
+// caller has one kind of thing to compare against.
+func ParseProxy(entry string) (netip.Prefix, error) {
+	trimmed := strings.TrimSpace(entry)
+	if strings.Contains(trimmed, "/") {
+		prefix, err := netip.ParsePrefix(trimmed)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		return prefix.Masked(), nil
+	}
+	addr, err := netip.ParseAddr(trimmed)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	addr = addr.Unmap().WithZone("")
+	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
 
 // validateFTP checks the FTP service, whose settings straddle [ftp] and [ftps].

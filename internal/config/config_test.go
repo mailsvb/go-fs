@@ -221,6 +221,21 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.HTTP.Basefolder = folder
 			c.HTTP.SessionTokenSecret = base64.StdEncoding.EncodeToString(make([]byte, 16))
 		}, "at least 32"},
+		{"http login attempts negative", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.LoginAttempts = -1
+		}, "http.loginAttempts"},
+		{"http login lockout zero", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.LoginLockout = 0
+		}, "http.loginLockout"},
+		{"http trusted proxy that is not an address", func(c *Config) {
+			c.HTTP.Enabled = true
+			c.HTTP.Basefolder = folder
+			c.HTTP.TrustedProxies = []string{"10.0.0.0/8", "proxy.example"}
+		}, "http.trustedProxies[1]"},
 		{"http cookie path", func(c *Config) {
 			c.Users = []User{{Username: "john", Password: "doe", HTTP: true, CookiePath: "public"}}
 		}, "cookiePath"},

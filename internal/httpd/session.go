@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"go-fs/internal/admin"
-	"go-fs/internal/secrets"
 	"go-fs/internal/vfs"
 )
 
@@ -73,7 +72,7 @@ func (s *Server) handleSession(set *settings, w http.ResponseWriter, r *http.Req
 	w.Header().Set("Cache-Control", "no-store")
 
 	if r.Method == http.MethodPost {
-		if !s.sameSite(w, r) {
+		if !s.sameSite(set, w, r) {
 			return
 		}
 		if action == actionLogin {
@@ -90,6 +89,11 @@ func (s *Server) handleSession(set *settings, w http.ResponseWriter, r *http.Req
 			http.Redirect(w, r, cleanURL(r.URL), http.StatusSeeOther)
 			return
 		}
+		// a locked address is sent here by refuseLocked, so the page says why
+		if remaining, locked := s.lockedOut(set, r); locked {
+			s.loginPage(w, r, target, lockoutMessage(remaining))
+			return
+		}
 		s.loginPage(w, r, target, "")
 		return
 	}
@@ -103,24 +107,32 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 	// is accepted here is narrowed to the one the login form actually sends
 	if kind := r.Header.Get("Content-Type"); !strings.HasPrefix(kind, "application/x-www-form-urlencoded") {
 		s.log.Debug("http login form has the wrong content type", "contentType", kind,
-			"address", addressOf(r))
+			"address", clientAddress(set, r))
 		http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType)
+		return
+	}
+	// refused before the form is read: nothing it says is looked at
+	if remaining, locked := s.lockedOut(set, r); locked {
+		s.log.Info("http login refused, the address is locked out", "method", "form",
+			"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
+		s.loginPage(w, r, target, lockoutMessage(remaining))
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBody)
 	if err := r.ParseForm(); err != nil {
-		s.log.Debug("http login form cannot be read", "error", err, "address", addressOf(r))
+		s.log.Debug("http login form cannot be read", "error", err, "address", clientAddress(set, r))
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
 
 	user := s.checkLogin(set, r.PostFormValue("username"), r.PostFormValue("password"))
 	if user == nil {
+		s.log.Info("http login refused", "user", r.PostFormValue("username"),
+			"method", "form", "address", clientAddress(set, r))
+		s.recordFailure(set, r)
 		if delay := set.cfg.LoginFailureDelay; delay > 0 {
 			time.Sleep(time.Duration(delay) * time.Second)
 		}
-		s.log.Info("http login refused", "user", r.PostFormValue("username"),
-			"method", "form", "address", addressOf(r))
 		// the form comes back with the message rather than a 401: a 401 has to
 		// carry WWW-Authenticate, and that is the header that raises the
 		// browser's own password box this page exists to replace
@@ -128,6 +140,7 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	s.logins.clear(clientAddress(set, r))
 	if err := s.setSession(set, w, r, user); err != nil {
 		s.log.Error("http cannot create a session token", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
@@ -140,15 +153,7 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 // with them. An account that may not hold a session is not one of them: it is
 // reachable with Basic or Digest and nothing else.
 func (s *Server) checkLogin(set *settings, name, password string) *account {
-	for _, user := range set.accounts {
-		if !user.cookie {
-			continue
-		}
-		if secrets.Match(name, user.name) && secrets.Match(password, user.password) {
-			return user
-		}
-	}
-	return nil
+	return matchAccount(set.accounts, name, password, true)
 }
 
 // handleLogout drops the token, whatever it named.
@@ -169,7 +174,7 @@ func (s *Server) handleLogout(set *settings, w http.ResponseWriter, r *http.Requ
 	}
 	s.clearSession(w, path)
 	clearCookie(w, legacyCookie, path)
-	s.log.Info("http logout", "user", name, "address", addressOf(r))
+	s.log.Info("http logout", "user", name, "address", clientAddress(set, r))
 	http.Redirect(w, r, cleanURL(r.URL), http.StatusSeeOther)
 }
 

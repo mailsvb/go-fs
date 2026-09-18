@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -105,6 +106,9 @@ type credential struct {
 	// stale says a digest nonce had aged out while the credentials were right,
 	// which is what lets a browser answer again by itself.
 	stale bool
+	// locked says the address has sent too many wrong passwords and its
+	// credentials were not looked at.
+	locked bool
 	// method is how the request identified itself, for the records: basic,
 	// digest, token, none, or unsupported for a scheme this server does not
 	// speak.
@@ -123,14 +127,18 @@ func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Requ
 	cred := s.identify(set, w, r)
 	if cred.user != nil {
 		s.log.Debug("http authenticated", "user", cred.user.name, "method", cred.method,
-			"address", addressOf(r), "path", virtual)
+			"address", clientAddress(set, r), "path", virtual)
 		return cred, true
 	}
 	if !s.needsAuth(set, r.Method, virtual) {
 		return cred, true
 	}
+	if cred.locked {
+		s.refuseLocked(set, w, r)
+		return credential{}, false
+	}
 	s.log.Debug("http authentication required", "method", r.Method, "path", virtual,
-		"address", addressOf(r), "credentials", cred.method, "stale", cred.stale)
+		"address", clientAddress(set, r), "credentials", cred.method, "stale", cred.stale)
 	s.refuse(set, w, r, cred.stale)
 	return credential{}, false
 }
@@ -142,18 +150,39 @@ func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Requ
 // the client saying who it is now; a cookie is ambient, sent by the browser
 // whether or not anyone meant it to be, and ambient credentials must never
 // shadow explicit ones.
+//
+// A header for an account whose session the browser also carries counts as
+// that session: a browser that remembered Basic credentials from before the
+// login form existed sends them with everything, and would otherwise never be
+// recognised as logged in. A token for another account is ignored, as it is
+// for any request with a header.
 func (s *Server) identify(set *settings, w http.ResponseWriter, r *http.Request) credential {
 	header := r.Header.Get("Authorization")
 	switch {
-	case strings.HasPrefix(header, "Digest "):
-		user, stale := s.checkDigest(set, r, header)
-		return credential{user: user, stale: stale, method: "digest"}
-	case strings.HasPrefix(header, "Basic "):
-		return credential{user: s.checkBasic(set, r, header), method: "basic"}
+	case strings.HasPrefix(header, "Digest "), strings.HasPrefix(header, "Basic "):
+		scheme, _, _ := strings.Cut(header, " ")
+		method := strings.ToLower(scheme)
+		if remaining, locked := s.lockedOut(set, r); locked {
+			s.log.Info("http login refused, the address is locked out", "method", method,
+				"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
+			return credential{locked: true, method: method}
+		}
+		var cred credential
+		if method == "digest" {
+			user, stale := s.checkDigest(set, r, header)
+			cred = credential{user: user, stale: stale, method: method}
+		} else {
+			cred = credential{user: s.checkBasic(set, r, header), method: method}
+		}
+		if cred.user != nil {
+			s.logins.clear(clientAddress(set, r))
+			cred.token = s.sessionMatches(set, r, cred.user)
+		}
+		return cred
 	case header != "":
 		scheme, _, _ := strings.Cut(header, " ")
 		s.log.Debug("http authorization scheme not supported", "scheme", scheme,
-			"address", addressOf(r))
+			"address", clientAddress(set, r))
 		return credential{method: "unsupported"}
 	}
 
@@ -167,6 +196,72 @@ func (s *Server) identify(set *settings, w http.ResponseWriter, r *http.Request)
 	return credential{method: "token"}
 }
 
+// sessionMatches reports whether the browser also carries a live session for
+// the account a header has just authenticated. Unlike checkToken it clears
+// nothing and logs nothing: whatever else the cookie says is not this
+// request's concern, since the header already answered who it is from.
+func (s *Server) sessionMatches(set *settings, r *http.Request, user *account) bool {
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return false
+	}
+	claims, err := s.tokens.read(cookie.Value)
+	if err != nil {
+		return false
+	}
+	return claims.Subject == user.name && user.cookie && s.tokens.issuedFor(claims, user)
+}
+
+// lockedOut reports whether the address behind a request has sent too many
+// wrong passwords, and for how much longer it is refused.
+func (s *Server) lockedOut(set *settings, r *http.Request) (time.Duration, bool) {
+	if set.cfg.LoginAttempts <= 0 {
+		return 0, false
+	}
+	return s.logins.locked(clientAddress(set, r))
+}
+
+// recordFailure counts a wrong password against the address it came from, and
+// says so when that was the one that locked it.
+func (s *Server) recordFailure(set *settings, r *http.Request) {
+	lockout := time.Duration(set.cfg.LoginLockout) * time.Second
+	if s.logins.failed(clientAddress(set, r), set.cfg.LoginAttempts, lockout) {
+		s.log.Warn("http address locked out after too many failed logins",
+			"address", clientAddress(set, r), "attempts", set.cfg.LoginAttempts,
+			"seconds", set.cfg.LoginLockout)
+	}
+}
+
+// lockoutMessage is what the login page says to a locked address.
+func lockoutMessage(remaining time.Duration) string {
+	return fmt.Sprintf("Too many failed logins from your address. Try again in %d seconds.",
+		retryAfter(remaining))
+}
+
+// retryAfter is a remaining lock as whole seconds, rounded up so that a client
+// that waits exactly that long is not refused once more.
+func retryAfter(remaining time.Duration) int {
+	return int(math.Ceil(remaining.Seconds()))
+}
+
+// refuseLocked answers a request from a locked address. Nothing it carried
+// was looked at, so nothing is challenged: a 401 would have to carry
+// WWW-Authenticate, which asks for the very thing the lock refuses to read.
+// A browser is sent to the login page, which explains; a program gets 429
+// with Retry-After (RFC 6585), and no delay, because the lock is what makes
+// the refusal cheap.
+func (s *Server) refuseLocked(set *settings, w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if browserRequest(r) && canLogIn(set) &&
+		(r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		http.Redirect(w, r, loginURL(r.URL), http.StatusSeeOther)
+		return
+	}
+	remaining, _ := s.lockedOut(set, r)
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfter(remaining)))
+	http.Error(w, "Too many failed logins", http.StatusTooManyRequests)
+}
+
 // checkToken verifies a session token against the accounts as they are
 // configured right now.
 //
@@ -177,26 +272,26 @@ func (s *Server) identify(set *settings, w http.ResponseWriter, r *http.Request)
 func (s *Server) checkToken(set *settings, w http.ResponseWriter, r *http.Request, raw string) *account {
 	claims, err := s.tokens.read(raw)
 	if err != nil {
-		s.log.Debug("http refused a session token", "error", err, "address", addressOf(r))
+		s.log.Debug("http refused a session token", "error", err, "address", clientAddress(set, r))
 		s.clearSession(w, "/")
 		return nil
 	}
 	user := accountNamed(set.accounts, claims.Subject)
 	if user == nil {
 		s.log.Info("http session token names an account that is no longer configured",
-			"user", claims.Subject, "address", addressOf(r))
+			"user", claims.Subject, "address", clientAddress(set, r))
 		s.clearSession(w, "/")
 		return nil
 	}
 	if !user.cookie {
 		s.log.Info("http session token names an account that may no longer log in",
-			"user", user.name, "address", addressOf(r))
+			"user", user.name, "address", clientAddress(set, r))
 		s.clearSession(w, user.cookiePath)
 		return nil
 	}
 	if !s.tokens.issuedFor(claims, user) {
 		s.log.Info("http session token was issued for other credentials",
-			"user", user.name, "address", addressOf(r))
+			"user", user.name, "address", clientAddress(set, r))
 		s.clearSession(w, user.cookiePath)
 		return nil
 	}
@@ -425,10 +520,10 @@ func (s *Server) rightsFor(set *settings, user *account, virtual string) rights 
 // a fetch and by a cross site form post, but not by every same site form post;
 // Sec-Fetch-Site is sent by every current browser on every request and by no
 // program, so a client that sends neither — curl, a script — is left alone.
-func (s *Server) sameSite(w http.ResponseWriter, r *http.Request) bool {
+func (s *Server) sameSite(set *settings, w http.ResponseWriter, r *http.Request) bool {
 	if origin := r.Header.Get("Origin"); origin != "" && !sameHost(origin, r.Host) {
 		s.log.Warn("http refused a request from another origin",
-			"origin", origin, "method", r.Method, "address", addressOf(r))
+			"origin", origin, "method", r.Method, "address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return false
 	}
@@ -438,7 +533,7 @@ func (s *Server) sameSite(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	default:
 		s.log.Warn("http refused a request from another site",
-			"site", site, "method", r.Method, "address", addressOf(r))
+			"site", site, "method", r.Method, "address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return false
 	}
@@ -463,7 +558,7 @@ func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		return err
 	}
-	s.log.Info("http login", "user", user.name, "address", addressOf(r),
+	s.log.Info("http login", "user", user.name, "address", clientAddress(set, r),
 		"path", user.cookiePath)
 	http.SetCookie(w, &http.Cookie{
 		Name:  sessionCookie,
@@ -473,10 +568,11 @@ func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Reques
 		MaxAge:   int(lifetime.Seconds()),
 		Expires:  expires,
 		HttpOnly: true,
-		// there is no trusted proxy setting here and X-Forwarded-Proto is
-		// written by the client, so honouring it would let a client talk this
-		// server out of the flag
-		Secure: r.TLS != nil,
+		// Secure follows the connection, or X-Forwarded-Proto when the
+		// connection is from one of http.trustedProxies. From anywhere else
+		// that header is written by the client, and honouring it would let a
+		// client talk this server out of the flag
+		Secure: secureRequest(set, r),
 		// Lax already withholds the cookie from every cross site request that
 		// is not a top level navigation, which is the whole of the CSRF
 		// surface: nothing here changes anything on a GET. Strict would also
@@ -579,18 +675,39 @@ func (s *Server) challenge(set *settings, w http.ResponseWriter, r *http.Request
 func (s *Server) checkBasic(set *settings, r *http.Request, header string) *account {
 	name, password, ok := parseBasic(header)
 	if !ok {
-		s.log.Debug("http basic credentials are malformed", "address", addressOf(r))
+		s.log.Debug("http basic credentials are malformed", "address", clientAddress(set, r))
 		return nil
 	}
-	for _, user := range set.accounts {
-		if secrets.Match(name, user.name) && secrets.Match(password, user.password) {
-			return user
-		}
+	if user := matchAccount(set.accounts, name, password, false); user != nil {
+		return user
 	}
 	// the same record the login form writes, so every refused password is
 	// found under one message whichever way it arrived
-	s.log.Info("http login refused", "user", name, "method", "basic", "address", addressOf(r))
+	s.log.Info("http login refused", "user", name, "method", "basic",
+		"address", clientAddress(set, r))
+	s.recordFailure(set, r)
 	return nil
+}
+
+// matchAccount resolves a name and a password to an account, in time that
+// does not depend on which name was sent: both halves are compared for every
+// account, whether or not the name matched, so an account that exists takes
+// exactly as long to refuse as one that does not. cookieOnly narrows it to
+// the accounts that may use the login form, which is configuration rather
+// than input and so may be skipped by.
+func matchAccount(accounts []*account, name, password string, cookieOnly bool) *account {
+	var found *account
+	for _, user := range accounts {
+		if cookieOnly && !user.cookie {
+			continue
+		}
+		nameMatches := secrets.Match(name, user.name)
+		passwordMatches := secrets.Match(password, user.password)
+		if nameMatches && passwordMatches && found == nil {
+			found = user
+		}
+	}
+	return found
 }
 
 // checkDigest verifies an RFC 7616 header, including the RFC 2069 form that
@@ -610,7 +727,7 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*ac
 	digest, ok := hasher(algorithm)
 	if !ok {
 		s.log.Debug("http digest algorithm not supported", "algorithm", algorithm,
-			"user", params["username"], "address", addressOf(r))
+			"user", params["username"], "address", clientAddress(set, r))
 		return nil, false
 	}
 	// clients differ on whether the query string is part of it, so both forms
@@ -618,14 +735,14 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*ac
 	uri := params["uri"]
 	if uri != r.URL.RequestURI() && uri != r.URL.Path {
 		s.log.Debug("http digest uri does not match the request", "uri", uri,
-			"requested", r.URL.RequestURI(), "user", params["username"], "address", addressOf(r))
+			"requested", r.URL.RequestURI(), "user", params["username"], "address", clientAddress(set, r))
 		return nil, false
 	}
 	fresh, ours := s.nonceState(params["nonce"])
 	if !ours {
 		// a nonce another server issued, or one from before a restart
 		s.log.Debug("http digest nonce was not issued by this server",
-			"user", params["username"], "address", addressOf(r))
+			"user", params["username"], "address", clientAddress(set, r))
 		return nil, false
 	}
 
@@ -633,6 +750,8 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*ac
 	ha2 := digest(r.Method + ":" + uri)
 
 	for _, user := range set.accounts {
+		// the name is compared plainly: the hashes below are what the time
+		// goes on, and they are only ever computed for the account named
 		if user.name != name {
 			continue
 		}
@@ -651,13 +770,15 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*ac
 				// right credentials, old nonce: ask again with a new one
 				// rather than letting it through
 				s.log.Debug("http digest nonce is stale, challenging again",
-					"user", name, "address", addressOf(r))
+					"user", name, "address", clientAddress(set, r))
 				return nil, true
 			}
 			return user, false
 		}
 	}
-	s.log.Info("http login refused", "user", name, "method", "digest", "address", addressOf(r))
+	s.log.Info("http login refused", "user", name, "method", "digest",
+		"address", clientAddress(set, r))
+	s.recordFailure(set, r)
 	return nil, false
 }
 
