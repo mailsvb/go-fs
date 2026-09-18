@@ -445,7 +445,7 @@ func TestTheListingShowsWhoIsSignedIn(t *testing.T) {
 
 	session := login(t, server, "/", "john", "doe")
 	signedIn := bodyOf(t, withSession(t, server, http.MethodGet, "/", session))
-	if !strings.Contains(signedIn, `class="who">john<`) {
+	if !strings.Contains(signedIn, "Log out john<") {
 		t.Error("the page does not say who is signed in")
 	}
 	if !strings.Contains(signedIn, "go-fs=logout") {

@@ -100,9 +100,8 @@ input[type="search"] {
 .plain:hover { border-color: var(--faint); }
 .plain .ic { font-size: 1rem; }
 
-/* The signed in account, and the form that holds the Log out button: a form
-   is a block, and this one sits in a row of controls. */
-.who { color: var(--faint); font-size: 0.85rem; white-space: nowrap; }
+/* The form that holds the Log out button: a form is a block, and this one
+   sits in a row of controls. */
 .inline { display: contents; }
 
 .banner {
