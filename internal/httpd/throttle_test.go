@@ -18,7 +18,7 @@ func lockingServer(t *testing.T, attempts int) (*testServer, func(time.Duration)
 	server := newServer(t, func(cfg *httpConfig) {
 		cfg.LoginAttempts = attempts
 		cfg.LoginLockout = 60
-		cfg.Users = []config.User{cookieUser("john", "doe")}
+		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 	return server, fixClock(server)
@@ -211,7 +211,7 @@ func TestTheLockSettingsAreSwappedWithoutARestart(t *testing.T) {
 
 	next := server.settings().cfg
 	next.LoginAttempts = 1
-	if err := server.Reload(next, server.settings().https, []config.User{cookieUser("john", "doe")}); err != nil {
+	if err := server.Reload(next, server.settings().https, []config.User{fullUser("john", "doe")}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	basic(t, server, http.MethodGet, "/private/secret.txt", "john", "wrong", nil)

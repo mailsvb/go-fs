@@ -100,12 +100,12 @@ func TestReloadKeepsTheRunningConfigurationOnError(t *testing.T) {
 // issued from here on with no restart and no live token disturbed.
 func TestTheTokenLifetimeIsSwappedWithoutARestart(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.Users = []config.User{cookieUser("john", "doe")}
+		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 
 	next := server.settings().cfg
 	next.SessionTokenLifetime = 60
-	if err := server.Reload(next, server.settings().https, []config.User{cookieUser("john", "doe")}); err != nil {
+	if err := server.Reload(next, server.settings().https, []config.User{fullUser("john", "doe")}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if session := login(t, server, "/", "john", "doe"); session.MaxAge != 60 {
@@ -117,7 +117,7 @@ func TestTheTokenLifetimeIsSwappedWithoutARestart(t *testing.T) {
 // would invalidate every live token halfway through a request.
 func TestChangingTheSigningKeyNeedsARestart(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.Users = []config.User{cookieUser("john", "doe")}
+		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 	secret, err := config.GenerateSessionSecret()
 	if err != nil {

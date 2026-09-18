@@ -286,7 +286,7 @@ func TestAdminInterfaceIsServedByTheHTTPServer(t *testing.T) {
 
 	cfg := baseConfig(t)
 	cfg.Users = append(cfg.Users, config.User{
-		Username: "root", Password: "secret", HTTP: true, Cookie: true, IsAdmin: true,
+		Username: "root", Password: "secret", HTTP: true, IsAdmin: true,
 		Paths: []string{"^/.*"},
 	})
 	// the file the interface reads back has to exist and validate

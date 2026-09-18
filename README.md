@@ -137,8 +137,8 @@ without being served, which is the way to park an account.
 
 Each account may have its own `basefolder`, which FTP and SFTP serve instead of
 the server's; HTTP scopes an account by `paths` instead. `allowLoginWithoutPassword`
-is read by FTP alone, `authorizedKeys` by SFTP alone, `paths`, `cookie` and
-`cookiePath` by HTTP alone; the servers a key does not apply to ignore it.
+is read by FTP alone, `authorizedKeys` by SFTP alone and `paths` by HTTP alone;
+the servers a key does not apply to ignore it.
 
 **The shipped file defines no account.** The examples in it are commented out on
 purpose, so a fresh configuration serves nobody until you put a name and a
@@ -205,7 +205,6 @@ sets `isAdmin` and has logged in through the browser.
 username = "root"
 password = "..."
 http = true
-cookie = true
 isAdmin = true
 
 [http]
@@ -253,8 +252,8 @@ Three things to know about it:
 **Upgrading from a file with `general.adminInterfaceEnabled`,
 `adminInterfacePort`, `adminUsername` and the other `admin*` keys:** they are
 not read any more, and the server says so at warning level on every start.
-Give one of the `[[users]]` entries `http = true`, `cookie = true` and
-`isAdmin = true` instead, and reach the interface through the HTTP or HTTPS
+Give one of the `[[users]]` entries `http = true` and `isAdmin = true`
+instead, and reach the interface through the HTTP or HTTPS
 port; the old separate listener is gone, and `adminCert`/`adminKey` are what
 `https.cert`/`https.key` are for.
 
@@ -471,7 +470,6 @@ allowUserFileOverwrite = true
 allowUserFolderCreate = true
 allowUserFileDelete = true
 allowUserFolderDelete = true
-cookie = true
 
 [http]
 enabled = true
@@ -538,7 +536,8 @@ refused no faster than one that does not.
 
 ### Logging in from a browser
 
-With `cookie = true` an account may log in through the page. A browser that has
+Any HTTP account may log in through the page; programs keep using Basic or
+Digest and are handed no session they did not ask for. A browser that has
 to authenticate is sent to a login form of this server's own instead of being
 challenged, so its native password box never appears: a `401` has to carry
 `WWW-Authenticate` (RFC 9110 §15.5.2), and that header is precisely what raises
@@ -550,8 +549,8 @@ an **Admin** button that opens the web interface described above.
 A browser is recognised by `Sec-Fetch-Mode`, which every current browser sends on
 every request and no program sends, falling back to `text/html` in `Accept` for a
 browser too old for it. A client that sends `X-Disable-Session` is treated as a
-program. Where **no** account sets `cookie = true` there is no login page at all
-and nothing about this server has changed.
+program. Where the configuration has no HTTP account at all there is nobody to
+log in as, so there is no login page and a browser is challenged as a program is.
 
 The login and logout endpoints have no paths of their own: they are
 `?go-fs=login` and `?go-fs=logout` on the path being asked for. Every URL this
@@ -562,7 +561,7 @@ real name, while a query key can shadow nothing. It is also why there is no
 
 A successful login is carried by a **JSON Web Token** (RFC 7519) signed with
 HMAC-SHA256 (RFC 7515) in the `goFsSessionToken` cookie, which is `HttpOnly`,
-`SameSite=Lax` and `Secure` over TLS, scoped to `cookiePath`. The token carries
+`SameSite=Lax` and `Secure` over TLS, scoped to `/`. The token carries
 `iss`, `sub` (the account name), `aud`, `iat`, `nbf`, `exp`, `jti` and a
 fingerprint of the credentials — and **nothing else**. It deliberately does not
 carry the paths or the rights: those are looked up from the configuration as it
@@ -576,7 +575,7 @@ matters, because a signed token cannot be withdrawn once it is out: logging out
 clears the browser's own copy, but a stolen token works until it expires. The
 three things that do cut one short are that lifetime, changing the account's
 password — which changes the fingerprint, so every browser logged in under the
-old one is signed out — and setting `cookie = false`.
+old one is signed out — and removing the account.
 
 **Behind a reverse proxy**, list it in `trustedProxies`, as an address or a
 CIDR range. A request from one of them is recorded, counted and locked under

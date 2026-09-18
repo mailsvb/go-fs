@@ -399,13 +399,6 @@ func bodyOf(t *testing.T, res *http.Response) string {
 	return string(body)
 }
 
-// cookieUser is an account that may use the login form.
-func cookieUser(name, password string) config.User {
-	user := fullUser(name, password)
-	user.Cookie = true
-	return user
-}
-
 // browserGet asks for a path the way a browser does, so that the server offers
 // it the login page rather than a challenge.
 func browserGet(t *testing.T, server *testServer, path string) *http.Response {

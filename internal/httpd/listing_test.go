@@ -430,7 +430,7 @@ func TestTypeOf(t *testing.T) {
 func TestTheListingShowsWhoIsSignedIn(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
 		cfg.PathsRequireAuth = nil
-		cfg.Users = []config.User{cookieUser("john", "doe")}
+		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 	server.write(t, "notes.txt", "hello")
 
@@ -464,7 +464,7 @@ func TestTheListingShowsWhoIsSignedIn(t *testing.T) {
 func TestTheListingVariesOnTheCookie(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
 		cfg.PathsRequireAuth = nil
-		cfg.Users = []config.User{cookieUser("john", "doe")}
+		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 	res, _ := get(t, server, "/")
 	if !strings.Contains(res.Header.Get("Vary"), "Cookie") {
@@ -477,7 +477,7 @@ func TestTheListingVariesOnTheCookie(t *testing.T) {
 func TestTheLoginControlsWorkWithoutJavaScript(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
 		cfg.PathsRequireAuth = nil
-		cfg.Users = []config.User{cookieUser("john", "doe")}
+		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 
 	for _, item := range []struct {

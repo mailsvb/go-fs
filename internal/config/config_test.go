@@ -136,10 +136,7 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"bad log format", func(c *Config) { c.General.LogFormat = "xml" }, "general.logFormat"},
 		{"admin without http", func(c *Config) {
 			c.Users = []User{{Username: "root", Password: "x", FTP: true, IsAdmin: true}}
-		}, "isAdmin but not http and cookie"},
-		{"admin without cookie", func(c *Config) {
-			c.Users = []User{{Username: "root", Password: "x", HTTP: true, IsAdmin: true}}
-		}, "isAdmin but not http and cookie"},
+		}, "isAdmin but not http"},
 		{"nothing enabled", func(c *Config) { c.FTP.Enabled = false; c.TFTP.Enabled = false }, "nothing to do"},
 		{"ftp port", func(c *Config) { c.FTP.Port = 0 }, "ftp.port"},
 		{"passive range reversed", func(c *Config) {
@@ -236,9 +233,6 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.HTTP.Basefolder = folder
 			c.HTTP.TrustedProxies = []string{"10.0.0.0/8", "proxy.example"}
 		}, "http.trustedProxies[1]"},
-		{"http cookie path", func(c *Config) {
-			c.Users = []User{{Username: "john", Password: "doe", HTTP: true, CookiePath: "public"}}
-		}, "cookiePath"},
 		{"sftp bind address", func(c *Config) {
 			c.SFTP.Enabled = true
 			c.SFTP.Basefolder = folder
@@ -290,8 +284,8 @@ func TestValidateAcceptsAccountsAsTheyAreMeant(t *testing.T) {
 		{Username: "anonymous", FTP: true, AllowLoginWithoutPassword: new(true)},
 		{Username: "keys", SFTP: true, AuthorizedKeys: []string{authorizedKey(t)}},
 		{Username: "john", Password: "doe", FTP: true, SFTP: true, HTTP: true},
-		// an admin is an http account that may use the login form
-		{Username: "root", Password: "x", HTTP: true, Cookie: true, IsAdmin: true},
+		// an admin is an http account
+		{Username: "root", Password: "x", HTTP: true, IsAdmin: true},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -620,6 +614,18 @@ func TestRetiredKeysAreReported(t *testing.T) {
 		"general.adminUsername is ignored, use [[users]] with isAdmin = true",
 		"log.level is ignored, use general.logLevel",
 	} {
+		if !strings.Contains(strings.Join(found, "\n"), want) {
+			t.Errorf("RetiredKeys = %q, want %q", found, want)
+		}
+	}
+	// [[users]] is an array of tables; a key set in any entry is reported once
+	users := "[[users]]\nusername = \"john\"\ncookie = true\n" +
+		"[[users]]\nusername = \"jane\"\ncookie = true\ncookiePath = \"/public/\"\n"
+	found = RetiredKeys([]byte(users))
+	if len(found) != 2 {
+		t.Fatalf("RetiredKeys = %v, want two entries", found)
+	}
+	for _, want := range []string{"users.cookie is ignored", "users.cookiePath is ignored"} {
 		if !strings.Contains(strings.Join(found, "\n"), want) {
 			t.Errorf("RetiredKeys = %q, want %q", found, want)
 		}

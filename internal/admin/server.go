@@ -197,7 +197,7 @@ func (h *Handler) handlePage(w http.ResponseWriter, r *http.Request) {
 // markedURL is this request's own URL with the marker set to value, or taken
 // off for an empty one. The page's script asks for its endpoints relative to
 // the page, so the whole interface works under whatever folder it was opened
-// in, which is what an account whose cookie is scoped to a folder needs.
+// in.
 func markedURL(u *url.URL, value string) string {
 	marked := *u
 	query := marked.Query()

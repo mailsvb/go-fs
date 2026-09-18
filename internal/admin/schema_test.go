@@ -71,7 +71,7 @@ func TestSummaryFields(t *testing.T) {
 		"users.users.ftp":                 true,
 		"users.users.sftp":                true,
 		"users.users.http":                true,
-		"users.users.cookie":              true,
+		"users.users.isAdmin":             true,
 		"users.users.password":            false,
 		"users.users.basefolder":          false,
 		"users.users.allowUserFileCreate": false,

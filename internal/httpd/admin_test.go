@@ -15,9 +15,9 @@ import (
 )
 
 // adminUser is an account that may reach the admin interface: an http account
-// that may use the login form and sets isAdmin.
+// that sets isAdmin.
 func adminUser(name, password string) config.User {
-	user := cookieUser(name, password)
+	user := fullUser(name, password)
 	user.IsAdmin = true
 	return user
 }
@@ -35,9 +35,6 @@ func withAdmin(t *testing.T, cfg *httpConfig) {
 	for _, user := range cfg.Users {
 		body += "[[users]]\nusername = " + strconv.Quote(user.Username) +
 			"\npassword = " + strconv.Quote(user.Password) + "\nhttp = true\n"
-		if user.Cookie {
-			body += "cookie = true\n"
-		}
 		if user.IsAdmin {
 			body += "isAdmin = true\n"
 		}
@@ -53,7 +50,7 @@ func withAdmin(t *testing.T, cfg *httpConfig) {
 func adminServer(t *testing.T, tune func(*httpConfig)) *testServer {
 	t.Helper()
 	return newServer(t, func(cfg *httpConfig) {
-		cfg.Users = []config.User{adminUser("root", "secret"), cookieUser("john", "doe")}
+		cfg.Users = []config.User{adminUser("root", "secret"), fullUser("john", "doe")}
 		if tune != nil {
 			tune(cfg)
 		}
@@ -161,7 +158,7 @@ func TestAdminInterfaceCanBeSwitchedOff(t *testing.T) {
 	set := server.settings()
 	cfg := set.cfg
 	cfg.EnableAdminInterface = true
-	if err := server.Reload(cfg, set.https, []config.User{adminUser("root", "secret"), cookieUser("john", "doe")}); err != nil {
+	if err := server.Reload(cfg, set.https, []config.User{adminUser("root", "secret"), fullUser("john", "doe")}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
 	if res := withSession(t, server, http.MethodGet, "/?go-fs=admin", root); res.StatusCode != http.StatusOK {

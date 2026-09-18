@@ -68,21 +68,16 @@ logFormat = "text"
 # allowUserFileDelete = true
 # allowUserFolderDelete = true
 # allowUserFolderCreate = true
-# Let this account log in to the http server through the browser: the page
-# offers it a Log in button, and a successful login is carried by a signed
-# token in the goFsSessionToken cookie rather than by repeating the
-# credentials. The token names the account and nothing else, so it carries
-# exactly the rights above as they are configured right now; cookiePath only
-# tells the browser which URLs to send it back for. Programs are unaffected
-# either way and keep using Basic or Digest. Once any account sets this, a
-# browser is sent to the login page instead of its own password box, so an
-# account that leaves it false has no way in through a browser.
-# cookie = false
-# cookiePath = "/"
+# Any http account may also log in through the browser: the page offers a Log
+# in button, and a successful login is carried by a signed token in the
+# goFsSessionToken cookie rather than by repeating the credentials. The token
+# names the account and nothing else, so it carries exactly the rights above
+# as they are configured right now. Programs are unaffected and keep using
+# Basic or Digest.
 # Let this account into the admin interface, the page that edits this file
 # (see http.enableAdminInterface). It is reached after logging in through the
-# browser, so the account has to set http and cookie as well; the listing
-# then shows it an Admin button.
+# browser, so the account has to set http as well; the listing then shows it
+# an Admin button.
 # isAdmin = false
 
 # Anonymous FTP access is an ordinary account: the name clients use, with no
@@ -107,16 +102,13 @@ logFormat = "text"
 # ]
 # allowUserFileRetrieve = true
 
-# An http account that may only read, and only below one folder, and logs in
-# through the browser.
+# An http account that may only read, and only below one folder.
 # [[users]]
 # username = "jane"
 # password = "chosen"
 # http = true
 # paths = ["^/public/.*"]
 # allowUserFileRetrieve = true
-# cookie = true
-# cookiePath = "/public/"
 
 [ftp]
 # Serve the plain control port. The TLS listener has its own switch in [ftps];

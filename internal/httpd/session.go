@@ -150,30 +150,22 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 }
 
 // checkLogin resolves a username and password to the account that may log in
-// with them. An account that may not hold a session is not one of them: it is
-// reachable with Basic or Digest and nothing else.
+// with them.
 func (s *Server) checkLogin(set *settings, name, password string) *account {
-	return matchAccount(set.accounts, name, password, true)
+	return matchAccount(set.accounts, name, password)
 }
 
-// handleLogout drops the token, whatever it named.
-//
-// The cookie is cleared at the account's own path when the token still reads,
-// and at the root otherwise, because a cookie is only cleared by a path that
-// matches the one it was set with.
+// handleLogout drops the token, whatever it named. The token is read only to
+// say in the log who logged out.
 func (s *Server) handleLogout(set *settings, w http.ResponseWriter, r *http.Request) {
-	path := "/"
 	name := "-"
 	if cookie, err := r.Cookie(sessionCookie); err == nil {
 		if claims, err := s.tokens.read(cookie.Value); err == nil {
 			name = claims.Subject
-			if user := accountNamed(set.accounts, claims.Subject); user != nil {
-				path = user.cookiePath
-			}
 		}
 	}
-	s.clearSession(w, path)
-	clearCookie(w, legacyCookie, path)
+	s.clearSession(w)
+	clearCookie(w, legacyCookie)
 	s.log.Info("http logout", "user", name, "address", clientAddress(set, r))
 	http.Redirect(w, r, cleanURL(r.URL), http.StatusSeeOther)
 }
@@ -246,8 +238,8 @@ func logoutURL(u *url.URL) string {
 }
 
 // adminURL is this request's own URL with the admin marker on it. It is the
-// folder being looked at rather than the root, so that an account whose cookie
-// is scoped to a folder reaches the interface from there.
+// folder being looked at rather than the root, so that the interface opens
+// from wherever the Admin button was pressed.
 func adminURL(u *url.URL) string {
 	marked := *u
 	query := marked.Query()

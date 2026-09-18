@@ -56,7 +56,7 @@ func TestHTTPSOnlyWithoutThePlainListener(t *testing.T) {
 // cannot be.
 func TestSessionCookieIsSecureOverTLS(t *testing.T) {
 	server := newServerWith(t, func(cfg *httpConfig) {
-		cfg.Users = []config.User{cookieUser("john", "doe")}
+		cfg.Users = []config.User{fullUser("john", "doe")}
 	}, func(https *config.HTTPS) { https.Enabled = true })
 	server.write(t, "private/hello.txt", "x")
 

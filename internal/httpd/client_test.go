@@ -15,7 +15,7 @@ func proxiedServer(t *testing.T, proxies []string, tune func(*httpConfig)) *test
 	t.Helper()
 	server := newServer(t, func(cfg *httpConfig) {
 		cfg.TrustedProxies = proxies
-		cfg.Users = []config.User{cookieUser("john", "doe")}
+		cfg.Users = []config.User{fullUser("john", "doe")}
 		if tune != nil {
 			tune(cfg)
 		}
@@ -144,7 +144,7 @@ func TestBadTrustedProxiesAreRefused(t *testing.T) {
 	server := proxiedServer(t, nil, nil)
 	next := server.settings().cfg
 	next.TrustedProxies = []string{"10.0.0.0/33"}
-	if err := server.Reload(next, server.settings().https, []config.User{cookieUser("john", "doe")}); err == nil {
+	if err := server.Reload(next, server.settings().https, []config.User{fullUser("john", "doe")}); err == nil {
 		t.Fatal("Reload accepted a range that does not parse")
 	}
 	res := basic(t, server, http.MethodGet, "/private/secret.txt", "john", "doe", nil)

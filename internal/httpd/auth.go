@@ -30,8 +30,6 @@ type account struct {
 	paths    []*regexp.Regexp
 	perms    config.Permissions
 
-	cookie     bool
-	cookiePath string
 	// isAdmin lets the account into the admin interface, once it holds a
 	// session.
 	isAdmin bool
@@ -75,15 +73,10 @@ func buildAccounts(users []config.User) ([]*account, error) {
 		}
 		seen[user.Username] = true
 		resolved := &account{
-			name:       user.Username,
-			password:   user.Password,
-			perms:      user.Permissions(),
-			cookie:     user.Cookie,
-			cookiePath: user.CookiePath,
-			isAdmin:    user.IsAdmin,
-		}
-		if resolved.cookiePath == "" {
-			resolved.cookiePath = "/"
+			name:     user.Username,
+			password: user.Password,
+			perms:    user.Permissions(),
+			isAdmin:  user.IsAdmin,
 		}
 		for k, pattern := range user.Paths {
 			compiled, err := regexp.Compile(pattern)
@@ -209,7 +202,7 @@ func (s *Server) sessionMatches(set *settings, r *http.Request, user *account) b
 	if err != nil {
 		return false
 	}
-	return claims.Subject == user.name && user.cookie && s.tokens.issuedFor(claims, user)
+	return claims.Subject == user.name && s.tokens.issuedFor(claims, user)
 }
 
 // lockedOut reports whether the address behind a request has sent too many
@@ -273,26 +266,20 @@ func (s *Server) checkToken(set *settings, w http.ResponseWriter, r *http.Reques
 	claims, err := s.tokens.read(raw)
 	if err != nil {
 		s.log.Debug("http refused a session token", "error", err, "address", clientAddress(set, r))
-		s.clearSession(w, "/")
+		s.clearSession(w)
 		return nil
 	}
 	user := accountNamed(set.accounts, claims.Subject)
 	if user == nil {
 		s.log.Info("http session token names an account that is no longer configured",
 			"user", claims.Subject, "address", clientAddress(set, r))
-		s.clearSession(w, "/")
-		return nil
-	}
-	if !user.cookie {
-		s.log.Info("http session token names an account that may no longer log in",
-			"user", user.name, "address", clientAddress(set, r))
-		s.clearSession(w, user.cookiePath)
+		s.clearSession(w)
 		return nil
 	}
 	if !s.tokens.issuedFor(claims, user) {
 		s.log.Info("http session token was issued for other credentials",
 			"user", user.name, "address", clientAddress(set, r))
-		s.clearSession(w, user.cookiePath)
+		s.clearSession(w)
 		return nil
 	}
 	return user
@@ -338,16 +325,11 @@ func browserRequest(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
-// canLogIn reports whether any account may use the login form. Where none may,
-// there is no login page and nothing about this server has changed: a browser
-// is challenged exactly as it was before.
+// canLogIn reports whether the login form has anyone to log in: every http
+// account may use it, so only a server with no account at all has no login
+// page, and there a browser is challenged as a program is.
 func canLogIn(set *settings) bool {
-	for _, user := range set.accounts {
-		if user.cookie {
-			return true
-		}
-	}
-	return false
+	return len(set.accounts) > 0
 }
 
 // accountNamed finds a configured account by name.
@@ -558,12 +540,11 @@ func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		return err
 	}
-	s.log.Info("http login", "user", user.name, "address", clientAddress(set, r),
-		"path", user.cookiePath)
+	s.log.Info("http login", "user", user.name, "address", clientAddress(set, r))
 	http.SetCookie(w, &http.Cookie{
 		Name:  sessionCookie,
 		Value: token,
-		Path:  user.cookiePath,
+		Path:  "/",
 		// both, because a client that ignores one honours the other
 		MaxAge:   int(lifetime.Seconds()),
 		Expires:  expires,
@@ -582,24 +563,23 @@ func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Reques
 	})
 	// a browser upgraded into this version still holds the opaque session
 	// cookie, which nothing will read again
-	clearCookie(w, legacyCookie, user.cookiePath)
+	clearCookie(w, legacyCookie)
 	return nil
 }
 
-// clearSession tells the browser to drop its session token. The path has to be
-// the one the cookie was set with, or the browser keeps it and clears nothing.
-func (s *Server) clearSession(w http.ResponseWriter, path string) {
-	clearCookie(w, sessionCookie, path)
+// clearSession tells the browser to drop its session token.
+func (s *Server) clearSession(w http.ResponseWriter) {
+	clearCookie(w, sessionCookie)
 }
 
-func clearCookie(w http.ResponseWriter, name, path string) {
-	if path == "" {
-		path = "/"
-	}
+// clearCookie expires a cookie at the root, which is the path every cookie of
+// this server is set with: a browser only clears a cookie at the path it was
+// set with.
+func clearCookie(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
 		Value:    "",
-		Path:     path,
+		Path:     "/",
 		MaxAge:   -1,
 		Expires:  time.Unix(0, 0),
 		HttpOnly: true,
@@ -678,7 +658,7 @@ func (s *Server) checkBasic(set *settings, r *http.Request, header string) *acco
 		s.log.Debug("http basic credentials are malformed", "address", clientAddress(set, r))
 		return nil
 	}
-	if user := matchAccount(set.accounts, name, password, false); user != nil {
+	if user := matchAccount(set.accounts, name, password); user != nil {
 		return user
 	}
 	// the same record the login form writes, so every refused password is
@@ -692,15 +672,10 @@ func (s *Server) checkBasic(set *settings, r *http.Request, header string) *acco
 // matchAccount resolves a name and a password to an account, in time that
 // does not depend on which name was sent: both halves are compared for every
 // account, whether or not the name matched, so an account that exists takes
-// exactly as long to refuse as one that does not. cookieOnly narrows it to
-// the accounts that may use the login form, which is configuration rather
-// than input and so may be skipped by.
-func matchAccount(accounts []*account, name, password string, cookieOnly bool) *account {
+// exactly as long to refuse as one that does not.
+func matchAccount(accounts []*account, name, password string) *account {
 	var found *account
 	for _, user := range accounts {
-		if cookieOnly && !user.cookie {
-			continue
-		}
 		nameMatches := secrets.Match(name, user.name)
 		passwordMatches := secrets.Match(password, user.password)
 		if nameMatches && passwordMatches && found == nil {

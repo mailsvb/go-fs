@@ -1,7 +1,7 @@
 // Package httpd implements the HTTP file server: browsing and downloading with
 // GET, uploading with PUT, removing with DELETE, creating a folder with MKCOL
-// and renaming with MOVE, with Basic and Digest authentication and optional
-// session cookies.
+// and renaming with MOVE, with Basic and Digest authentication for programs
+// and a login page with session cookies for browsers.
 //
 // It is a port of an Express server, so the reply shapes and the authentication
 // rules are the ones that server produced. The browsable listing is not: it is

@@ -128,20 +128,9 @@ type User struct {
 	AllowUserFolderDelete  *bool `toml:"allowUserFolderDelete,omitempty"`
 	AllowUserFolderCreate  *bool `toml:"allowUserFolderCreate,omitempty"`
 
-	// Cookie lets the account log in to the HTTP server through the browser:
-	// the page offers it a Log in button, and a successful login is carried by
-	// a signed token in a cookie rather than by repeating the credentials on
-	// every request. The token names the account and nothing else, so it
-	// carries exactly the rights above as they are configured right now.
-	Cookie bool `toml:"cookie,omitempty"`
-	// CookiePath is the URL prefix the browser sends the cookie back for, "/"
-	// when it is not set. It is a hint to the browser, not a permission: Paths
-	// are checked on every request either way.
-	CookiePath string `toml:"cookiePath,omitempty"`
-
 	// IsAdmin lets the account into the admin interface, the page that edits
 	// this file, which the HTTP server serves at ?go-fs=admin. Reaching it
-	// takes a session, so the account also has to set http and cookie.
+	// takes a session, so the account also has to set http.
 	IsAdmin bool `toml:"isAdmin,omitempty"`
 }
 
@@ -511,12 +500,19 @@ var retired = map[string]string{
 	"general.adminPassword":          "[[users]] with isAdmin = true",
 	"general.adminCert":              "https.cert",
 	"general.adminKey":               "https.key",
+	// every http account may log in through the browser, and the session
+	// cookie is scoped to the root
+	"users.cookie":     "nothing: every http account may log in through the browser",
+	"users.cookiePath": "nothing: the session cookie is always scoped to /",
 }
 
 // RetiredKeys reports the retired keys a file still sets, each as
 // "old is ignored, use new". It parses loosely into a tree of tables and
 // reports nothing for a file it cannot read: this is a courtesy on top of a
 // configuration that has already loaded, not a check of its own.
+//
+// A section is either one table or, as [[users]] is, an array of them; a key
+// set in any entry of the array is reported once.
 func RetiredKeys(data []byte) []string {
 	var tree map[string]any
 	if err := toml.Unmarshal(data, &tree); err != nil {
@@ -525,16 +521,37 @@ func RetiredKeys(data []byte) []string {
 	found := make([]string, 0, len(retired))
 	for key, replacement := range retired {
 		section, name, _ := strings.Cut(key, ".")
-		table, ok := tree[section].(map[string]any)
-		if !ok {
-			continue
-		}
-		if _, set := table[name]; set {
+		if setsKey(tree[section], name) {
 			found = append(found, fmt.Sprintf("%s is ignored, use %s", key, replacement))
 		}
 	}
 	sort.Strings(found)
 	return found
+}
+
+// setsKey reports whether a loosely parsed section, a table or an array of
+// tables, sets name anywhere in it.
+func setsKey(section any, name string) bool {
+	switch section := section.(type) {
+	case map[string]any:
+		_, set := section[name]
+		return set
+	case []any:
+		for _, entry := range section {
+			if table, ok := entry.(map[string]any); ok {
+				if _, set := table[name]; set {
+					return true
+				}
+			}
+		}
+	case []map[string]any:
+		for _, table := range section {
+			if _, set := table[name]; set {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Load reads path onto the defaults and validates the result.
@@ -734,17 +751,11 @@ func (c Config) validateUsers() error {
 					return fmt.Errorf("%s.paths[%d]: %w", where, k, err)
 				}
 			}
-			// a cookie path is a URL prefix; a browser silently drops a cookie
-			// whose path does not start at the root
-			if user.CookiePath != "" && !strings.HasPrefix(user.CookiePath, "/") {
-				return fmt.Errorf("%s.cookiePath %q has to start with a slash",
-					where, user.CookiePath)
-			}
 		}
 		// the admin interface is reached with a session, and only an http
-		// account that may use the login form ever holds one
-		if user.IsAdmin && (!user.HTTP || !user.Cookie) {
-			return fmt.Errorf("%s %q sets isAdmin but not http and cookie, "+
+		// account ever holds one
+		if user.IsAdmin && !user.HTTP {
+			return fmt.Errorf("%s %q sets isAdmin but not http, "+
 				"which the admin interface needs to log in", where, user.Username)
 		}
 	}
