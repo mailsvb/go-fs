@@ -82,7 +82,15 @@ func commentText(group *ast.CommentGroup) string {
 
 // assignment matches a key line of the template, whether it is live or
 // commented out: "port = 21" and "# basefolder = \"/srv/ftp\"" both name a key.
-var assignment = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*)\s*=`)
+// The value has to be a whole one, a string, a number, a switch or an array
+// that opens on this line, so that a sentence of a description that happens to
+// begin "http = true, whose..." is read as the prose it is.
+var assignment = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*)\s*=\s*("[^"]*"|true|false|-?\d+|\[.*)$`)
+
+// header matches a table line, "[ftp]" or "[[users]]", and nothing else that
+// starts with a bracket, so that an example array in a description is not
+// taken for a table.
+var header = regexp.MustCompile(`^\[\[?([A-Za-z][A-Za-z0-9_.]*)\]\]?$`)
 
 var (
 	templateOnce sync.Once
@@ -97,6 +105,12 @@ var (
 // The template is the fuller of the two descriptions and the one written for
 // whoever edits the file, so the admin interface prefers it and falls back to
 // the Go doc comment of the field.
+//
+// What is read is the paragraph directly above a key or a table header. A
+// comment above a run of keys with no blank line between them describes every
+// key of the run, the way "cert" and "key" share one. Everything else, a
+// paragraph set apart by a blank line or a comment after a key that is
+// followed by one, is for the reader of the file alone.
 func TemplateDocs() map[string]string {
 	templateOnce.Do(func() {
 		templateDocs = parseTemplateDocs(template)
@@ -110,11 +124,15 @@ func parseTemplateDocs(src []byte) map[string]string {
 	var pending []string
 	// an array value spans several lines; they are values, not prose
 	inArray := false
+	// the description the previous key line got, and whether nothing but key
+	// lines has come since, so that the next key of the run shares it
+	last := ""
+	adjacent := false
 
-	keep := func(key string) {
-		if len(pending) > 0 && key != "" {
+	keep := func(key, text string) {
+		if text != "" && key != "" {
 			if _, seen := found[key]; !seen {
-				found[key] = strings.Join(pending, " ")
+				found[key] = text
 			}
 		}
 		pending = nil
@@ -122,18 +140,25 @@ func parseTemplateDocs(src []byte) map[string]string {
 	// record attaches the description above a key line to that key, and notes
 	// whether the value it opens continues on the following lines
 	record := func(key, line string) {
+		text := strings.Join(pending, " ")
+		if text == "" && adjacent {
+			text = last
+		}
 		if section != "" {
-			keep(section + "." + key)
+			keep(section+"."+key, text)
 		}
 		pending = nil
+		last = text
+		adjacent = true
 		inArray = strings.Count(line, "[") > strings.Count(line, "]")
 	}
 	// enter attaches the description above a table header to the table itself,
 	// which is what the tab and the record list are labelled with
 	enter := func(name string) {
-		keep(name)
+		keep(name, strings.Join(pending, " "))
 		section = name
 		inArray = false
+		adjacent = false
 	}
 
 	for _, line := range strings.Split(string(src), "\n") {
@@ -148,18 +173,21 @@ func parseTemplateDocs(src []byte) map[string]string {
 
 		case trimmed == "":
 			pending = nil
+			adjacent = false
 
-		case strings.HasPrefix(trimmed, "["):
-			enter(strings.Trim(trimmed, "[]"))
+		case header.MatchString(trimmed):
+			enter(header.FindStringSubmatch(trimmed)[1])
 
 		case assignment.MatchString(trimmed):
 			record(assignment.FindStringSubmatch(trimmed)[1], trimmed)
 
 		case commented:
 			pending = append(pending, trimmed)
+			adjacent = false
 
 		default:
 			pending = nil
+			adjacent = false
 		}
 	}
 	return found

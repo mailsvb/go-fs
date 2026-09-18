@@ -104,7 +104,10 @@ function panel(section, index) {
   return element;
 }
 
-// fieldGrid lays out the plain keys of a section or of one record.
+// fieldGrid lays out the plain keys of a section or of one record: one row
+// per key, holding its name, its input, a help icon and the cell the help
+// opens into. Every row has all four cells, so that a key with nothing to say
+// keeps the rows below it aligned.
 function fieldGrid(fields, holder, section) {
   const grid = document.createElement("div");
   grid.className = "fields";
@@ -115,12 +118,34 @@ function fieldGrid(fields, holder, section) {
       ? materialEditor(field, holder, section)
       : editor(field, holder);
     label.htmlFor = input.id;
-    grid.append(label, input.element);
-    if (field.help) {
-      grid.append(paragraph(field.help, "help"));
-    }
+    grid.append(label, input.element, ...helpCells(field));
   });
   return grid;
+}
+
+// helpCells is the icon that opens a key's description and the cell to its
+// right that it opens into. Each icon toggles its own row, so as many as the
+// reader wants can be open at once, and the text lives only in the cell while
+// it is open, so what is not shown is not read out either.
+function helpCells(field) {
+  const text = document.createElement("div");
+  text.className = "help-text";
+  if (!field.help) {
+    return [span("", "help-toggle none"), text];
+  }
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "help-toggle";
+  toggle.setAttribute("aria-label", "help for " + field.label);
+  toggle.append(span("?", "ring"));
+  const show = (open) => {
+    toggle.setAttribute("aria-expanded", String(open));
+    text.textContent = open ? field.help : "";
+  };
+  toggle.addEventListener("click", () =>
+    show(toggle.getAttribute("aria-expanded") !== "true"));
+  show(false);
+  return [toggle, text];
 }
 
 // A table that repeats in the file, [[users]] and the like, is shown as a list

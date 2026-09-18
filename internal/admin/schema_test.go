@@ -128,20 +128,33 @@ func TestFieldKinds(t *testing.T) {
 // browser too.
 func TestHelpComesFromTheFile(t *testing.T) {
 	schema, _ := build()
+	help := make(map[string]string)
 	for _, section := range schema.Sections {
-		if section.Key != "ftp" {
-			continue
-		}
 		for _, field := range section.Fields {
-			if field.Key == "maxConnections" {
-				if field.Help != "maximum simultaneous control connections" {
-					t.Errorf("ftp.maxConnections help is %q", field.Help)
-				}
-				return
+			help[section.Key+"."+field.Key] = field.Help
+		}
+		for _, table := range section.Tables {
+			for _, field := range table.Fields {
+				help[section.Key+"."+table.Key+"."+field.Key] = field.Help
 			}
 		}
 	}
-	t.Fatal("ftp.maxConnections is not in the schema")
+	if _, ok := help["ftp.maxConnections"]; !ok {
+		t.Fatal("ftp.maxConnections is not in the schema")
+	}
+	if help["ftp.maxConnections"] != "maximum simultaneous control connections" {
+		t.Errorf("ftp.maxConnections help is %q", help["ftp.maxConnections"])
+	}
+	// one comment above several keys: every one of them carries it, so that
+	// the page shows the help icon on each
+	for _, key := range []string{"users.users.sftp", "users.users.http"} {
+		if help[key] == "" || help[key] != help["users.users.ftp"] {
+			t.Errorf("%s help is %q, want that of users.ftp %q", key, help[key], help["users.users.ftp"])
+		}
+	}
+	if help["ftps.key"] == "" || help["ftps.key"] != help["ftps.cert"] {
+		t.Errorf("ftps.key help is %q, want that of ftps.cert", help["ftps.key"])
+	}
 }
 
 // TestValuesRoundTrip is what Apply relies on: what the page is given, posted
