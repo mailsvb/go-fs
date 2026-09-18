@@ -61,7 +61,7 @@ func parseDocs(src []byte) map[string]string {
 				continue
 			}
 			// several names on one line share the comment, as
-			// "AdminUsername and AdminPassword are..." does
+			// "Cert and Key are PEM file paths" does
 			for _, name := range field.Names {
 				found[spec.Name.Name+"."+name.Name] = text
 			}

@@ -5,6 +5,23 @@
 (function () {
   "use strict";
 
+  // #/admin is the address the admin interface is remembered by, but a
+  // fragment never reaches the server, so the page turns it into the marker
+  // the server answers under. Typing it into the address bar of a listing
+  // that is already open changes only the fragment, which is what the
+  // second hook is for.
+  function toAdmin() {
+    if (window.location.hash === "#/admin") {
+      window.location.replace(window.location.pathname + "?go-fs=admin");
+      return true;
+    }
+    return false;
+  }
+  window.addEventListener("hashchange", toAdmin);
+  if (toAdmin()) {
+    return;
+  }
+
   var table = document.getElementById("listing");
   if (!table) {
     return;

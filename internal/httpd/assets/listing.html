@@ -20,6 +20,7 @@
   <symbol id="i-upload" viewBox="0 0 24 24"><path d="M4 16v4h16v-4"/><path d="M12 4v11m-4-7 4-4 4 4"/></symbol>
   <symbol id="i-login" viewBox="0 0 24 24"><path d="M13 4h6v16h-6"/><path d="M4 12h10m-3.5-3.5L14 12l-3.5 3.5"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M11 4H5v16h6"/><path d="M20 12H10m3.5-3.5L17 12l-3.5 3.5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3m0 13v3M2.5 12h3m13 0h3M5.3 5.3l2.1 2.1m9.2 9.2 2.1 2.1m0-13.4-2.1 2.1m-9.2 9.2-2.1 2.1"/></symbol>
 </svg>
 
 <header>
@@ -39,6 +40,9 @@
     {{with .Session}}
     {{if .User}}
     <span class="who">{{.User}}</span>
+    {{if .Admin}}
+    <a class="plain" href="{{.Admin}}"><svg class="ic"><use href="#i-gear"/></svg>Admin</a>
+    {{end}}
     <form class="inline" method="post" action="{{.Logout}}"><button class="plain" type="submit"><svg class="ic"><use href="#i-logout"/></svg>Log out</button></form>
     {{else if .CanLogin}}
     <a class="plain" href="{{.Login}}"><svg class="ic"><use href="#i-login"/></svg>Log in</a>

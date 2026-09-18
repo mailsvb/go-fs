@@ -34,7 +34,6 @@ func Template() []byte {
 // Config is the whole configuration file.
 type Config struct {
 	General General `toml:"general"`
-	Log     Log     `toml:"log"`
 	Users   []User  `toml:"users"`
 	FTP     FTP     `toml:"ftp"`
 	FTPS    FTPS    `toml:"ftps"`
@@ -58,42 +57,12 @@ type General struct {
 	// ReloadInterval is how many seconds pass between two checks of the file.
 	ReloadInterval int `toml:"reloadInterval"`
 
-	// AdminInterfaceEnabled serves the web interface that edits this file. It
-	// is off unless it is switched on, so that an upgrade never opens it by
-	// itself.
-	AdminInterfaceEnabled bool `toml:"adminInterfaceEnabled"`
-	// AdminInterfaceAddress is the interface it binds to. It is the loopback
-	// address by default, because the page shows and edits every password in
-	// this file; set it to an empty string to bind every interface.
-	AdminInterfaceAddress string `toml:"adminInterfaceAddress"`
-	AdminInterfacePort    int    `toml:"adminInterfacePort"`
-	// AdminInterfaceUseHTTPS serves the interface over TLS, which is what it
-	// does unless this is turned off. Turn it off only to put a proxy that
-	// terminates TLS in front of it: the page carries every password in the
-	// file, and Basic authentication sends the admin account with every
-	// request.
-	AdminInterfaceUseHTTPS bool `toml:"adminInterfaceUseHttps"`
-	// AdminUsername and AdminPassword are the single account of the web
-	// interface. Both have to be set for it to start.
-	AdminUsername string `toml:"adminUsername"`
-	AdminPassword string `toml:"adminPassword"`
-	// AdminCert and AdminKey are PEM file paths. The interface is always
-	// served over TLS; when both are empty a self-signed certificate is
-	// generated at startup.
-	AdminCert string `toml:"adminCert"`
-	AdminKey  string `toml:"adminKey"`
-}
-
-// Log controls the diagnostics the servers produce. The original emitted
-// 'log', 'debug', 'warn', 'error', 'listen', 'login', 'logoff', 'download' and
-// 'upload' events; here they become structured log records.
-type Log struct {
-	// Level is one of debug, info, warn, error. The protocol trace that the
-	// original reported as 'log' events is written at debug level. It can be
-	// changed without a restart: a reload switches the running logger over.
-	Level string `toml:"level"`
-	// Format is text or json. Changing it needs a restart.
-	Format string `toml:"format"`
+	// LogLevel is one of debug, info, warn, error. The protocol trace that
+	// the original reported as 'log' events is written at debug level. It can
+	// be changed without a restart: a reload switches the running logger over.
+	LogLevel string `toml:"logLevel"`
+	// LogFormat is text or json. Changing it needs a restart.
+	LogFormat string `toml:"logFormat"`
 }
 
 // FTPS configures the TLS interface of the FTP server. It is a section of its
@@ -168,6 +137,11 @@ type User struct {
 	// when it is not set. It is a hint to the browser, not a permission: Paths
 	// are checked on every request either way.
 	CookiePath string `toml:"cookiePath,omitempty"`
+
+	// IsAdmin lets the account into the admin interface, the page that edits
+	// this file, which the HTTP server serves at ?go-fs=admin. Reaching it
+	// takes a session, so the account also has to set http and cookie.
+	IsAdmin bool `toml:"isAdmin,omitempty"`
 }
 
 // Permissions resolves the user entry. Every right has to be granted
@@ -316,6 +290,12 @@ type HTTP struct {
 	// the digest response, changing it invalidates saved credentials.
 	Realm string `toml:"realm"`
 
+	// EnableAdminInterface serves the web interface that edits this file at
+	// ?go-fs=admin on both listeners. It is reachable only by an account that
+	// sets isAdmin and has logged in through the browser; the page carries
+	// every password in the file, so it belongs on the https listener.
+	EnableAdminInterface bool `toml:"enableAdminInterface"`
+
 	MaxConnections int `toml:"maxConnections"`
 	// ReadTimeout, WriteTimeout and IdleTimeout are seconds, 0 disables one.
 	// WriteTimeout is off by default: it would cap the duration of a download.
@@ -421,15 +401,10 @@ type TFTP struct {
 func Default() Config {
 	return Config{
 		General: General{
-			ReloadConfig:           true,
-			ReloadInterval:         5,
-			AdminInterfaceAddress:  "127.0.0.1",
-			AdminInterfacePort:     10443,
-			AdminInterfaceUseHTTPS: true,
-		},
-		Log: Log{
-			Level:  "info",
-			Format: "text",
+			ReloadConfig:   true,
+			ReloadInterval: 5,
+			LogLevel:       "info",
+			LogFormat:      "text",
 		},
 		FTP: FTP{
 			Enabled:             true,
@@ -459,6 +434,7 @@ func Default() Config {
 		HTTP: HTTP{
 			Port:                 9080,
 			Realm:                "go-fs",
+			EnableAdminInterface: true,
 			MaxConnections:       100,
 			ReadTimeout:          120,
 			IdleTimeout:          120,
@@ -508,6 +484,19 @@ var retired = map[string]string{
 	"ftp.users":  "[[users]] with ftp = true",
 	"sftp.users": "[[users]] with sftp = true",
 	"http.users": "[[users]] with http = true",
+	// the [log] section moved into [general]
+	"log.level":  "general.logLevel",
+	"log.format": "general.logFormat",
+	// the admin interface is served by the http server and logs in with one
+	// of its accounts, so it has no listener and no account of its own
+	"general.adminInterfaceEnabled":  "http.enableAdminInterface",
+	"general.adminInterfaceAddress":  "http.address",
+	"general.adminInterfacePort":     "http.port or https.port",
+	"general.adminInterfaceUseHttps": "https.enabled",
+	"general.adminUsername":          "[[users]] with isAdmin = true",
+	"general.adminPassword":          "[[users]] with isAdmin = true",
+	"general.adminCert":              "https.cert",
+	"general.adminKey":               "https.key",
 }
 
 // RetiredKeys reports the retired keys a file still sets, each as
@@ -606,9 +595,6 @@ func (c Config) ExampleAccounts() []string {
 			note(fmt.Sprintf("users[%d]", i), user.Username)
 		}
 	}
-	if exampleSecrets[c.General.AdminPassword] {
-		note("general.adminPassword", c.General.AdminUsername)
-	}
 	return found
 }
 
@@ -634,15 +620,15 @@ func LooseFilePermissions(path string) (os.FileMode, bool) {
 
 // Validate reports configuration that cannot work.
 func (c Config) Validate() error {
-	switch c.Log.Level {
+	switch c.General.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
-		return fmt.Errorf("log.level %q is not one of debug, info, warn, error", c.Log.Level)
+		return fmt.Errorf("general.logLevel %q is not one of debug, info, warn, error", c.General.LogLevel)
 	}
-	switch c.Log.Format {
+	switch c.General.LogFormat {
 	case "text", "json":
 	default:
-		return fmt.Errorf("log.format %q is not one of text, json", c.Log.Format)
+		return fmt.Errorf("general.logFormat %q is not one of text, json", c.General.LogFormat)
 	}
 	if c.General.ReloadInterval < 1 {
 		return errors.New("general.reloadInterval has to be at least 1")
@@ -657,14 +643,8 @@ func (c Config) Validate() error {
 		}
 	}
 	if !c.FTP.Enabled && !c.FTPS.Enabled && !c.SFTP.Enabled &&
-		!c.HTTP.Enabled && !c.HTTPS.Enabled && !c.TFTP.Enabled &&
-		!c.General.AdminInterfaceEnabled {
+		!c.HTTP.Enabled && !c.HTTPS.Enabled && !c.TFTP.Enabled {
 		return errors.New("no server is enabled, nothing to do")
-	}
-	if c.General.AdminInterfaceEnabled {
-		if err := c.General.validateAdmin(); err != nil {
-			return err
-		}
 	}
 	if err := c.validateUsers(); err != nil {
 		return err
@@ -746,6 +726,12 @@ func (c Config) validateUsers() error {
 				return fmt.Errorf("%s.cookiePath %q has to start with a slash",
 					where, user.CookiePath)
 			}
+		}
+		// the admin interface is reached with a session, and only an http
+		// account that may use the login form ever holds one
+		if user.IsAdmin && (!user.HTTP || !user.Cookie) {
+			return fmt.Errorf("%s %q sets isAdmin but not http and cookie, "+
+				"which the admin interface needs to log in", where, user.Username)
 		}
 	}
 	return nil
@@ -940,31 +926,6 @@ func (t TFTP) validate() error {
 		return errors.New("tftp.maxFileSize cannot be negative")
 	}
 	return checkFolder("tftp.basefolder", t.Basefolder)
-}
-
-// validateAdmin checks the web interface. It edits every password in this file,
-// so it may not be reachable without an account of its own.
-func (g General) validateAdmin() error {
-	if err := checkPort("general.adminInterfacePort", g.AdminInterfacePort); err != nil {
-		return err
-	}
-	if g.AdminInterfaceAddress != "" && net.ParseIP(g.AdminInterfaceAddress) == nil {
-		return fmt.Errorf("general.adminInterfaceAddress %q is not an address",
-			g.AdminInterfaceAddress)
-	}
-	if g.AdminUsername == "" {
-		return errors.New("general.adminUsername is not set, " +
-			"the admin interface cannot be served without an account")
-	}
-	if g.AdminPassword == "" {
-		return errors.New("general.adminPassword is not set, " +
-			"the admin interface cannot be served without a password")
-	}
-	if err := checkPair("general.adminCert", g.AdminCert,
-		"general.adminKey", g.AdminKey); err != nil {
-		return err
-	}
-	return nil
 }
 
 // checkPair reports a certificate and private key that cannot be served. Both

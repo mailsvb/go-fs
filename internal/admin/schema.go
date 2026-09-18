@@ -226,9 +226,9 @@ func secret(name string) bool {
 // while an unrelated future apiKey is not mistaken for a private key.
 func material(name string) string {
 	switch strings.ToLower(name) {
-	case "cert", "admincert":
+	case "cert":
 		return config.KindCertificate
-	case "key", "adminkey":
+	case "key":
 		return config.KindTLSKey
 	case "hostkey":
 		return config.KindSSHKey

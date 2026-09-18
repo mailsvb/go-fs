@@ -24,7 +24,6 @@ func send(t *testing.T, front *httptest.Server, path string, body any,
 		t.Fatal(err)
 	}
 	request, _ := http.NewRequest(http.MethodPost, front.URL+path, bytes.NewReader(encoded))
-	request.SetBasicAuth("admin", "secret")
 	request.Header.Set("Content-Type", "application/json")
 	for name, value := range headers {
 		request.Header.Set(name, value)
@@ -45,21 +44,19 @@ func send(t *testing.T, front *httptest.Server, path string, body any,
 func uploadFile(t *testing.T, front *httptest.Server, kind, name string,
 	content []byte) (int, map[string]any, string) {
 	t.Helper()
-	return send(t, front, "/api/upload", map[string]any{
+	return send(t, front, "/?go-fs=admin-upload", map[string]any{
 		"kind":     kind,
 		"filename": name,
 		"content":  base64.StdEncoding.EncodeToString(content),
 	}, nil)
 }
 
-// The eight keys that hold key material get the buttons, and nothing else
+// The six keys that hold key material get the buttons, and nothing else
 // does. authorizedKeys in particular stays a plain list of pasted lines.
 func TestSchemaMarksTheKeyMaterial(t *testing.T) {
 	schema, _ := build()
 
 	want := map[string]string{
-		"general.adminCert":           config.KindCertificate,
-		"general.adminKey":            config.KindTLSKey,
 		"ftps.cert":                   config.KindCertificate,
 		"ftps.key":                    config.KindTLSKey,
 		"https.cert":                  config.KindCertificate,
@@ -193,7 +190,7 @@ func TestUploadRefusesTheWrongFile(t *testing.T) {
 func TestGenerateProducesMaterialTheServerAccepts(t *testing.T) {
 	_, front := testServer(t, testConfig(t))
 
-	status, answer, body := send(t, front, "/api/generate",
+	status, answer, body := send(t, front, "/?go-fs=admin-generate",
 		map[string]any{"kind": config.KindCertificate}, nil)
 	if status != http.StatusOK {
 		t.Fatalf("generating a certificate: %d %s", status, body)
@@ -210,7 +207,7 @@ func TestGenerateProducesMaterialTheServerAccepts(t *testing.T) {
 		t.Errorf("pairSummary = %q", summary)
 	}
 
-	status, answer, body = send(t, front, "/api/generate",
+	status, answer, body = send(t, front, "/?go-fs=admin-generate",
 		map[string]any{"kind": config.KindSSHKey}, nil)
 	if status != http.StatusOK {
 		t.Fatalf("generating a host key: %d %s", status, body)
@@ -222,7 +219,7 @@ func TestGenerateProducesMaterialTheServerAccepts(t *testing.T) {
 
 	// a private key alone would match no certificate, so there is nothing to
 	// generate for it
-	if status, _, _ := send(t, front, "/api/generate",
+	if status, _, _ := send(t, front, "/?go-fs=admin-generate",
 		map[string]any{"kind": config.KindTLSKey}, nil); status != http.StatusBadRequest {
 		t.Errorf("generating a lone private key: %d", status)
 	}
@@ -234,7 +231,7 @@ func TestGeneratedMaterialSurvivesApply(t *testing.T) {
 	path := testConfig(t)
 	_, front := testServer(t, path)
 
-	_, generated, _ := send(t, front, "/api/generate",
+	_, generated, _ := send(t, front, "/?go-fs=admin-generate",
 		map[string]any{"kind": config.KindCertificate}, nil)
 
 	values := get(t, front).Values
@@ -270,8 +267,8 @@ func TestApplyRefusesAMismatchedPair(t *testing.T) {
 	path := testConfig(t)
 	_, front := testServer(t, path)
 
-	_, first, _ := send(t, front, "/api/generate", map[string]any{"kind": config.KindCertificate}, nil)
-	_, second, _ := send(t, front, "/api/generate", map[string]any{"kind": config.KindCertificate}, nil)
+	_, first, _ := send(t, front, "/?go-fs=admin-generate", map[string]any{"kind": config.KindCertificate}, nil)
+	_, second, _ := send(t, front, "/?go-fs=admin-generate", map[string]any{"kind": config.KindCertificate}, nil)
 
 	values := get(t, front).Values
 	ftps := section(t, values, "ftps")
@@ -296,16 +293,11 @@ func TestApplyRefusesAMismatchedPair(t *testing.T) {
 // into the configuration.
 func TestMaterialEndpointsAreGuarded(t *testing.T) {
 	_, front := testServer(t, testConfig(t))
-	certPEM, _, err := tlsconf.SelfSignedPEM()
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	for _, path := range []string{"/api/upload", "/api/generate"} {
+	for _, path := range []string{"/?go-fs=admin-upload", "/?go-fs=admin-generate"} {
 		// a form post, which is the shape a cross site request can take
 		request, _ := http.NewRequest(http.MethodPost, front.URL+path,
 			strings.NewReader("kind=certificate"))
-		request.SetBasicAuth("admin", "secret")
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		answer, err := front.Client().Do(request)
 		if err != nil {
@@ -321,19 +313,5 @@ func TestMaterialEndpointsAreGuarded(t *testing.T) {
 			map[string]string{"Origin": "https://elsewhere.example"}); status != http.StatusForbidden {
 			t.Errorf("%s took a request from another origin: %d", path, status)
 		}
-	}
-
-	// and without an account
-	request, _ := http.NewRequest(http.MethodPost, front.URL+"/api/upload",
-		strings.NewReader(`{"kind":"certificate","content":"`+
-			base64.StdEncoding.EncodeToString(certPEM)+`"}`))
-	request.Header.Set("Content-Type", "application/json")
-	answer, err := front.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	answer.Body.Close()
-	if answer.StatusCode != http.StatusUnauthorized {
-		t.Errorf("an unauthenticated upload was answered %d", answer.StatusCode)
 	}
 }

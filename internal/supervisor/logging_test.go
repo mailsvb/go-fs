@@ -37,7 +37,7 @@ func TestReloadSwitchesTheLogLevel(t *testing.T) {
 		t.Fatal("the first apply must not report a level change")
 	}
 
-	cfg.Log.Level = "debug"
+	cfg.General.LogLevel = "debug"
 	if err := sup.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -47,15 +47,15 @@ func TestReloadSwitchesTheLogLevel(t *testing.T) {
 	if !strings.Contains(out.String(), "log level changed") {
 		t.Errorf("the switch has to be reported:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "sections=log") {
+	if !strings.Contains(out.String(), "sections=general") {
 		t.Errorf("the reload record has to name the changed section:\n%s", out.String())
 	}
 
-	cfg.Log.Format = "json"
+	cfg.General.LogFormat = "json"
 	if err := sup.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "log.format changed") {
+	if !strings.Contains(out.String(), "general.logFormat changed") {
 		t.Errorf("a format change cannot apply and has to say so:\n%s", out.String())
 	}
 }
@@ -67,8 +67,8 @@ func TestChangedSections(t *testing.T) {
 		t.Errorf("identical configurations differ in %v", got)
 	}
 	after.FTP.Port = 2121
-	after.Log.Level = "debug"
-	if got := changedSections(before, after); !slices.Equal(got, []string{"log", "ftp"}) {
+	after.General.LogLevel = "debug"
+	if got := changedSections(before, after); !slices.Equal(got, []string{"general", "ftp"}) {
 		t.Errorf("changed sections = %v", got)
 	}
 }

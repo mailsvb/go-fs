@@ -20,7 +20,7 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 	for _, section := range schema.Sections {
 		sections[section.Key] = section
 	}
-	for _, name := range []string{"general", "log", "users", "ftp", "ftps", "sftp", "http", "https", "tftp"} {
+	for _, name := range []string{"general", "users", "ftp", "ftps", "sftp", "http", "https", "tftp"} {
 		if _, ok := sections[name]; !ok {
 			t.Errorf("the schema has no %s section", name)
 		}
@@ -30,7 +30,7 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 			len(sections), reflect.TypeOf(config.Config{}).NumField())
 	}
 
-	tables := map[string]int{"ftp": 0, "sftp": 0, "http": 1, "general": 0, "log": 0, "users": 1}
+	tables := map[string]int{"ftp": 0, "sftp": 0, "http": 1, "general": 0, "users": 1}
 	for name, want := range tables {
 		if got := len(sections[name].Tables); got != want {
 			t.Errorf("%s has %d repeated tables, want %d", name, got, want)
@@ -38,7 +38,7 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 	}
 
 	// the accounts are a list at the top of the file, and their tab sits
-	// where the file has them: between the log and the first server
+	// where the file has them: between general and the first server
 	if !sections["users"].Direct || sections["ftp"].Direct {
 		t.Error("users is the direct section, and the only one")
 	}
@@ -46,10 +46,10 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 		t.Errorf("users has fields of its own: %v", sections["users"].Fields)
 	}
 	var order []string
-	for _, section := range schema.Sections[:4] {
+	for _, section := range schema.Sections[:3] {
 		order = append(order, section.Key)
 	}
-	if want := []string{"general", "log", "users", "ftp"}; !reflect.DeepEqual(order, want) {
+	if want := []string{"general", "users", "ftp"}; !reflect.DeepEqual(order, want) {
 		t.Errorf("the tabs open %v, want %v", order, want)
 	}
 }
@@ -106,8 +106,9 @@ func TestFieldKinds(t *testing.T) {
 		"ftp.basefolder":                  kindText,
 		"http.maxUploadSize":              kindInt,
 		"http.methodsRequireAuth":         kindLines,
-		"general.adminPassword":           kindSecret,
-		"general.adminCert":               kindText,
+		"general.logLevel":                kindText,
+		"http.enableAdminInterface":       kindBool,
+		"users.users.isAdmin":             kindBool,
 		"sftp.hostkey":                    kindSecret,
 		"users.users.password":            kindSecret,
 		"users.users.ftp":                 kindBool,

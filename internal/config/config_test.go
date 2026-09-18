@@ -66,8 +66,11 @@ basefolder = "{{folder}}"
 	if cfg.FTP.AllowFtpBounce || cfg.FTP.AllowForeignDataConnection {
 		t.Error("the protective defaults have to stay off")
 	}
-	if cfg.Log.Level != "info" || cfg.Log.Format != "text" {
-		t.Errorf("log defaults lost: %+v", cfg.Log)
+	if cfg.General.LogLevel != "info" || cfg.General.LogFormat != "text" {
+		t.Errorf("log defaults lost: %+v", cfg.General)
+	}
+	if !cfg.HTTP.EnableAdminInterface {
+		t.Error("the admin interface has to be on by default")
 	}
 }
 
@@ -129,34 +132,14 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		mutate func(*Config)
 		want   string
 	}{
-		{"bad log level", func(c *Config) { c.Log.Level = "chatty" }, "log.level"},
-		{"admin without a name", func(c *Config) {
-			c.General.AdminInterfaceEnabled = true
-			c.General.AdminPassword = "secret"
-		}, "general.adminUsername"},
-		{"admin without a password", func(c *Config) {
-			c.General.AdminInterfaceEnabled = true
-			c.General.AdminUsername = "admin"
-		}, "general.adminPassword"},
-		{"admin port", func(c *Config) {
-			c.General.AdminInterfaceEnabled = true
-			c.General.AdminUsername = "admin"
-			c.General.AdminPassword = "secret"
-			c.General.AdminInterfacePort = 0
-		}, "general.adminInterfacePort"},
-		{"admin address", func(c *Config) {
-			c.General.AdminInterfaceEnabled = true
-			c.General.AdminUsername = "admin"
-			c.General.AdminPassword = "secret"
-			c.General.AdminInterfaceAddress = "the loopback"
-		}, "general.adminInterfaceAddress"},
-		{"half an admin tls pair", func(c *Config) {
-			c.General.AdminInterfaceEnabled = true
-			c.General.AdminUsername = "admin"
-			c.General.AdminPassword = "secret"
-			c.General.AdminCert = "cert.pem"
-		}, "together"},
-		{"bad log format", func(c *Config) { c.Log.Format = "xml" }, "log.format"},
+		{"bad log level", func(c *Config) { c.General.LogLevel = "chatty" }, "general.logLevel"},
+		{"bad log format", func(c *Config) { c.General.LogFormat = "xml" }, "general.logFormat"},
+		{"admin without http", func(c *Config) {
+			c.Users = []User{{Username: "root", Password: "x", FTP: true, IsAdmin: true}}
+		}, "isAdmin but not http and cookie"},
+		{"admin without cookie", func(c *Config) {
+			c.Users = []User{{Username: "root", Password: "x", HTTP: true, IsAdmin: true}}
+		}, "isAdmin but not http and cookie"},
 		{"nothing enabled", func(c *Config) { c.FTP.Enabled = false; c.TFTP.Enabled = false }, "nothing to do"},
 		{"ftp port", func(c *Config) { c.FTP.Port = 0 }, "ftp.port"},
 		{"passive range reversed", func(c *Config) {
@@ -292,6 +275,8 @@ func TestValidateAcceptsAccountsAsTheyAreMeant(t *testing.T) {
 		{Username: "anonymous", FTP: true, AllowLoginWithoutPassword: new(true)},
 		{Username: "keys", SFTP: true, AuthorizedKeys: []string{authorizedKey(t)}},
 		{Username: "john", Password: "doe", FTP: true, SFTP: true, HTTP: true},
+		// an admin is an http account that may use the login form
+		{Username: "root", Password: "x", HTTP: true, Cookie: true, IsAdmin: true},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -302,7 +287,7 @@ func TestValidateAcceptsAccountsAsTheyAreMeant(t *testing.T) {
 	if got := cfg.SFTPUsers(); len(got) != 2 || got[0].Username != "keys" {
 		t.Errorf("SFTPUsers = %v", names(got))
 	}
-	if got := cfg.HTTPUsers(); len(got) != 1 || got[0].Username != "john" {
+	if got := cfg.HTTPUsers(); len(got) != 2 || got[0].Username != "john" || got[1].Username != "root" {
 		t.Errorf("HTTPUsers = %v", names(got))
 	}
 }
@@ -483,60 +468,6 @@ func TestGeneralBasefolderHasToBeAbsolute(t *testing.T) {
 	}
 }
 
-// TestAdminInterfaceCanStandAlone checks that a host brought up with only the
-// web interface on is a valid configuration: it is how the rest of the file
-// gets filled in.
-func TestAdminInterfaceCanStandAlone(t *testing.T) {
-	cfg := Default()
-	cfg.FTP.Enabled = false
-	cfg.TFTP.Enabled = false
-	cfg.General.Basefolder = t.TempDir()
-	cfg.General.AdminInterfaceEnabled = true
-	cfg.General.AdminUsername = "admin"
-	cfg.General.AdminPassword = "secret"
-
-	if err := cfg.Resolved().Validate(); err != nil {
-		t.Fatalf("a host with only the admin interface on was refused: %v", err)
-	}
-}
-
-// The admin interface is served over TLS unless the file turns that off, which
-// is a default a plain bool can carry because Parse unmarshals onto it.
-func TestAdminInterfaceUsesHTTPSUnlessTurnedOff(t *testing.T) {
-	if !Default().General.AdminInterfaceUseHTTPS {
-		t.Error("the default has to be TLS")
-	}
-
-	kept, err := Parse([]byte("[general]\nadminInterfacePort = 10443\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !kept.General.AdminInterfaceUseHTTPS {
-		t.Error("a file that does not mention the key should keep TLS")
-	}
-
-	off, err := Parse([]byte("[general]\nadminInterfaceUseHttps = false\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if off.General.AdminInterfaceUseHTTPS {
-		t.Error("adminInterfaceUseHttps = false was not read")
-	}
-
-	// and plain HTTP is a valid configuration, not one to be refused
-	cfg := Default()
-	cfg.General.Basefolder = t.TempDir()
-	cfg.General.AdminInterfaceEnabled = true
-	cfg.General.AdminInterfaceUseHTTPS = false
-	cfg.General.AdminUsername = "admin"
-	cfg.General.AdminPassword = "secret"
-	cfg.FTP.Enabled = false
-	cfg.TFTP.Enabled = false
-	if err := cfg.Resolved().Validate(); err != nil {
-		t.Errorf("plain HTTP was refused: %v", err)
-	}
-}
-
 // TestParseLeavesTheFallbackAlone is what the admin interface depends on:
 // Parse says what the file says, and only Resolved hands the fallback out.
 func TestParseLeavesTheFallbackAlone(t *testing.T) {
@@ -566,8 +497,6 @@ func TestDocumentedPasswordsAreReported(t *testing.T) {
 		{Username: "jane", Password: "chosen", FTP: true},
 		{Username: "max", Password: "mustermann", HTTP: true},
 	}
-	cfg.General.AdminUsername = "admin"
-	cfg.General.AdminPassword = "chosen too"
 
 	found := cfg.ExampleAccounts()
 	if len(found) != 2 {
@@ -664,6 +593,21 @@ func TestRetiredKeysAreReported(t *testing.T) {
 	if !strings.Contains(found[0], "http.sessionTimeout") ||
 		!strings.Contains(found[0], "http.httpSessionTokenLifetime") {
 		t.Errorf("RetiredKeys = %q, want it to name both the old and the new key", found[0])
+	}
+	// the [log] section and the admin listener moved, each key naming where to
+	old := "[general]\nadminInterfaceEnabled = true\nadminUsername = \"admin\"\n[log]\nlevel = \"debug\"\n"
+	found = RetiredKeys([]byte(old))
+	if len(found) != 3 {
+		t.Fatalf("RetiredKeys = %v, want three entries", found)
+	}
+	for _, want := range []string{
+		"general.adminInterfaceEnabled is ignored, use http.enableAdminInterface",
+		"general.adminUsername is ignored, use [[users]] with isAdmin = true",
+		"log.level is ignored, use general.logLevel",
+	} {
+		if !strings.Contains(strings.Join(found, "\n"), want) {
+			t.Errorf("RetiredKeys = %q, want %q", found, want)
+		}
 	}
 	if found := RetiredKeys(Template()); len(found) != 0 {
 		t.Errorf("the template sets a retired key: %v", found)

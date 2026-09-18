@@ -119,6 +119,9 @@ func fullUser(name, password string) config.User {
 type httpConfig struct {
 	config.HTTP
 	Users []config.User
+	// ConfigPath is the file the admin interface edits, empty for a server
+	// without one, which is what most tests want.
+	ConfigPath string
 }
 
 // newServer starts a server on an ephemeral port. By default nothing is
@@ -151,7 +154,7 @@ func newServerWith(t *testing.T, tune func(*httpConfig), tuneTLS func(*config.HT
 	}
 
 	logs := &logStore{}
-	server, err := New(cfg.HTTP, https, cfg.Users, slog.New(&recorder{store: logs}))
+	server, err := New(cfg.HTTP, https, cfg.Users, cfg.ConfigPath, slog.New(&recorder{store: logs}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

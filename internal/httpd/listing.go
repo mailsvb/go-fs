@@ -285,6 +285,9 @@ type sessionView struct {
 	CanLogin bool
 	Login    string
 	Logout   string
+	// Admin is the link to the admin interface, empty for everyone but an
+	// admin account signed in with a session while the interface is on.
+	Admin string
 }
 
 // loginData is the login page.

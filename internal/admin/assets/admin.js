@@ -2,6 +2,10 @@
 // generates from the configuration struct. Nothing here knows the name of a
 // single setting, so a key added to the configuration file shows up with no
 // change to this file.
+//
+// The endpoints are asked for relative to the page, as values of the file
+// server's go-fs marker, so the interface works under whatever folder it was
+// opened in and reserves no name in the served one.
 
 let schema = null;
 let values = null;
@@ -30,7 +34,7 @@ function say(text, good) {
 }
 
 async function load() {
-  const answer = await fetch("/api/config", { headers: { Accept: "application/json" } });
+  const answer = await fetch("?go-fs=admin-config", { headers: { Accept: "application/json" } });
   if (!answer.ok) {
     say("The configuration could not be read: " + (await answer.text()));
     return;
@@ -355,7 +359,7 @@ function materialEditor(field, holder, section) {
     if (!file) return;
     report("");
     try {
-      const result = await post("/api/upload", {
+      const result = await post("?go-fs=admin-upload", {
         kind: field.upload,
         filename: file.name,
         content: await base64Of(file),
@@ -380,7 +384,7 @@ function materialEditor(field, holder, section) {
     buttons.append(plainButton("Generate", async () => {
       report("");
       try {
-        const result = await post("/api/generate", { kind: field.upload });
+        const result = await post("?go-fs=admin-generate", { kind: field.upload });
         holder[field.key] = result.value;
         summaries[path] = result.summary;
         if (field.pair) {
@@ -466,7 +470,7 @@ applyButton.addEventListener("click", async () => {
   applyButton.disabled = true;
   status.textContent = "writing...";
   try {
-    const answer = await fetch("/api/config", {
+    const answer = await fetch("?go-fs=admin-config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(values),

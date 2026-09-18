@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"go-fs/internal/admin"
 	"go-fs/internal/secrets"
 	"go-fs/internal/vfs"
 )
@@ -212,13 +213,16 @@ func loginPolicy(nonce string) string {
 }
 
 // sessionViewFor is what the listing header says about who is looking at it.
-func sessionViewFor(set *settings, r *http.Request, cred credential) sessionView {
+func (s *Server) sessionViewFor(set *settings, r *http.Request, cred credential) sessionView {
 	who := sessionView{
 		Login:  loginURL(r.URL),
 		Logout: logoutURL(r.URL),
 	}
 	if cred.token && cred.user != nil {
 		who.User = cred.user.name
+		if s.admits(set, cred) {
+			who.Admin = adminURL(r.URL)
+		}
 		return who
 	}
 	// someone who authenticated with a header has no session to log out of, so
@@ -232,6 +236,17 @@ func logoutURL(u *url.URL) string {
 	marked := *u
 	query := marked.Query()
 	query.Set(sessionParam, actionLogout)
+	marked.RawQuery = query.Encode()
+	return marked.RequestURI()
+}
+
+// adminURL is this request's own URL with the admin marker on it. It is the
+// folder being looked at rather than the root, so that an account whose cookie
+// is scoped to a folder reaches the interface from there.
+func adminURL(u *url.URL) string {
+	marked := *u
+	query := marked.Query()
+	query.Set(sessionParam, admin.ActionPage)
 	marked.RawQuery = query.Encode()
 	return marked.RequestURI()
 }

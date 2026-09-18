@@ -1,18 +1,16 @@
 package admin
 
 import (
-	"context"
-	"crypto/tls"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"go-fs/internal/config"
-	"go-fs/internal/service"
 )
 
 func TestStateDescribesTheFile(t *testing.T) {
@@ -47,7 +45,7 @@ func TestApplyWritesTheFile(t *testing.T) {
 
 	body := get(t, front)
 	section(t, body.Values, "ftp")["port"] = 2122
-	section(t, body.Values, "log")["level"] = "debug"
+	section(t, body.Values, "general")["logLevel"] = "debug"
 
 	if status, answer := post(t, front, body.Values, nil); status != http.StatusOK {
 		t.Fatalf("apply answered %d: %s", status, answer)
@@ -57,8 +55,8 @@ func TestApplyWritesTheFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if written.FTP.Port != 2122 || written.Log.Level != "debug" {
-		t.Errorf("the file says port %d level %q", written.FTP.Port, written.Log.Level)
+	if written.FTP.Port != 2122 || written.General.LogLevel != "debug" {
+		t.Errorf("the file says port %d level %q", written.FTP.Port, written.General.LogLevel)
 	}
 	if len(written.Users) != 1 || written.Users[0].Username != "john" || !written.Users[0].FTP {
 		t.Errorf("the accounts did not survive the write: %+v", written.Users)
@@ -175,30 +173,6 @@ func TestApplyReportsAFileItCannotWrite(t *testing.T) {
 	}
 }
 
-func TestUnauthenticatedIsRefused(t *testing.T) {
-	path := testConfig(t)
-	_, front := testServer(t, path)
-
-	for _, credentials := range [][2]string{{"", ""}, {"admin", "wrong"}, {"root", "secret"}} {
-		request, _ := http.NewRequest(http.MethodGet, front.URL+"/api/config", nil)
-		if credentials[0] != "" {
-			request.SetBasicAuth(credentials[0], credentials[1])
-		}
-		answer, err := front.Client().Do(request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, _ = io.Copy(io.Discard, answer.Body)
-		answer.Body.Close()
-		if answer.StatusCode != http.StatusUnauthorized {
-			t.Errorf("%v answered %s", credentials, answer.Status)
-		}
-		if !strings.HasPrefix(answer.Header.Get("WWW-Authenticate"), "Basic ") {
-			t.Errorf("no Basic challenge: %q", answer.Header.Get("WWW-Authenticate"))
-		}
-	}
-}
-
 // TestApplyRefusesAnotherOrigin covers the two guards against a page on another
 // site writing this configuration with the browser's saved credentials.
 func TestApplyRefusesAnotherOrigin(t *testing.T) {
@@ -230,93 +204,84 @@ func TestApplyRefusesAnotherOrigin(t *testing.T) {
 	}
 }
 
+// TestPageIsServed checks the page and that everything it needs is in it: its
+// style and script are inlined under a nonce, because a URL of their own
+// would shadow a name in the served folder.
 func TestPageIsServed(t *testing.T) {
 	path := testConfig(t)
 	_, front := testServer(t, path)
 
-	for name, wantType := range map[string]string{
-		"/":          "text/html; charset=utf-8",
-		"/admin.css": "text/css; charset=utf-8",
-		"/admin.js":  "text/javascript; charset=utf-8",
+	answer, err := front.Client().Get(front.URL + "/sub/?go-fs=admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(answer.Body)
+	answer.Body.Close()
+	if answer.StatusCode != http.StatusOK {
+		t.Fatalf("the page answered %s", answer.Status)
+	}
+	if got := answer.Header.Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Errorf("the page is %q", got)
+	}
+	if got := answer.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	policy := answer.Header.Get("Content-Security-Policy")
+	nonce := regexp.MustCompile(`script-src 'nonce-([^']+)'`).FindStringSubmatch(policy)
+	if nonce == nil {
+		t.Fatalf("the policy names no script nonce: %q", policy)
+	}
+	page := string(body)
+	for _, want := range []string{
+		`<style nonce="` + nonce[1] + `">`,
+		`<script nonce="` + nonce[1] + `">`,
+		// the script and the style are there, not linked
+		"async function load()",
+		"--accent:",
+		// the way back and out, relative to the folder the page was opened in
+		`href="/sub/"`,
+		`action="/sub/?go-fs=logout"`,
 	} {
-		request, _ := http.NewRequest(http.MethodGet, front.URL+name, nil)
-		request.SetBasicAuth("admin", "secret")
+		if !strings.Contains(page, want) {
+			t.Errorf("the page does not contain %q", want)
+		}
+	}
+	if strings.Contains(page, "/admin.js") || strings.Contains(page, "/admin.css") {
+		t.Error("the page still links its assets by URL")
+	}
+}
+
+// TestEndpointsTakeOnlyTheirMethod checks the dispatch on the marker.
+func TestEndpointsTakeOnlyTheirMethod(t *testing.T) {
+	_, front := testServer(t, testConfig(t))
+	for _, tc := range []struct {
+		method, marker string
+		want           int
+	}{
+		{http.MethodPost, ActionPage, http.StatusMethodNotAllowed},
+		{http.MethodDelete, ActionConfig, http.StatusMethodNotAllowed},
+		{http.MethodGet, ActionUpload, http.StatusMethodNotAllowed},
+		{http.MethodGet, ActionGenerate, http.StatusMethodNotAllowed},
+		{http.MethodHead, ActionPage, http.StatusOK},
+	} {
+		request, _ := http.NewRequest(tc.method, front.URL+"/?go-fs="+tc.marker, nil)
 		answer, err := front.Client().Do(request)
 		if err != nil {
 			t.Fatal(err)
 		}
-		body, _ := io.ReadAll(answer.Body)
 		answer.Body.Close()
-		if answer.StatusCode != http.StatusOK {
-			t.Errorf("%s answered %s", name, answer.Status)
-		}
-		if got := answer.Header.Get("Content-Type"); got != wantType {
-			t.Errorf("%s is %q, want %q", name, got, wantType)
-		}
-		if len(body) == 0 {
-			t.Errorf("%s is empty", name)
+		if answer.StatusCode != tc.want {
+			t.Errorf("%s ?go-fs=%s answered %d, want %d", tc.method, tc.marker, answer.StatusCode, tc.want)
 		}
 	}
-}
-
-func TestReload(t *testing.T) {
-	path := testConfig(t)
-	server, front := testServer(t, path)
-
-	cfg, err := config.Load(path)
-	if err != nil {
-		t.Fatal(err)
+	if !IsAction(ActionPage) || IsAction("login") || IsAction("") {
+		t.Error("IsAction does not tell the interface's markers from the others")
 	}
-
-	// the credentials are swapped without rebinding anything
-	next := cfg.General
-	next.AdminPassword = "changed"
-	if err := server.Reload(next); err != nil {
-		t.Fatalf("swapping the password: %v", err)
-	}
-	request, _ := http.NewRequest(http.MethodGet, front.URL+"/api/config", nil)
-	request.SetBasicAuth("admin", "secret")
-	answer, err := front.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = io.Copy(io.Discard, answer.Body)
-	answer.Body.Close()
-	if answer.StatusCode != http.StatusUnauthorized {
-		t.Errorf("the old password still works: %s", answer.Status)
-	}
-
-	// the listener cannot move under a running server
-	for name, change := range map[string]config.General{
-		"port":    withPort(cfg.General, 10444),
-		"address": withAddress(cfg.General, ""),
-		"scheme":  withPlainHTTP(cfg.General),
-	} {
-		if err := server.Reload(change); err != service.ErrNeedsRestart {
-			t.Errorf("changing the %s reported %v, want a restart", name, err)
-		}
-	}
-}
-
-func withPort(cfg config.General, port int) config.General {
-	cfg.AdminInterfacePort = port
-	return cfg
-}
-
-func withAddress(cfg config.General, address string) config.General {
-	cfg.AdminInterfaceAddress = address
-	return cfg
-}
-
-func withPlainHTTP(cfg config.General) config.General {
-	cfg.AdminInterfaceUseHTTPS = false
-	return cfg
 }
 
 // TestNewNeedsThePath guards the one thing the interface cannot work without.
 func TestNewNeedsThePath(t *testing.T) {
-	if _, err := New(config.Default().General, "",
-		slog.New(slog.NewTextHandler(io.Discard, nil))); err == nil {
+	if _, err := New("", slog.New(slog.NewTextHandler(io.Discard, nil))); err == nil {
 		t.Error("a server was built with no configuration file to edit")
 	}
 }
@@ -350,108 +315,5 @@ func TestWriteFollowsASymlink(t *testing.T) {
 	}
 	if written.FTP.Port != 2123 {
 		t.Errorf("the target says port %d", written.FTP.Port)
-	}
-}
-
-// TestStartServesOverTLS binds a real listener and checks the default: the
-// interface carries every password in the file, so it is served over TLS unless
-// that is deliberately turned off, which TestStartServesPlainHTTP covers.
-func TestStartServesOverTLS(t *testing.T) {
-	path := testConfig(t)
-	cfg, err := config.Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.General.AdminInterfacePort = 0
-
-	server, err := New(cfg.General, path, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if err := server.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	defer server.Shutdown(context.Background())
-
-	address := server.Addr().String()
-	client := &http.Client{Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}}
-	request, _ := http.NewRequest(http.MethodGet, "https://"+address+"/api/config", nil)
-	request.SetBasicAuth("admin", "secret")
-	answer, err := client.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer answer.Body.Close()
-	if answer.StatusCode != http.StatusOK {
-		t.Fatalf("the interface answered %s", answer.Status)
-	}
-
-	// the same port serves nothing over plain HTTP: net/http answers such a
-	// request with the 400 that says so rather than with the page
-	plain, err := http.Get("http://" + address + "/")
-	if err != nil {
-		return
-	}
-	body, _ := io.ReadAll(plain.Body)
-	plain.Body.Close()
-	if plain.StatusCode != http.StatusBadRequest ||
-		!strings.Contains(string(body), "HTTPS server") {
-		t.Errorf("a plain request was answered %s: %s", plain.Status, body)
-	}
-}
-
-// TestStartServesPlainHTTP covers the other transport: with
-// adminInterfaceUseHttps off the same port answers plain HTTP, for a proxy that
-// terminates TLS in front of it, and speaks no TLS of its own.
-func TestStartServesPlainHTTP(t *testing.T) {
-	path := testConfig(t)
-	cfg, err := config.Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.General.AdminInterfacePort = 0
-	cfg.General.AdminInterfaceUseHTTPS = false
-
-	server, err := New(cfg.General, path, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if err := server.Start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	defer server.Shutdown(context.Background())
-
-	address := server.Addr().String()
-	request, _ := http.NewRequest(http.MethodGet, "http://"+address+"/api/config", nil)
-	request.SetBasicAuth("admin", "secret")
-	answer, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer answer.Body.Close()
-	if answer.StatusCode != http.StatusOK {
-		t.Fatalf("the interface answered %s", answer.Status)
-	}
-
-	// the account is still required, the transport is all that changed
-	plain, err := http.Get("http://" + address + "/api/config")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = io.Copy(io.Discard, plain.Body)
-	plain.Body.Close()
-	if plain.StatusCode != http.StatusUnauthorized {
-		t.Errorf("an unauthenticated request answered %s", plain.Status)
-	}
-
-	// and there is no TLS on this port to speak to
-	if _, err := tls.Dial("tcp", address, &tls.Config{InsecureSkipVerify: true}); err == nil {
-		t.Error("the interface completed a TLS handshake although it serves plain HTTP")
 	}
 }

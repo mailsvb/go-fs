@@ -31,6 +31,9 @@ type account struct {
 
 	cookie     bool
 	cookiePath string
+	// isAdmin lets the account into the admin interface, once it holds a
+	// session.
+	isAdmin bool
 }
 
 // allows reports whether this account may reach a normalized request path.
@@ -76,6 +79,7 @@ func buildAccounts(users []config.User) ([]*account, error) {
 			perms:      user.Permissions(),
 			cookie:     user.Cookie,
 			cookiePath: user.CookiePath,
+			isAdmin:    user.IsAdmin,
 		}
 		if resolved.cookiePath == "" {
 			resolved.cookiePath = "/"

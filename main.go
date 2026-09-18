@@ -80,7 +80,7 @@ func run() error {
 		return nil
 	}
 
-	logger := logging.New(cfg.Log.Level, cfg.Log.Format)
+	logger := logging.New(cfg.General.LogLevel, cfg.General.LogFormat)
 	// the first record says what is running, so that a log handed over for
 	// analysis carries the build it came from and the file it was configured by
 	logger.Info("go-fs starting",
@@ -90,8 +90,8 @@ func run() error {
 		"arch", runtime.GOARCH,
 		"pid", os.Getpid(),
 		"config", *configPath,
-		"logLevel", cfg.Log.Level,
-		"logFormat", cfg.Log.Format)
+		"logLevel", cfg.General.LogLevel,
+		"logFormat", cfg.General.LogFormat)
 	warnAboutSecrets(logger.Logger, *configPath, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -19,24 +19,24 @@ import (
 // the sections. What the page edits has to be what the file says: resolving it
 // first and writing the result back would turn the one fallback into four
 // explicit copies of it.
-func (s *Server) read() (config.Config, error) {
-	data, err := os.ReadFile(s.path)
+func (h *Handler) read() (config.Config, error) {
+	data, err := os.ReadFile(h.path)
 	if err != nil {
 		return config.Config{}, err
 	}
 	cfg, err := config.Parse(data)
 	if err != nil {
-		return config.Config{}, fmt.Errorf("%s: %w", s.path, err)
+		return config.Config{}, fmt.Errorf("%s: %w", h.path, err)
 	}
 	return cfg, nil
 }
 
 // target follows a symlinked configuration file, so that writing replaces what
 // the link points at rather than the link.
-func (s *Server) target() string {
-	resolved, err := filepath.EvalSymlinks(s.path)
+func (h *Handler) target() string {
+	resolved, err := filepath.EvalSymlinks(h.path)
 	if err != nil {
-		return s.path
+		return h.path
 	}
 	return resolved
 }
@@ -48,8 +48,8 @@ func (s *Server) target() string {
 // The file's own permission is checked although the rename does not need it. A
 // configuration made read-only was made read-only on purpose, and replacing it
 // through a rename anyway would go around that.
-func (s *Server) writable() error {
-	path := s.target()
+func (h *Handler) writable() error {
+	path := h.target()
 	file, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if err != nil {
 		return err
@@ -73,11 +73,11 @@ func (s *Server) writable() error {
 // are not in the struct and do not survive. The new file is written beside the
 // target and renamed over it, so that the watcher never reads a half-written
 // file.
-func (s *Server) write(cfg config.Config) (string, error) {
-	if err := s.writable(); err != nil {
+func (h *Handler) write(cfg config.Config) (string, error) {
+	if err := h.writable(); err != nil {
 		return "", err
 	}
-	path := s.target()
+	path := h.target()
 	data, err := toml.Marshal(cfg)
 	if err != nil {
 		return "", err

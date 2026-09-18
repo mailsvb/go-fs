@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go-fs/internal/admin"
 	"go-fs/internal/config"
 	"go-fs/internal/logging"
 	"go-fs/internal/service"
@@ -57,6 +58,10 @@ type Server struct {
 	// nonceKey signs the digest nonces this server hands out, so that a nonce
 	// carries its own age and needs nothing to be remembered about it.
 	nonceKey []byte
+	// admin is the interface that edits the configuration file, served under
+	// the go-fs marker to a session of an account that sets isAdmin. It is nil
+	// when there is no file to edit, which is what a test builds.
+	admin *admin.Handler
 
 	plain  net.Listener
 	secure net.Listener
@@ -140,7 +145,9 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, users []config.User
 	return nil
 }
 
-func New(cfg config.HTTP, https config.HTTPS, users []config.User, logger *slog.Logger) (*Server, error) {
+// New prepares a server. configPath is the file the admin interface edits;
+// empty leaves the interface out.
+func New(cfg config.HTTP, https config.HTTPS, users []config.User, configPath string, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
 		return nil, fmt.Errorf("http.basefolder: %w", err)
@@ -167,6 +174,14 @@ func New(cfg config.HTTP, https config.HTTPS, users []config.User, logger *slog.
 		tokens:   tokens,
 		nonceKey: nonceKey,
 		done:     make(chan struct{}),
+	}
+	if configPath != "" {
+		// built whether or not the switch is on: the switch is read from the
+		// snapshot on every request, so a reload can flip it without a restart
+		server.admin, err = admin.New(configPath, logger)
+		if err != nil {
+			return nil, err
+		}
 	}
 	server.snapshot.Store(set)
 	server.server = &http.Server{
@@ -240,6 +255,8 @@ func (s *Server) Start(ctx context.Context) error {
 			"address", listenAddress(secure), "port", listenPort(secure))
 	}
 
+	s.warnAboutTheAdminInterface(set)
+
 	go func() {
 		<-ctx.Done()
 		_ = s.Shutdown(context.Background())
@@ -265,6 +282,45 @@ func (s *Server) Start(ctx context.Context) error {
 		s.runCleanup(ctx)
 	}()
 	return nil
+}
+
+// warnAboutTheAdminInterface says, at the moment the listeners are bound, what
+// is worth knowing about the interface that edits the configuration file: that
+// it is on but nobody can reach it, and that it is reachable over plain HTTP
+// from beyond this host, where the admin session and every password on the
+// page cross the network in the clear. Neither is refused: the first is how a
+// fresh file starts out, and the second is what a proxy that terminates TLS in
+// front of this server looks like.
+func (s *Server) warnAboutTheAdminInterface(set *settings) {
+	if s.admin == nil || !set.cfg.EnableAdminInterface {
+		return
+	}
+	admins := 0
+	for _, user := range set.accounts {
+		if user.isAdmin {
+			admins++
+		}
+	}
+	if admins == 0 {
+		s.log.Warn("http.enableAdminInterface is on but no account sets isAdmin, " +
+			"so nobody can reach the admin interface")
+	}
+	if set.cfg.Enabled && !isLoopback(set.cfg.Address) {
+		s.log.Warn("the admin interface is reachable over plain http on an address that is "+
+			"not the loopback one, so the admin session and every password on its page "+
+			"cross the network in the clear unless a proxy terminates TLS in front of it; "+
+			"serve it over https instead", "address", set.cfg.Address, "port", set.cfg.Port)
+	}
+}
+
+// isLoopback reports an address that only the host itself can reach. An empty
+// address binds every interface, so it is not one.
+func isLoopback(address string) bool {
+	if address == "" {
+		return false
+	}
+	parsed := net.ParseIP(address)
+	return parsed != nil && parsed.IsLoopback()
 }
 
 // Addr reports the bound plain address, which is useful when port 0 was asked
@@ -346,6 +402,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// is protected by default
 	if action := sessionAction(r); action != "" {
 		s.handleSession(set, w, r, target, action)
+		return
+	}
+	// so does the admin interface, which decides for itself who may be here
+	if admin.IsAction(r.URL.Query().Get(sessionParam)) {
+		s.handleAdmin(set, w, r)
 		return
 	}
 

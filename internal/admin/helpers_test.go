@@ -23,9 +23,6 @@ func testConfig(t *testing.T) string {
 	body := `
 [general]
 basefolder = ` + strconv.Quote(folder) + `
-adminInterfaceEnabled = true
-adminUsername = "admin"
-adminPassword = "secret"
 
 [[users]]
 username = "john"
@@ -46,26 +43,27 @@ enabled = false
 	return path
 }
 
-func testServer(t *testing.T, path string) (*Server, *httptest.Server) {
+// testServer serves the handler directly. The file server that fronts it in
+// go-fs is what decides who may be here; these tests are about what the
+// interface does once a request has been let through.
+func testServer(t *testing.T, path string) (*Handler, *httptest.Server) {
 	t.Helper()
-	cfg, err := config.Load(path)
+	if _, err := config.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := New(path, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := New(cfg.General, path, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	front := httptest.NewServer(server)
+	front := httptest.NewServer(handler)
 	t.Cleanup(front.Close)
-	return server, front
+	return handler, front
 }
 
 // get asks for the state of the configuration.
 func get(t *testing.T, front *httptest.Server) state {
 	t.Helper()
-	request, _ := http.NewRequest(http.MethodGet, front.URL+"/api/config", nil)
-	request.SetBasicAuth("admin", "secret")
+	request, _ := http.NewRequest(http.MethodGet, front.URL+"/?go-fs=admin-config", nil)
 	answer, err := front.Client().Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +71,7 @@ func get(t *testing.T, front *httptest.Server) state {
 	defer answer.Body.Close()
 	if answer.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(answer.Body)
-		t.Fatalf("GET /api/config: %s: %s", answer.Status, body)
+		t.Fatalf("GET ?go-fs=admin-config: %s: %s", answer.Status, body)
 	}
 	var decoded state
 	if err := json.NewDecoder(answer.Body).Decode(&decoded); err != nil {
@@ -89,8 +87,7 @@ func post(t *testing.T, front *httptest.Server, values any, headers map[string]s
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, _ := http.NewRequest(http.MethodPost, front.URL+"/api/config", strings.NewReader(string(body)))
-	request.SetBasicAuth("admin", "secret")
+	request, _ := http.NewRequest(http.MethodPost, front.URL+"/?go-fs=admin-config", strings.NewReader(string(body)))
 	request.Header.Set("Content-Type", "application/json")
 	for name, value := range headers {
 		request.Header.Set(name, value)

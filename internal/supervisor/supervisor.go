@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"go-fs/internal/admin"
 	"go-fs/internal/config"
 	"go-fs/internal/ftp"
 	"go-fs/internal/httpd"
@@ -29,7 +28,8 @@ import (
 )
 
 // env is what building a service is given: the configuration, and the path of
-// the file it came from, which the admin interface edits.
+// the file it came from, which the admin interface inside the http server
+// edits.
 type env struct {
 	cfg  config.Config
 	path string
@@ -68,7 +68,7 @@ var services = []entry{
 		name:    "http",
 		enabled: func(e env) bool { return e.cfg.HTTP.Enabled || e.cfg.HTTPS.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers(), log)
+			return httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers(), e.path, log)
 		},
 		reload: func(s service.Server, e env) error {
 			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.HTTPUsers())
@@ -84,28 +84,17 @@ var services = []entry{
 			return s.(*tftp.Server).Reload(e.cfg.TFTP)
 		},
 	},
-	{
-		// the web interface that edits the configuration file. It only writes
-		// the file; what applies the change is the watcher below.
-		name:    "admin",
-		enabled: func(e env) bool { return e.cfg.General.AdminInterfaceEnabled },
-		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return admin.New(e.cfg.General, e.path, log)
-		},
-		reload: func(s service.Server, e env) error {
-			return s.(*admin.Server).Reload(e.cfg.General)
-		},
-	},
 }
 
 // Supervisor holds what is running.
 type Supervisor struct {
 	log *slog.Logger
-	// path is the configuration file everything came from. The admin interface
-	// is handed it so that it can edit the file it is configured by.
+	// path is the configuration file everything came from. The http server is
+	// handed it so that its admin interface can edit the file it is configured
+	// by.
 	path string
 
-	// root is the logger whose level follows the [log] section, when main
+	// root is the logger whose level follows general.logLevel, when main
 	// handed one over; tests leave it nil.
 	root *logging.Logger
 
@@ -121,9 +110,10 @@ func New(logger *slog.Logger, path string) *Supervisor {
 	return &Supervisor{log: logger, path: path, running: make(map[string]service.Server)}
 }
 
-// TrackLog makes a reload of the [log] section reach the logger: the level is
-// switched in place, which is how debug output is turned on under a running
-// server; the format cannot be, and a change to it is reported instead.
+// TrackLog makes a reload of the log keys in [general] reach the logger: the
+// level is switched in place, which is how debug output is turned on under a
+// running server; the format cannot be, and a change to it is reported
+// instead.
 func (s *Supervisor) TrackLog(root *logging.Logger) {
 	s.root = root
 }
@@ -140,7 +130,7 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 		s.log.Info("applying the changed configuration",
 			"sections", strings.Join(changedSections(s.current, cfg), ","))
 	}
-	s.applyLog(cfg.Log)
+	s.applyLog(cfg.General)
 
 	// a service that could not be brought up leaves the remembered
 	// configuration alone, so that the next reload sees a change and tries it
@@ -199,19 +189,19 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 	return nil
 }
 
-// applyLog carries the [log] section over to the logger. The level takes
-// effect at once; the format is baked into the handler, so a change to it is
-// said out loud and waits for a restart.
-func (s *Supervisor) applyLog(cfg config.Log) {
+// applyLog carries the log keys of [general] over to the logger. The level
+// takes effect at once; the format is baked into the handler, so a change to
+// it is said out loud and waits for a restart.
+func (s *Supervisor) applyLog(cfg config.General) {
 	if s.root == nil {
 		return
 	}
-	if s.root.SetLevel(cfg.Level) {
-		s.log.Info("log level changed", "level", cfg.Level)
+	if s.root.SetLevel(cfg.LogLevel) {
+		s.log.Info("log level changed", "level", cfg.LogLevel)
 	}
-	if s.applied && cfg.Format != s.root.Format() {
-		s.log.Warn("log.format changed, which takes effect at the next restart",
-			"configured", cfg.Format, "running", s.root.Format())
+	if s.applied && cfg.LogFormat != s.root.Format() {
+		s.log.Warn("general.logFormat changed, which takes effect at the next restart",
+			"configured", cfg.LogFormat, "running", s.root.Format())
 	}
 }
 

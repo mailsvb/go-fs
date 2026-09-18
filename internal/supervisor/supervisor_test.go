@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -277,46 +278,90 @@ func TestReloadDoesNotDisturbATransfer(t *testing.T) {
 	}
 }
 
-// TestAdminInterfaceIsASupervisedService checks that the web interface joins,
-// reloads and leaves like the file servers do.
-func TestAdminInterfaceIsASupervisedService(t *testing.T) {
-	sup, logs, ctx := newSupervisor(t)
+// TestAdminInterfaceIsServedByTheHTTPServer checks that the supervisor hands
+// the http server the configuration file, so that the interface that edits it
+// is there, and that it opens to nobody but a session of an admin account.
+func TestAdminInterfaceIsServedByTheHTTPServer(t *testing.T) {
+	sup, _, ctx := newSupervisor(t)
 
 	cfg := baseConfig(t)
-	cfg.General.AdminInterfaceEnabled = true
-	cfg.General.AdminInterfacePort = freePort(t)
-	cfg.General.AdminUsername = "admin"
-	cfg.General.AdminPassword = "secret"
-
-	if err := sup.Apply(ctx, cfg); err != nil {
+	cfg.Users = append(cfg.Users, config.User{
+		Username: "root", Password: "secret", HTTP: true, Cookie: true, IsAdmin: true,
+		Paths: []string{"^/.*"},
+	})
+	// the file the interface reads back has to exist and validate
+	if err := config.Save(sup.path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(sup.Running(), "admin") {
-		t.Fatalf("the admin interface is not running: %v", sup.Running())
-	}
-
-	// the credentials are swapped without rebinding the listener
-	cfg.General.AdminPassword = "changed"
-	if err := sup.Apply(ctx, cfg); err != nil {
-		t.Fatal(err)
-	}
-	logs.waitFor(t, "server reloaded")
-	if logs.has("server restarted") {
-		t.Error("changing the password restarted the interface")
-	}
-
-	// the port cannot move under a bound listener
-	cfg.General.AdminInterfacePort = freePort(t)
-	if err := sup.Apply(ctx, cfg); err != nil {
-		t.Fatal(err)
-	}
-	logs.waitFor(t, "server restarted")
-
-	cfg.General.AdminInterfaceEnabled = false
 	if err := sup.Apply(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if slices.Contains(sup.Running(), "admin") {
-		t.Errorf("the admin interface is still running: %v", sup.Running())
+		t.Fatalf("the admin interface is a server of its own: %v", sup.Running())
+	}
+	port := httpPort(t, sup)
+
+	// a header, even the admin's own, is not a session
+	if res := fetch(t, port, "/?go-fs=admin-config", "root", "secret"); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("basic authentication was answered %d, want 401", res.StatusCode)
+	}
+
+	form := url.Values{"username": {"root"}, "password": {"secret"}}
+	req, err := http.NewRequest(http.MethodPost,
+		"http://"+net.JoinHostPort("127.0.0.1", strconv.Itoa(port))+"/?go-fs=login",
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	var session *http.Cookie
+	for _, cookie := range res.Cookies() {
+		if cookie.Name == "goFsSessionToken" {
+			session = cookie
+		}
+	}
+	if session == nil {
+		t.Fatalf("the login handed out no session: %s", res.Status)
+	}
+
+	req, err = http.NewRequest(http.MethodGet,
+		"http://"+net.JoinHostPort("127.0.0.1", strconv.Itoa(port))+"/?go-fs=admin-config", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(session)
+	res, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("the admin session was answered %d: %s", res.StatusCode, body)
+	}
+	if !strings.Contains(string(body), sup.path) {
+		t.Errorf("the state does not name the file the supervisor was given: %s", body)
+	}
+
+	// the switch is applied by a reload, not a restart
+	cfg.HTTP.EnableAdminInterface = false
+	if err := sup.Apply(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	res, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("the disabled interface was answered %d, want 404", res.StatusCode)
 	}
 }

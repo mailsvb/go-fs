@@ -36,8 +36,12 @@ header {
   gap: 1rem;
   padding: 1rem 1.5rem 0.5rem;
 }
-h1 { margin: 0; font-size: 1.15rem; letter-spacing: 0.02em; }
-.path { margin: 0; color: var(--faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+h1 { margin: 0; font-size: 1.15rem; letter-spacing: 0.02em; white-space: nowrap; }
+.path { margin: 0; color: var(--faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; overflow-wrap: anywhere; }
+/* the way back to the files and out of the session, at the far end of the
+   header; the link and the button share the plain rule below */
+.links { display: flex; align-items: center; gap: 0.5rem; margin-left: auto; }
+.inline { display: inline; margin: 0; }
 
 .banner {
   margin: 0 1.5rem 0.75rem;
@@ -200,16 +204,19 @@ input[type="checkbox"] { width: 1rem; height: 1rem; margin-top: 0.5rem; }
 .record .remove { margin-left: auto; }
 .empty { margin: 0 0 0.75rem; color: var(--faint); font-style: italic; }
 
-button.plain {
+button.plain, a.plain {
+  display: inline-block;
   padding: 0.35rem 0.7rem;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--ground);
   color: var(--ink);
   font: inherit;
+  line-height: 1.2;
+  text-decoration: none;
   cursor: pointer;
 }
-button.plain:hover { border-color: var(--faint); }
+button.plain:hover, a.plain:hover { border-color: var(--faint); }
 
 footer {
   position: fixed;
