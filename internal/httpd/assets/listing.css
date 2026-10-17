@@ -1,0 +1,632 @@
+/* The palette is the one the admin interface uses, so the two pages read as
+   one product. */
+:root {
+  color-scheme: light dark;
+  --ground: #ffffff;
+  --raised: #f5f6f8;
+  --line: #d8dbe0;
+  --ink: #1b1f24;
+  --faint: #626b76;
+  --accent: #2f6f4f;
+  --bad: #a3352b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #16191d;
+    --raised: #1e2228;
+    --line: #333941;
+    --ink: #e6e9ed;
+    --faint: #9aa4b0;
+    --accent: #6fbf8f;
+    --bad: #e08b82;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 0 3rem;
+  background: var(--ground);
+  color: var(--ink);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* Everything that only works once the script has run is hidden until it has.
+   Once it has, the element keeps the display its own rules give it: a revert
+   here would turn the buttons back into inline blocks, and their icons would
+   sit on the baseline of the text. */
+:root:not(.js) .needs-js { display: none; }
+
+.ic { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor;
+      stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+#icons { display: none; }
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 1rem 1.5rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 1 1 14rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+}
+.crumbs .ic { font-size: 1.1rem; color: var(--faint); }
+.crumbs a { color: var(--accent); text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
+.crumbs .sep { color: var(--faint); }
+.crumbs .here { color: var(--ink); }
+
+.tools { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+
+input[type="search"] {
+  width: 11rem;
+  height: 2rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+/* One rule for both, because the header holds a Log in link beside buttons
+   that do the same kind of thing, and they have to look alike. */
+.plain {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 2rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.plain:hover { border-color: var(--faint); }
+.plain .ic { font-size: 1rem; }
+
+/* The fetches of the account, while there are any: the button fills from
+   the left as far as they have got together, and says how fast they go. */
+.downloads {
+  min-width: 7.5rem;
+  justify-content: center;
+  background: linear-gradient(to right,
+    color-mix(in srgb, var(--accent) 24%, var(--ground)) var(--progress, 0%),
+    var(--ground) var(--progress, 0%));
+  font-variant-numeric: tabular-nums;
+}
+.downloads .ic { color: var(--accent); }
+.downloads.bad { border-color: var(--bad); color: var(--bad); }
+.downloads.bad .ic { color: var(--bad); }
+.js .downloads[hidden] { display: none; }
+
+/* The form that holds the Log out button: a form is a block, and this one
+   sits in a row of controls. */
+.inline { display: contents; }
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.75rem 1.5rem 0;
+  padding: 0.6rem 0.6rem 0.6rem 0.85rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--bad);
+  border-radius: 4px;
+  background: var(--raised);
+}
+.banner[hidden] { display: none; }
+.banner.good { border-left-color: var(--accent); }
+.banner .text { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.banner .close {
+  display: flex;
+  padding: 0.2rem;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+}
+.banner .close .ic { font-size: 1.05rem; }
+.banner .close:hover { background: var(--ground); color: var(--ink); }
+
+main { padding: 0 1.5rem; }
+
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+
+th {
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  text-align: left;
+}
+th a, th span.head {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.5rem 0.55rem;
+  color: var(--faint);
+  text-decoration: none;
+  white-space: nowrap;
+}
+th a:hover { color: var(--ink); }
+th[aria-sort] a { color: var(--ink); }
+th .caret { visibility: hidden; font-size: 0.7em; }
+th[aria-sort] .caret { visibility: visible; }
+.num a, .num span.head { justify-content: flex-end; }
+/* one button a row, which opens the options menu */
+th.c-acts { width: 2.75rem; }
+th.c-mod { width: 12rem; }
+th.c-kind { width: 7.5rem; }
+th.c-size { width: 6.5rem; }
+
+td {
+  padding: 0.4rem 0.55rem;
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+tbody tr:hover { background: var(--raised); }
+tr.gone { display: none; }
+
+.name { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.name .ic { font-size: 1.15rem; color: var(--faint); }
+.name .dir { color: var(--accent); }
+.name a { color: var(--ink); text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+.name a:hover { text-decoration: underline; }
+
+.meta { color: var(--faint); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.num { text-align: right; }
+
+td.c-acts { text-align: right; white-space: nowrap; }
+td.c-acts button {
+  padding: 0.2rem 0.3rem;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0;
+}
+td.c-acts button .ic { font-size: 1.05rem; }
+tr:hover td.c-acts button, td.c-acts button:focus-visible { opacity: 1; }
+/* A touch screen never hovers, so the actions would be there but unreachable. */
+@media (hover: none) {
+  td.c-acts button { opacity: 1; }
+}
+td.c-acts button:hover { background: var(--ground); color: var(--ink); }
+
+.empty { padding: 1.5rem 0.55rem; color: var(--faint); font-style: italic; }
+
+/* The overlay that covers the page while files are dragged over it. Nothing
+   inside it takes pointer events, so the overlay is the only thing a drag
+   enters and leaves, and it does not flicker on the way across. */
+.drop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.35);
+}
+.drop[hidden] { display: none; }
+.drop * { pointer-events: none; }
+.drop .panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  border: 3px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--raised);
+  text-align: center;
+}
+.drop .ic { font-size: 3rem; color: var(--accent); }
+.drop strong { font-size: 1.25rem; }
+.drop .where {
+  color: var(--faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.queue { margin: 0.75rem 0 0; padding: 0; list-style: none; }
+.queue li {
+  display: grid;
+  grid-template-columns: 1fr 8rem 4.5rem;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.3rem 0;
+  font-size: 0.85rem;
+}
+.queue .track { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.queue .fill { display: block; height: 100%; width: 0; background: var(--accent); }
+.queue .state { color: var(--faint); text-align: right; }
+.queue li.failed .state { color: var(--bad); }
+.queue li.failed .fill { background: var(--bad); }
+
+dialog {
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--ink);
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+dialog form { display: flex; flex-direction: column; gap: 0.75rem; padding: 1.1rem 1.25rem; width: min(50rem, calc(100vw - 2rem)); }
+dialog h2 { margin: 0; font-size: 1rem; }
+dialog p { margin: 0; color: var(--faint); font-size: 0.85rem; overflow-wrap: anywhere; }
+dialog input[type="text"], dialog input[type="password"], dialog input[type="url"], dialog input[type="number"], dialog textarea, dialog select {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+/* The buttons are laid out backwards: the one that acts comes first in the
+   markup, so that Enter in the field picks it rather than Cancel. */
+dialog .row { display: flex; flex-direction: row-reverse; justify-content: flex-start; gap: 0.5rem; }
+dialog button.go {
+  height: 2rem;
+  padding: 0 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--ground);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+dialog button.go.danger { border-color: var(--bad); background: var(--bad); }
+/* The share dialog: the link and the curl and wget commands that fetch it,
+   each on a line of its own with a button that copies it. */
+dialog .share-lines { display: flex; flex-direction: column; gap: 0.25rem; }
+dialog .share-lines label { margin-top: 0.35rem; color: var(--faint); font-size: 0.8rem; }
+dialog .share-lines label:first-child { margin-top: 0; }
+dialog .share-line { display: flex; gap: 0.5rem; }
+dialog .share-line button.go { flex: none; }
+dialog input.link { box-sizing: border-box; flex: 1; min-width: 0; color: var(--faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+dialog button.go .ic { margin-right: 0.35rem; vertical-align: -0.15em; }
+/* The dialogs that pull an image from another registry, push a tag to one
+   and fetch a file from a URL: a few labelled fields, and the progress of the
+   transfer once it runs. */
+dialog .fields { display: flex; flex-direction: column; gap: 0.25rem; }
+dialog .fields label { margin-top: 0.35rem; color: var(--faint); font-size: 0.8rem; }
+dialog .fields label:first-child { margin-top: 0; }
+dialog .fields .hint { font-style: italic; }
+dialog .fields label.toggle { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; color: var(--ink); font-size: 0.85rem; cursor: pointer; }
+dialog input:disabled, dialog textarea:disabled { opacity: 0.6; }
+/* The headers a fetch adds, folded away until they are wanted. */
+dialog details.headers summary { color: var(--faint); font-size: 0.8rem; cursor: pointer; }
+dialog details.headers summary .hint { font-style: italic; }
+dialog details.headers textarea { display: block; box-sizing: border-box; width: 100%; margin: 0.35rem 0; resize: vertical; }
+dialog details.headers p.hint { font-size: 0.8rem; }
+dialog .where { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+dialog .progress { display: flex; flex-direction: column; gap: 0.35rem; }
+dialog progress { width: 100%; height: 0.5rem; accent-color: var(--accent); }
+dialog .status { color: var(--ink); }
+dialog .status.bad { color: var(--bad); }
+dialog button.go:disabled { opacity: 0.45; cursor: not-allowed; }
+/* Validate comes first in the form, so Enter validates, but it is shown
+   between Cancel and the transfer it unlocks. */
+dialog .row button[value="check"], dialog .row button[value="stop"] { order: 1; }
+dialog .row button[value="cancel"] { order: 2; }
+dialog fieldset.platforms { margin: 0; padding: 0.5rem 0.75rem 0.65rem; border: 1px solid var(--line); border-radius: 6px; }
+dialog fieldset.platforms legend { padding: 0 0.25rem; color: var(--faint); font-size: 0.8rem; }
+dialog .choices { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; }
+dialog .choices label { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+dialog .choices .meta { color: var(--faint); font-size: 0.8rem; }
+/* The images an import found in its archive, each with the tags it is
+   stored under and the platforms it has. */
+dialog input[type="file"] { font: inherit; font-size: 0.85rem; }
+dialog .images { display: flex; flex-direction: column; gap: 0.6rem; max-height: 50vh; overflow-y: auto; }
+dialog fieldset.image { display: flex; flex-direction: column; gap: 0.45rem; margin: 0; padding: 0.5rem 0.75rem 0.65rem; border: 1px solid var(--line); border-radius: 6px; }
+dialog fieldset.image legend { padding: 0 0.25rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; overflow-wrap: anywhere; }
+dialog fieldset.image p { font-size: 0.8rem; }
+dialog .targets { display: flex; flex-direction: column; gap: 0.3rem; }
+dialog .targets label { display: flex; align-items: center; gap: 0.4rem; }
+dialog .targets input[type="text"] { flex: 1; min-width: 0; }
+dialog .targets input.invalid { border-color: var(--bad); }
+dialog .targets .meta { color: var(--faint); font-size: 0.8rem; white-space: nowrap; }
+dialog .targets button.plain { align-self: flex-start; height: 1.6rem; font-size: 0.8rem; }
+/* The send dialog: the key a host shows, to be compared rather than read,
+   and the folders of the host, to choose where the file goes. */
+dialog input[name="port"] { width: 7rem; }
+/* the fields of a login typed in, which give way to a stored server; they
+   stay in the column of the fields around them */
+dialog .fields fieldset.manual { display: contents; }
+dialog .fields fieldset.manual[hidden] { display: none; }
+/* the fields of the login the protocol chosen asks for, by host or by token */
+dialog .fields fieldset.login { display: contents; }
+dialog .fields fieldset.login[hidden] { display: none; }
+dialog .fields fieldset.login > label:first-child { margin-top: 0.35rem; }
+dialog select { align-self: flex-start; min-width: 14rem; font-family: inherit; }
+dialog select:disabled { opacity: 0.6; }
+dialog .hostkey { display: flex; flex-direction: column; gap: 0.35rem; }
+dialog .hostkey p.warning { color: var(--bad); }
+dialog .hostkey .host { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+dialog .fingerprint { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.6rem; color: var(--ink); }
+dialog .fingerprint .type { color: var(--faint); font-size: 0.8rem; }
+dialog .fingerprint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
+/* Logged in, the fields give way to a line naming the login. */
+dialog .connected { display: flex; align-items: baseline; gap: 0.4rem; color: var(--faint); }
+dialog .connected .login { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
+dialog .connected .change { margin-left: auto; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 0.85rem; cursor: pointer; }
+dialog .connected .change:disabled { opacity: 0.45; cursor: default; }
+dialog .remote { display: flex; flex-direction: column; gap: 0.4rem; }
+/* the path of the folder, and beside it a spinner while another is read */
+dialog .remote-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; min-height: 1.3rem; }
+dialog .spinner { flex: none; width: 0.85rem; height: 0.85rem; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { dialog .spinner { animation-duration: 2s; } }
+dialog .remote-path { display: flex; flex-wrap: wrap; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+dialog .remote-path button { padding: 0 0.15rem; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+dialog .remote-path button[aria-current] { color: var(--ink); cursor: default; }
+dialog .remote-path .sep { color: var(--faint); }
+/* a fixed height, so the dialog keeps its size from one folder to the next */
+dialog .remote-list { margin: 0; padding: 0; list-style: none; height: min(28rem, 55vh); overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--ground); }
+dialog .remote-list li { border-bottom: 1px solid var(--line); }
+dialog .remote-list li:last-child { border-bottom: 0; }
+dialog .remote-list button, dialog .remote-list .entry {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.3rem 0.6rem;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+}
+dialog .remote-list button { cursor: pointer; }
+dialog .remote-list button:hover { background: var(--raised); }
+dialog .remote-list button:disabled { cursor: default; opacity: 0.6; }
+dialog .remote-list button .ic { color: var(--accent); }
+dialog .remote-list .entry { color: var(--faint); }
+dialog .remote-list .entry .size { margin-left: auto; font-variant-numeric: tabular-nums; }
+dialog .remote-list .entry.clash { color: var(--bad); }
+dialog .remote-list .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dialog .remote-list li.note { padding: 0.3rem 0.6rem; color: var(--faint); font-size: 0.8rem; font-style: italic; }
+/* The downloads window: a row a fetch or a send, with how far it has got, how fast it
+   goes, and the button that stops it or clears it away. */
+dialog .downloads-list { display: flex; flex-direction: column; gap: 0.15rem; margin: 0; padding: 0; list-style: none; max-height: 60vh; overflow-y: auto; }
+dialog .downloads-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.5rem 6.5rem auto;
+  grid-template-areas: "name share speed stop" "track track track stop";
+  gap: 0.2rem 0.75rem;
+  align-items: center;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+dialog .downloads-list li:last-child { border-bottom: 0; }
+dialog .downloads-list .name { grid-area: name; display: flex; flex-direction: column; min-width: 0; }
+dialog .downloads-list .file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+dialog .downloads-list .folder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 0.75rem; }
+dialog .downloads-list .share { grid-area: share; text-align: right; font-variant-numeric: tabular-nums; }
+dialog .downloads-list .speed { grid-area: speed; text-align: right; color: var(--faint); font-variant-numeric: tabular-nums; }
+dialog .downloads-list .track { grid-area: track; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+dialog .downloads-list .fill { display: block; height: 100%; width: 0; background: var(--accent); }
+dialog .downloads-list button { grid-area: stop; height: 1.8rem; font-size: 0.8rem; }
+dialog .downloads-list li.failed .share, dialog .downloads-list li.failed .speed, dialog .downloads-list li.failed .track { display: none; }
+dialog .downloads-list .message { grid-row: 2; grid-column: 1 / -2; color: var(--bad); font-size: 0.8rem; overflow-wrap: anywhere; }
+@media (max-width: 30rem) {
+  dialog .downloads-list li { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "name name stop" "share speed stop" "track track track"; }
+}
+
+/* after every rule above that sets a display, so hidden wins over them */
+dialog [hidden] { display: none; }
+
+/* The registry page. It is the listing's table with a column of badges and a
+   dialog of details. */
+.views { display: inline-flex; }
+.views .plain { border-radius: 0; }
+.views .plain:first-child { border-radius: 4px 0 0 4px; }
+.views .plain + .plain { margin-left: -1px; border-radius: 0 4px 4px 0; }
+.views .plain[aria-current] {
+  position: relative;
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+th.c-plat { width: 14rem; }
+td.c-plat { white-space: normal; }
+.registry .name .label { overflow: hidden; text-overflow: ellipsis; }
+.badges { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.badge {
+  display: inline-block;
+  padding: 0 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  line-height: 1.35rem;
+  white-space: nowrap;
+}
+.badge.more { border-style: dashed; cursor: help; }
+td.c-acts button[aria-expanded="true"] { opacity: 1; background: var(--ground); color: var(--ink); }
+
+.menu {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 12rem;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.menu[hidden] { display: none; }
+.menu button, .menu a {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+/* an item a row does not offer, which the display above would show anyway */
+.menu button[hidden], .menu a[hidden] { display: none; }
+.menu button .ic, .menu a .ic { font-size: 1rem; color: var(--faint); }
+.menu button:hover, .menu button:focus-visible,
+.menu a:hover, .menu a:focus-visible { background: var(--ground); outline: none; }
+
+/* The menu in the corner of the header. It is a details element, so it opens
+   and closes without the script; the script only closes it on a click beside
+   it or on Escape. */
+.nav { position: relative; }
+.nav > summary { list-style: none; user-select: none; }
+.nav > summary::-webkit-details-marker { display: none; }
+.nav > summary .caret { margin-right: -0.2rem; color: var(--faint); }
+.nav[open] > summary { border-color: var(--faint); }
+.nav > .menu { top: calc(100% + 4px); right: 0; }
+.menu button.remove:hover, .menu button.remove:focus-visible { color: var(--bad); }
+.menu button.remove:hover .ic, .menu button.remove:focus-visible .ic { color: var(--bad); }
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+dialog.wide form { max-height: calc(100vh - 4rem); }
+dialog.wide .facts { overflow-y: auto; }
+dl.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.3rem 0.9rem;
+  margin: 0;
+  font-size: 0.85rem;
+}
+dl.facts dt { color: var(--faint); }
+dl.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+#details h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+#details h2 .badge { font-size: 0.8rem; font-weight: normal; color: var(--ink); }
+.platform { margin-top: 0.9rem; padding-top: 0.75rem; border-top: 1px solid var(--line); }
+.platform > summary { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; font-weight: 600; cursor: pointer; list-style: none; }
+/* a flex summary loses the native marker, so it draws its own */
+.platform > summary::before { content: "\25B8"; color: var(--faint); }
+.platform[open] > summary::before { content: "\25BE"; }
+.platform > summary::-webkit-details-marker { display: none; }
+.platform[open] > summary { margin-bottom: 0.5rem; }
+.platform .badge { font-size: 0.8rem; color: var(--ink); }
+.layers { margin-top: 0.5rem; font-size: 0.85rem; }
+.layers summary { color: var(--faint); cursor: pointer; }
+.layers ol { margin: 0.4rem 0 0; padding-left: 1.4rem; }
+.layers li { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.1rem 0; }
+.layers li .meta { flex: none; }
+
+/* The login page: one card, centred, with nothing else on it. */
+.signin main { display: flex; justify-content: center; padding: 3rem 1rem; }
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 22rem;
+  padding: 1.25rem 1.4rem 1.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+}
+.card h1 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.25rem;
+  font-size: 1.1rem;
+}
+.card h1 .ic { font-size: 1.2rem; color: var(--accent); }
+.card .where {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.5rem;
+  color: var(--faint);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.card .where .ic { color: var(--faint); }
+.card .problem {
+  margin: 0 0 0.25rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--bad);
+  border-radius: 4px;
+  color: var(--bad);
+  font-size: 0.85rem;
+}
+.card label { color: var(--faint); font-size: 0.8rem; }
+.card input {
+  height: 2.2rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+.card .row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.6rem; }
+.card button.go {
+  height: 2.2rem;
+  padding: 0 1.1rem;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--ground);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@media (max-width: 40rem) {
+  header, main { padding-left: 0.75rem; padding-right: 0.75rem; }
+  .banner { margin-left: 0.75rem; margin-right: 0.75rem; }
+  .c-kind, .c-mod { display: none; }
+  th.c-size { width: 5rem; }
+  th.c-plat { width: 8rem; }
+  .registry td:first-child { white-space: normal; }
+  .registry .name .label { overflow-wrap: break-word; }
+  dl.facts { grid-template-columns: 1fr; }
+  dl.facts dd { margin-bottom: 0.3rem; }
+}

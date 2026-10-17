@@ -1,0 +1,242 @@
+name: Release
+
+# Manually started only: a release is a deliberate act, not something a push
+# should trigger by itself.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # Every release carries signed .update files, which is what a running
+      # go-fs accepts over HTTP, those of go-fs-light signed with a key of
+      # their own. Without the keys there is nothing to sign them with, so
+      # this is checked before anything is committed.
+      - name: check the signing keys
+        env:
+          GOFS_SIGNING_KEY: ${{ secrets.GOFS_SIGNING_KEY }}
+          GOFS_LIGHT_SIGNING_KEY: ${{ secrets.GOFS_LIGHT_SIGNING_KEY }}
+        run: |
+          if [ -z "$GOFS_SIGNING_KEY" ]; then
+            echo "::error::the GOFS_SIGNING_KEY secret is not set"
+            exit 1
+          fi
+          if [ -z "$GOFS_LIGHT_SIGNING_KEY" ]; then
+            echo "::error::the GOFS_LIGHT_SIGNING_KEY secret is not set"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      # A build whose keys file holds no key refuses every update, so a release
+      # made from the placeholder files could never be updated over HTTP.
+      - name: check the keys files
+        run: |
+          for file in internal/selfupdate/keys.txt internal/selfupdate/keys_light.txt; do
+            if ! grep -qvE '^[[:space:]]*(#|$)' "$file"; then
+              echo "::error::$file holds no key; add the public key of its signing key"
+              exit 1
+            fi
+          done
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # nfpm signs the rpms with the PGP key, written armored as it reads it;
+      # the repo job signs the repository. Before anything is committed, so a
+      # bad key commits nothing.
+      - name: package signing key
+        env:
+          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+          PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          bash packaging/repo/import-key.sh "$RUNNER_TEMP/signing.asc"
+          echo "SIGNING_KEY_FILE=$RUNNER_TEMP/signing.asc" >> "$GITHUB_ENV"
+
+      # The released version is committed to the repository, not just baked
+      # into this run's binaries, so the code matches what was released.
+      - name: bump VERSION
+        run: |
+          echo -n "${{ inputs.version }}" > VERSION
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- VERSION; then
+            echo "VERSION is already ${{ inputs.version }}"
+          else
+            git add VERSION
+            git commit -m "Release ${{ inputs.version }}"
+            git push
+          fi
+
+      # A release that fails its own tests is not one to publish, so they run
+      # here rather than being trusted to have run somewhere earlier. The race
+      # detector is included: every server here is concurrent.
+      - name: vet and test
+        run: make lint race
+
+      - name: make release
+        env:
+          GOFS_SIGNING_KEY: ${{ secrets.GOFS_SIGNING_KEY }}
+          GOFS_LIGHT_SIGNING_KEY: ${{ secrets.GOFS_LIGHT_SIGNING_KEY }}
+        run: make release VERSION=${{ inputs.version }}
+
+      # the signed rpm packages of both products into dist, and what the msi
+      # job below builds the Windows installers from into build/pkg
+      - name: make packages
+        env:
+          NFPM_RPM_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+        run: |
+          make packages VERSION=${{ inputs.version }}
+          rm -f "$SIGNING_KEY_FILE"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: msi-inputs
+          path: |
+            build/pkg/go-fs_windows_amd64.exe
+            build/pkg/go-fs-light_windows_amd64.exe
+            build/pkg/go-fs.windows.toml
+          if-no-files-found: error
+
+  # The WiX Toolset builds an msi on Windows alone. Version 5 is the last one
+  # under the MS-RL without the Open Source Maintenance Fee of 6 and later; it
+  # is built for .NET 6, which the runner no longer has, hence the roll
+  # forward to the .NET it does have.
+  msi:
+    needs: release
+    runs-on: windows-latest
+    env:
+      DOTNET_ROLL_FORWARD: Major
+      WIX_VERSION: 5.0.2
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: msi-inputs
+          path: build/pkg
+
+      - name: install the WiX Toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version $env:WIX_VERSION
+          wix extension add --global WixToolset.Util.wixext/$env:WIX_VERSION
+          wix extension add --global WixToolset.Firewall.wixext/$env:WIX_VERSION
+          wix extension add --global WixToolset.UI.wixext/$env:WIX_VERSION
+
+      # Code signing goes here once there is a certificate, for example with
+      # Azure Trusted Signing (azure/trusted-signing-action): sign
+      # build/pkg/go-fs_windows_amd64.exe and
+      # build/pkg/go-fs-light_windows_amd64.exe before the msi are built, so
+      # that the installed binary is signed, and the .msi after.
+
+      # one msi per product, from the same wxs
+      - name: build the msi
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          foreach ($product in 'go-fs', 'go-fs-light') {
+            wix build packaging/windows/go-fs.wxs -arch x64 `
+              -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
+              -d Product=$product `
+              -d Version=${{ inputs.version }} `
+              -d Bin="$PWD\build\pkg\${product}_windows_amd64.exe" `
+              -d Config="$PWD\build\pkg\go-fs.windows.toml" `
+              -o dist/$product-${{ inputs.version }}-x64.msi
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: msi
+          path: dist/*.msi
+          if-no-files-found: error
+
+  publish:
+    needs: [release, msi]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: dist
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: msi
+          path: dist
+
+      # the checksums cover the msi as well, which the first job did
+      # not have yet
+      - name: checksums
+        run: cd dist && sha256sum $(ls | grep -vx SHA256SUMS) > SHA256SUMS
+
+      - name: publish GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          generate_release_notes: true
+          files: dist/*
+
+  # The zypper/dnf repository on GitHub Pages, rebuilt from the rpms of the
+  # five newest releases, so older versions drop out. Pages must be set to
+  # deploy from GitHub Actions.
+  repo:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: install createrepo_c and rpm
+        run: sudo apt-get update && sudo apt-get install -y createrepo-c rpm
+
+      - name: import the signing key
+        env:
+          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+          PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+        run: bash packaging/repo/import-key.sh
+
+      - name: build the repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GPG_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+          KEEP: 5
+        run: bash packaging/repo/build.sh site
+
+      # artifacts outlive an attempt, so a re-run of this job would find the
+      # first attempt's as well, which deploy-pages refuses: one per attempt
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+          name: github-pages-${{ github.run_attempt }}
+
+      - id: deploy
+        uses: actions/deploy-pages@v5
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}

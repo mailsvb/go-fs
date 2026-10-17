@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%232f6f4f' d='M1.5 2.5h4.2l1.4 1.8h7.4v9.2h-13z'/%3E%3C/svg%3E">
+<title>{{.Path}}</title>
+<style nonce="{{.Nonce}}">{{.Style}}</style>
+<script nonce="{{.Nonce}}">document.documentElement.className = "js";</script>
+</head>
+<body>
+
+{{template "icons"}}
+
+<header>
+  <nav class="crumbs" aria-label="Path">
+    <svg class="ic"><use href="#i-folder"/></svg>
+    {{range .Crumbs}}{{if .Link}}<a href="{{.Link}}">{{.Name}}</a>{{else}}<span class="here">{{.Name}}</span>{{end}}{{if .Sep}}<span class="sep">/</span>{{end}}{{end}}
+  </nav>
+  <div class="tools">
+    {{if .Rights.Downloads}}
+    <button id="downloads" class="plain downloads needs-js" type="button" aria-haspopup="dialog" hidden><svg class="ic"><use href="#i-download"/></svg><span class="rate"></span></button>
+    {{end}}
+    <input id="filter" class="needs-js" type="search" placeholder="Filter&#8230;" aria-label="Filter this folder">
+    {{if .Rights.Mkdir}}
+    <button id="new-folder" class="plain needs-js" type="button"><svg class="ic"><use href="#i-folder-plus"/></svg>New folder</button>
+    {{end}}
+    {{if .Rights.Upload}}
+    <button id="upload" class="plain needs-js" type="button"><svg class="ic"><use href="#i-upload"/></svg>Upload or Drop file</button>
+    <input id="picker" type="file" multiple hidden>
+    {{end}}
+    {{if .Rights.Fetch}}
+    <button id="fetch" class="plain needs-js" type="button"><svg class="ic"><use href="#i-download"/></svg>Fetch</button>
+    {{end}}
+    {{template "session" .Session}}
+  </div>
+</header>
+
+<div id="banner" class="banner"{{if not .Error}} hidden{{end}}><span class="text">{{.Error}}</span><button type="button" class="close" title="Dismiss" aria-label="Dismiss"><svg class="ic"><use href="#i-close"/></svg></button></div>
+
+<main>
+<table id="listing" data-folder="{{.Folder}}" data-sort="{{.Sort}}" data-dir="{{.Dir}}" data-max-chunk-size="{{.MaxChunkSize}}"{{if .Remote}} data-remote="{{.Remote}}" data-query="{{.Query}}" data-path="{{.Path}}"{{end}}>
+  <thead>
+    <tr>
+      {{range .Columns}}
+      <th class="{{.Class}}"{{if .Active}} aria-sort="{{.Order}}"{{end}} data-key="{{.Key}}"><a href="{{.Link}}">{{.Label}} <span class="caret">{{.Caret}}</span></a></th>
+      {{end}}
+      <th class="c-acts needs-js" aria-label="Actions"></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{if .Parent}}
+    <tr>
+      <td><span class="name"><svg class="ic dir"><use href="#i-up"/></svg><a href="{{.Parent}}">..</a></span></td>
+      <td class="meta c-mod">&#8212;</td>
+      <td class="meta c-kind">&#8212;</td>
+      <td class="meta num c-size">&#8212;</td>
+      <td class="c-acts needs-js"></td>
+    </tr>
+    {{end}}
+    {{range .Entries}}
+    <tr data-name="{{.Name}}" data-dir="{{.Group}}" data-size="{{.Bytes}}" data-time="{{.Unix}}" data-kind="{{.Kind}}"{{if (or (and .IsDir $.Rights.DeleteFolder) (and (not .IsDir) $.Rights.DeleteFile))}} data-delete="1"{{end}}>
+      <td><span class="name"><svg class="ic{{if .IsDir}} dir{{end}}"><use href="{{if .IsDir}}#i-folder{{else}}#i-file{{end}}"/></svg>{{if or .IsDir $.Rights.Download}}<a href="{{.Link}}">{{.Label}}</a>{{else}}<span>{{.Label}}</span>{{end}}</span></td>
+      <td class="meta c-mod">{{.Modified}}</td>
+      <td class="meta c-kind">{{.Kind}}</td>
+      <td class="meta num c-size">{{.Size}}</td>
+      <td class="c-acts needs-js"><button type="button" data-do="menu" title="Options" aria-haspopup="menu" aria-expanded="false" aria-label="Options for {{.Name}}"><svg class="ic"><use href="#i-more"/></svg></button></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{if and (not .Entries) (not .Error)}}<p class="empty">This folder is empty.</p>{{end}}
+
+{{if .Rights.Upload}}
+<div id="drop" class="drop" hidden>
+  <div class="panel">
+    <svg class="ic"><use href="#i-upload"/></svg>
+    <strong>Drop files to upload</strong>
+    <span class="where">into {{.Path}}</span>
+  </div>
+</div>
+<ul id="queue" class="queue" hidden></ul>
+{{end}}
+</main>
+
+<div id="menu" class="menu" role="menu" hidden>
+  {{if .Rights.Download}}<a role="menuitem" data-do="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>{{end}}
+  {{if .Rights.Share}}<button type="button" role="menuitem" data-do="share"><svg class="ic"><use href="#i-link"/></svg>Share&#8230;</button>{{end}}
+  {{if .Rights.Send}}<button type="button" role="menuitem" data-do="send"><svg class="ic"><use href="#i-send"/></svg>Send File&#8230;</button>{{end}}
+  {{if .Rights.RemoteFetch}}<button type="button" role="menuitem" data-do="remote-fetch"><svg class="ic"><use href="#i-download"/></svg>Fetch&#8230;</button>{{end}}
+  {{if and .Rights.Import .Session.Registry}}<a role="menuitem" data-do="import" data-registry="{{.Session.Registry}}" hidden><svg class="ic"><use href="#i-box"/></svg><span>Import into registry&#8230;</span></a>{{end}}
+  {{if .Rights.Rename}}<button type="button" role="menuitem" data-do="rename"><svg class="ic"><use href="#i-pencil"/></svg>Rename&#8230;</button>{{end}}
+  {{if or .Rights.DeleteFile .Rights.DeleteFolder}}<button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete</button>{{end}}
+</div>
+
+<dialog id="prompt">
+  <form method="dialog">
+    <h2></h2>
+    <p></p>
+    <input type="text" aria-label="Name" required>
+    <div class="row">
+      <button class="go" type="submit" value="accept">Save</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+{{if .Rights.Fetch}}
+<dialog id="fetch-dialog" class="transfer" aria-labelledby="fetch-title">
+  <form method="dialog">
+    <h2 id="fetch-title">Fetch file</h2>
+    <p>Downloads a file from a URL into {{.Path}}, under the name the remote gives it.</p>
+    <div class="fields">
+      <label for="fetch-url">URL</label>
+      <input id="fetch-url" name="url" type="url" required placeholder="https://example.com/file.tar.gz" autocomplete="off" spellcheck="false">
+      <label for="fetch-username">Username <span class="hint">optional</span></label>
+      <input id="fetch-username" name="username" type="text" autocomplete="off" spellcheck="false">
+      <label for="fetch-password">Password or token <span class="hint">optional</span></label>
+      <input id="fetch-password" name="password" type="password" autocomplete="new-password">
+      <label class="toggle"><input name="verify" type="checkbox" checked> Validate Connection</label>
+    </div>
+    <details class="headers">
+      <summary>HTTP headers <span class="hint">optional</span></summary>
+      <textarea name="headers" rows="4" spellcheck="false" aria-label="HTTP headers" placeholder="Accept: application/octet-stream&#10;X-Api-Key: &#8230;"></textarea>
+      <p class="hint">One <code>Name: value</code> per line.</p>
+    </details>
+    <div class="progress" hidden>
+      <progress max="1"></progress>
+      <p class="status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="row">
+      <button class="go" type="submit" value="start">Fetch</button>
+      <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{if .Rights.Downloads}}
+<dialog id="downloads-dialog" class="transfer" aria-labelledby="downloads-title">
+  <form method="dialog">
+    <h2 id="downloads-title">Transfers</h2>
+    <ul class="downloads-list" aria-live="polite"></ul>
+    <p class="none">No transfers.</p>
+    <div class="row">
+      <button class="plain" type="submit" value="cancel">Close</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{if .Rights.Send}}
+<dialog id="send-dialog" class="transfer" aria-labelledby="send-title">
+  <form method="dialog">
+    <h2 id="send-title">Send File</h2>
+    <p class="what"></p>
+    <div class="fields">
+      <label for="send-server">Server</label>
+      <select id="send-server" name="server">
+        <option value="" selected>{{.Send.Manual}}</option>
+        {{- range .Send.Servers}}
+        <option value="{{.}}">{{.}}</option>
+        {{- end}}
+      </select>
+      <fieldset class="manual">
+        <label for="send-protocol">Protocol</label>
+        <select id="send-protocol" name="protocol">
+          {{- range .Send.Protocols}}
+          <option value="{{.ID}}" data-port="{{.DefaultPort}}" data-hostkey="{{.HostKey}}" data-token="{{.Token}}">{{.Label}}</option>
+          {{- end}}
+        </select>
+        <fieldset class="login" data-login="host">
+          <label for="send-host">Host</label>
+          <input id="send-host" name="host" type="text" required placeholder="sftp.example.com" autocomplete="off" spellcheck="false">
+          <label for="send-port">Port</label>
+          <input id="send-port" name="port" type="number" required min="1" max="65535" value="22">
+          <label for="send-username">Username</label>
+          <input id="send-username" name="username" type="text" required autocomplete="off" spellcheck="false">
+          <label for="send-password">Password</label>
+          <input id="send-password" name="password" type="password" autocomplete="new-password">
+        </fieldset>
+        <fieldset class="login" data-login="token" hidden disabled>
+          <label for="send-url">Server address</label>
+          <input id="send-url" name="url" type="text" required placeholder="https://acme.jfrog.io" autocomplete="off" spellcheck="false">
+          <label for="send-token">Token</label>
+          <input id="send-token" name="token" type="password" required placeholder="sent as Authorization: Bearer" autocomplete="new-password">
+        </fieldset>
+      </fieldset>
+    </div>
+    <p class="connected" hidden>Connected to <span class="login"></span><button type="button" class="change">Change</button></p>
+    <div class="hostkey" hidden>
+      <p class="warning" hidden></p>
+      <p>The host shows this key. Accept it only if it is the one you expect of <span class="host"></span>:</p>
+      <p class="fingerprint"><span class="type"></span><code></code></p>
+    </div>
+    <div class="remote" hidden>
+      <div class="remote-head">
+        <nav class="remote-path" aria-label="Remote folder"></nav>
+        <span class="spinner" role="status" aria-label="Reading the folder" hidden></span>
+      </div>
+      <ul class="remote-list"></ul>
+      <p class="where"></p>
+    </div>
+    <div class="progress" hidden>
+      <progress max="1"></progress>
+      <p class="status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="row">
+      <button class="go" type="submit" value="connect">Connect</button>
+      <button class="go" type="submit" value="accept" hidden>Accept key</button>
+      <button class="go" type="submit" value="start" hidden>Send</button>
+      <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{if .Rights.RemoteFetch}}
+<dialog id="remote-fetch-dialog" class="transfer" aria-labelledby="remote-fetch-title">
+  <form method="dialog">
+    <h2 id="remote-fetch-title">Fetch File</h2>
+    <p class="what"></p>
+    <div class="remote">
+      <div class="remote-head">
+        <nav class="remote-path" aria-label="Local folder"></nav>
+        <span class="spinner" role="status" aria-label="Reading the folder" hidden></span>
+      </div>
+      <ul class="remote-list"></ul>
+      <p class="where"></p>
+    </div>
+    <div class="progress" hidden>
+      <progress max="1"></progress>
+      <p class="status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="row">
+      <button class="go" type="submit" value="start">Fetch</button>
+      <button class="plain" type="submit" value="stop" formnovalidate hidden>Stop</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{if .Rights.Share}}
+<dialog id="share-dialog" aria-labelledby="share-title">
+  <form method="dialog">
+    <h2 id="share-title">Share file</h2>
+    <p></p>
+    <div class="share-lines">
+      <label for="share-link">Link</label>
+      <div class="share-line">
+        <input id="share-link" class="link" data-kind="link" type="text" readonly spellcheck="false">
+        <button class="go" type="button" data-copy><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button>
+      </div>
+      <label for="share-curl">curl</label>
+      <div class="share-line">
+        <input id="share-curl" class="link" data-kind="curl" type="text" readonly spellcheck="false">
+        <button class="go" type="button" data-copy><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button>
+      </div>
+      <label for="share-wget">wget</label>
+      <div class="share-line">
+        <input id="share-wget" class="link" data-kind="wget" type="text" readonly spellcheck="false">
+        <button class="go" type="button" data-copy><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button>
+      </div>
+    </div>
+    <div class="row">
+      <button class="plain" type="submit" value="cancel">Close</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+<dialog id="confirm">
+  <form method="dialog">
+    <h2></h2>
+    <p></p>
+    <div class="row">
+      <button class="go danger" type="submit" value="agree">Delete</button>
+      <button class="plain" type="submit" value="cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<script nonce="{{.Nonce}}">{{.Script}}</script>
+</body>
+</html>

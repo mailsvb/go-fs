@@ -1,0 +1,10 @@
+# build output
+/go-fs
+/dist/
+/build/
+
+# macOS
+.DS_Store
+
+# test output
+coverage.out

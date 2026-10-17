@@ -1,0 +1,98 @@
+# The rpm packages of go-fs and go-fs-light, built by make rpm with nfpm,
+# which expands from its environment VERSION, the released version, ARCH, the
+# Go architecture, NAME, the product, CONFLICTS, the other product, and
+# SERVES, what the product serves. The files are relative to the repository
+# root, where make runs nfpm, and make puts them in build/pkg/linux for each
+# product and architecture in turn: the binary built with
+# -X main.packaging=rpm, and the template serving /var/lib/go-fs/files.
+#
+# Both products install the same files, the service and the folders, so they
+# conflict: one is swapped for the other by removing it first.
+name: ${NAME}
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+release: 1
+section: net
+maintainer: Sven Beisiegel
+vendor: Sven Beisiegel
+homepage: https://github.com/mailsvb/go-fs
+license: Apache-2.0
+# the first line is the summary as well
+description: |
+  ${SERVES}
+  in a single binary, configured from one TOML file, with hot reload and a
+  web interface for editing it. Runs as the go-fs systemd service.
+
+conflicts:
+  - ${CONFLICTS}
+
+contents:
+  - src: build/pkg/linux/go-fs
+    dst: /usr/bin/go-fs
+    file_info:
+      mode: 0755
+
+  - src: packaging/linux/go-fs.service
+    dst: /usr/lib/systemd/system/go-fs.service
+    file_info:
+      mode: 0644
+
+  # go-fs writes into its configuration file, the generated secrets at the
+  # first start and every change made in the admin interface, by writing a
+  # file beside it and renaming that over it: the folder is the service's
+  # too. noreplace keeps the file as it is on an upgrade, and puts the new
+  # template beside it as go-fs.toml.rpmnew.
+  - dst: /etc/go-fs
+    type: dir
+    file_info:
+      mode: 0750
+      owner: go-fs
+      group: go-fs
+  - src: build/pkg/linux/go-fs.toml
+    dst: /etc/go-fs/go-fs.toml
+    type: config|noreplace
+    file_info:
+      mode: 0600
+      owner: go-fs
+      group: go-fs
+
+  # the folder the template serves
+  - dst: /var/lib/go-fs
+    type: dir
+    file_info:
+      mode: 0750
+      owner: go-fs
+      group: go-fs
+  - dst: /var/lib/go-fs/files
+    type: dir
+    file_info:
+      mode: 0750
+      owner: go-fs
+      group: go-fs
+  # the folder of the container registry, beside the served one
+  - dst: /var/lib/go-fs/registry
+    type: dir
+    file_info:
+      mode: 0750
+      owner: go-fs
+      group: go-fs
+
+  - src: LICENSE
+    dst: /usr/share/licenses/${NAME}/LICENSE
+    expand: true
+    file_info:
+      mode: 0644
+
+scripts:
+  preinstall: packaging/linux/preinstall.sh
+  postinstall: packaging/linux/postinstall.sh
+  preremove: packaging/linux/preremove.sh
+  postremove: packaging/linux/postremove.sh
+
+# The rpm is signed when SIGNING_KEY_FILE names an armored private key, as in
+# the release workflow; NFPM_RPM_PASSPHRASE unlocks it. Unset, it is unsigned.
+rpm:
+  group: System Environment/Daemons
+  signature:
+    key_file: ${SIGNING_KEY_FILE}

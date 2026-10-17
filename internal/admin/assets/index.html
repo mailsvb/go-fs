@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%232f6f4f' d='M1.5 2.5h4.2l1.4 1.8h7.4v9.2h-13z'/%3E%3C/svg%3E">
+<title>go-fs configuration</title>
+<style nonce="{{.Nonce}}">{{.Style}}</style>
+</head>
+<body>
+<svg id="icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 5.5h5.5l2 2.5H21v10.5H3z"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 3 3.5 7.5v9L12 21l8.5-4.5v-9z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><path d="M4 4.5h16v6H4zm0 9h16v6H4z"/><path d="M7.5 7.5h.5m-.5 9h.5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3m0 13v3M2.5 12h3m13 0h3M5.3 5.3l2.1 2.1m9.2 9.2 2.1 2.1m0-13.4-2.1 2.1m-9.2 9.2-2.1 2.1"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M11 4H5v16h6"/><path d="M20 12H10m3.5-3.5L17 12l-3.5 3.5"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+</svg>
+
+<header>
+  <h1>go-fs</h1>
+  <p id="path" class="path"></p>
+  <details class="nav">
+    <summary class="plain"><svg class="ic"><use href="#i-gear"/></svg>Admin<svg class="ic caret"><use href="#i-caret"/></svg></summary>
+    <div class="menu">
+      <a href="{{.Files}}"><svg class="ic"><use href="#i-folder"/></svg>Files</a>
+      {{if .Registry}}<a href="{{.Registry}}"><svg class="ic"><use href="#i-box"/></svg>Registry</a>{{end}}
+      {{range .Servers}}<a href="{{.Link}}"><svg class="ic"><use href="#i-server"/></svg>{{.Name}}</a>{{end}}
+      <form class="inline" method="post" action="{{.Logout}}"><button type="submit"><svg class="ic"><use href="#i-logout"/></svg>Log out{{with .User}} {{.}}{{end}}</button></form>
+    </div>
+  </details>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+<div id="release-notice" class="banner good" hidden></div>
+
+<nav id="tabs" class="tabs" role="tablist"></nav>
+<main id="panels"></main>
+
+<dialog id="server-dialog" aria-labelledby="server-title">
+  <form method="dialog">
+    <h2 id="server-title">Add server</h2>
+    <p class="intro">go-fs logs in to the server before it stores it, and stores it only once that worked.
+      The server is written to the file at once; nothing else on this page is.</p>
+    <div class="dialog-fields">
+      <label for="server-name">name</label>
+      <input id="server-name" name="name" type="text" required spellcheck="false" autocomplete="off" placeholder="how Send File lists it">
+      <label for="server-type">protocol</label>
+      <select id="server-type" name="type"></select>
+      <label for="server-host" data-login="host">host</label>
+      <input id="server-host" name="host" type="text" required spellcheck="false" autocomplete="off" placeholder="sftp.example.com" data-login="host">
+      <label for="server-port" data-login="host">port</label>
+      <input id="server-port" name="port" type="number" required min="1" max="65535" data-login="host">
+      <label for="server-username" data-login="host">username</label>
+      <input id="server-username" name="username" type="text" required spellcheck="false" autocomplete="off" data-login="host">
+      <label for="server-password" data-login="host">password</label>
+      <input id="server-password" name="password" type="password" autocomplete="new-password" data-login="host">
+      <label for="server-url" data-login="token" hidden>server address</label>
+      <input id="server-url" name="url" type="text" required spellcheck="false" autocomplete="off" placeholder="https://acme.jfrog.io" data-login="token" hidden disabled>
+      <label for="server-token" data-login="token" hidden>token</label>
+      <input id="server-token" name="token" type="password" autocomplete="new-password" placeholder="sent as Authorization: Bearer" data-login="token" hidden disabled>
+      <label for="server-vault-path">vault folder</label>
+      <input id="server-vault-path" name="vaultPath" type="text" spellcheck="false" autocomplete="off" placeholder="empty for none; a Cryptomator vault on the server">
+      <label for="server-vault-password">vault password</label>
+      <input id="server-vault-password" name="vaultPassword" type="password" autocomplete="new-password">
+      <label for="server-create-vault">new vault</label>
+      <input id="server-create-vault" name="createVault" type="checkbox" title="make a new vault in the folder, which has to be empty or not there yet">
+    </div>
+    <div class="hostkey" hidden>
+      <p class="note"></p>
+      <p>The host shows this key. Accept it only if it is the one you expect of <span class="host"></span>:</p>
+      <p class="fingerprint"><span class="type"></span><code></code></p>
+    </div>
+    <p class="progress" role="status" aria-live="polite" hidden></p>
+    <div class="row">
+      <button class="primary" type="submit" value="connect">Connect</button>
+      <button class="primary" type="submit" value="save" hidden>Accept key and save</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="repository-dialog" aria-labelledby="repository-title">
+  <form method="dialog">
+    <h2 id="repository-title">Add repository</h2>
+    <p class="intro">The repository is a folder the http server serves. For packages put into it the oldest versions
+      beyond keep are removed, and the metadata clients read is written anew and signed with its key: rpms are signed
+      with it too, APKs keep the signature of their developer. The folder is made
+      when it is not there yet. The repository is written to the file at once; nothing else on this page is.</p>
+    <div class="dialog-fields">
+      <label for="repository-name">name</label>
+      <input id="repository-name" name="name" type="text" required spellcheck="false" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" placeholder="the id clients give it, e.g. go-fs">
+      <label for="repository-type">type</label>
+      <select id="repository-type" name="type"></select>
+      <label for="repository-folder">folder</label>
+      <input id="repository-folder" name="folder" type="text" required spellcheck="false" autocomplete="off" placeholder="/rpm/go-fs, in the served folder">
+      <span class="label">signing key</span>
+      <div class="key">
+        <p class="summary"></p>
+        <div class="buttons">
+          <input type="file" hidden accept=".asc,.gpg,.key,.pgp,.pem,.txt">
+          <button class="plain" type="button" value="generate">Generate</button>
+          <button class="plain" type="button" value="upload">Upload…</button>
+        </div>
+      </div>
+      <label for="repository-keep">keep</label>
+      <input id="repository-keep" name="keep" type="number" min="0" step="1" title="versions of each package that stay; 0 keeps all">
+      <label for="repository-poll">look every</label>
+      <input id="repository-poll" name="pollInterval" type="number" min="5" step="1" title="seconds between two looks at the folder">
+      <label for="repository-url">address</label>
+      <input id="repository-url" name="url" type="text" spellcheck="false" autocomplete="off">
+      <label for="repository-display-title" data-type="fdroid">title</label>
+      <input id="repository-display-title" name="title" type="text" maxlength="50" autocomplete="off" data-type="fdroid" placeholder="the name the F-Droid app shows; the name when empty">
+      <label for="repository-description" data-type="fdroid">description</label>
+      <textarea id="repository-description" name="description" rows="3" data-type="fdroid" placeholder="what the F-Droid app shows under the name"></textarea>
+      <label for="repository-icon" data-type="fdroid">icon</label>
+      <input id="repository-icon" name="icon" type="text" spellcheck="false" autocomplete="off" data-type="fdroid" placeholder="/icon.png, an image in the folder">
+    </div>
+    <p class="progress" role="status" aria-live="polite" hidden></p>
+    <div class="row">
+      <button class="primary" type="submit" value="save">Save</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<footer id="footer" hidden>
+  <span id="status" class="status"></span>
+  <button id="apply" type="button">Apply</button>
+</footer>
+
+<script nonce="{{.Nonce}}">{{.Script}}</script>
+</body>
+</html>
