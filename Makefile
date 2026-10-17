@@ -57,7 +57,7 @@ endef
 # from a folder of the platform. They are built into PKG; the packages
 # themselves land in DIST beside the release binaries.
 PKG  := build/pkg
-NFPM := go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+NFPM := go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
 # the basefolder line of the template, and what it says for each installer
 TEMPLATE_BASEFOLDER := basefolder = "/srv/files"
 LINUX_BASEFOLDER    := basefolder = "/var/lib/go-fs/files"

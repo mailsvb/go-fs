@@ -12,7 +12,7 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
-nfpm="go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0"
+nfpm="go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
