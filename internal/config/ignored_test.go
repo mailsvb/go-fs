@@ -55,9 +55,40 @@ func TestNothingIsIgnoredWithEveryPart(t *testing.T) {
 	skipWithout(t, features.All()...)
 	cfg := Default()
 	cfg.FTP.Enabled, cfg.SFTP.Enabled, cfg.TFTP.Enabled = true, true, true
-	cfg.Servers = []Server{{Name: "share", Type: ServerTypeSMB}}
+	cfg.Servers = []Server{{Name: "share", Type: ServerTypeSMB},
+		{Name: "backup", Type: ServerTypeArtifactory, VaultPath: "libs/vault", VaultPassword: "pw"}}
 	cfg.Repositories = []Repository{{Name: "rpms", Type: RepositoryTypeRPM}}
 	if ignored := cfg.Ignored(); len(ignored) != 0 {
 		t.Errorf("ignored = %q", ignored)
+	}
+}
+
+// A binary built without vaults leaves a server with one alone, whatever its
+// protocol: reached without the vault, it would show the ciphertext and take
+// cleartext beside it. The same server without a vault is offered.
+func TestVaultedServersAreIgnoredWithoutVaults(t *testing.T) {
+	if features.Has(features.Cryptomator) {
+		t.Skip("built with cryptomator")
+	}
+	cfg := Default()
+	cfg.HTTP.Enabled = true
+	cfg.HTTP.Basefolder = t.TempDir()
+	plain := Server{Name: "libs", Type: ServerTypeArtifactory, URL: "https://acme.jfrog.io/artifactory", Token: "t"}
+	vaulted := plain
+	vaulted.Name, vaulted.VaultPath, vaulted.VaultPassword = "backup", "libs/vault", "pw"
+	cfg.Servers = []Server{plain, vaulted}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	ignored := strings.Join(cfg.Ignored(), "; ")
+	if !strings.Contains(ignored, `"backup" with a vault`) || strings.Contains(ignored, `"libs"`) {
+		t.Errorf("ignored = %q", ignored)
+	}
+	if usable := cfg.UsableServers(); len(usable) != 1 || usable[0].Name != "libs" {
+		t.Errorf("the usable servers are %+v", usable)
+	}
+	if absent := cfg.AbsentServers(); len(absent) != 1 || absent[0].Name != "backup" || absent[0].VaultPassword != "pw" {
+		t.Errorf("the absent servers are %+v", absent)
 	}
 }

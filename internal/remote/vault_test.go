@@ -96,6 +96,7 @@ func vaultNames(t *testing.T, fsys remote.FS, p string) []string {
 }
 
 func TestVault(t *testing.T) {
+	skipWithout(t, features.Cryptomator)
 	long := strings.Repeat("long name ", 25) + ".txt"
 	big := make([]byte, 100*1024)
 	_, _ = rand.Read(big)
@@ -248,7 +249,7 @@ func withVaultPassword(l remote.Login, password string) remote.Login {
 }
 
 func TestVaultLoginIsChecked(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
+	skipWithout(t, features.SFTPRemote, features.Cryptomator)
 	base := remote.Login{Host: "example.com", Username: "alice", HostKey: "SHA256:x"}
 	for name, l := range map[string]remote.Login{
 		"a vault without a password": {VaultPath: "/vault"},
@@ -272,5 +273,25 @@ func TestVaultLoginIsChecked(t *testing.T) {
 	l.VaultPath = ""
 	if checked, err := l.Checked(false); err != nil || checked.VaultPassword != "" {
 		t.Errorf("a password without a vault was kept as %q, %v", checked.VaultPassword, err)
+	}
+}
+
+// A binary built without vaults takes no login that names one, so that
+// nothing is read or written on the host beside the vault it was meant for.
+func TestVaultLoginWithoutVaults(t *testing.T) {
+	if features.Has(features.Cryptomator) {
+		t.Skip("built with cryptomator")
+	}
+	l := remote.Login{Type: config.ServerTypeArtifactory, URL: "https://acme.jfrog.io/artifactory", Token: "t",
+		VaultPath: "/libs/vault", VaultPassword: "pw"}
+	if _, err := l.Checked(false); err == nil || !strings.Contains(err.Error(), "without the vaults") {
+		t.Errorf("a login with a vault was read: %v", err)
+	}
+	if _, err := remote.CreateVault(context.Background(), l, sshConfig()); err == nil {
+		t.Error("a vault was made")
+	}
+	l.VaultPath, l.VaultPassword = "", ""
+	if _, err := l.Checked(false); err != nil {
+		t.Errorf("a login without a vault was refused: %v", err)
 	}
 }

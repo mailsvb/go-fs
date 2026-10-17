@@ -9,6 +9,4 @@ github.com/opencontainers/go-digest
 github.com/opencontainers/image-spec
 github.com/pelletier/go-toml/v2
 github.com/ulikunitz/xz
-golang.org/x/crypto
 golang.org/x/sys
-golang.org/x/text

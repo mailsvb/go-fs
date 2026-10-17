@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // HandshakeTimeout bounds the connection and the handshake with a host, which
@@ -111,8 +112,13 @@ func (l Login) Checked(keyOnly bool) (Login, error) {
 	return l.checkedVault()
 }
 
+// errNoVaults is what a login that names a vault fails with in a binary built
+// without the vaults of Cryptomator.
+var errNoVaults = errors.New("this binary was built without the vaults of Cryptomator")
+
 // checkedVault reads the vault of a login: a path of the host, made
-// absolute and clean, that needs a password, or no vault and no password.
+// absolute and clean, that needs a password, or no vault and no password. A
+// binary built without vaults takes no login that names one.
 func (l Login) checkedVault() (Login, error) {
 	vault, err := config.VaultPath(l.VaultPath)
 	if err != nil {
@@ -121,6 +127,8 @@ func (l Login) checkedVault() (Login, error) {
 	l.VaultPath = vault
 	if l.VaultPath == "" {
 		l.VaultPassword = ""
+	} else if !features.Has(features.Cryptomator) {
+		return Login{}, errNoVaults
 	} else if l.VaultPassword == "" {
 		return Login{}, errors.New("type the password of the vault")
 	}

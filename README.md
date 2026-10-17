@@ -1767,6 +1767,10 @@ vaultPassword = "another secret"
 - The Cryptomator apps open a vault go-fs made, and go-fs opens one they made
   with a password. Vaults unlocked by Cryptomator Hub and the older
   `SIV_CTRMAC` vaults are refused. Links inside a vault are not followed.
+- go-fs-light is built without vaults. It leaves a server with a `vaultPath`
+  alone, as it does one of a protocol it does not have: the server is kept in
+  the file, named at startup as ignored, and neither offered nor reached, so
+  that nothing ever lands beside the vault in cleartext.
 - `vaultPassword` is kept in plain text, as the password is, so a vault keeps
   its files from the server, not from whoever can read the configuration.
   A file sent with the **Manual** login is never encrypted.

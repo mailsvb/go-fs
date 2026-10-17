@@ -275,7 +275,7 @@ func TestArtifactoryIsStoredOnceTheTokenWorks(t *testing.T) {
 // A server can be stored with a new vault, whose recovery key is answered
 // once, and an edit keeps the password of the vault unless one is typed in.
 func TestServerWithAVault(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
+	skipWithout(t, features.SFTPRemote, features.Cryptomator)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	path := testConfig(t)
 	_, front := testServer(t, path)

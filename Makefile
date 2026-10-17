@@ -3,7 +3,7 @@ DIST    := dist
 
 # go-fs-light is the second product built from the same code: the build tags
 # in LIGHT_TAGS leave out every protocol but HTTP, HTTPS, the S3 API and the
-# container registry. Its files are named after it, its updates are signed
+# container registry, and the vaults of Cryptomator. Its files are named after it, its updates are signed
 # with a key of their own, and it installs to the same paths as go-fs.
 LIGHT      := $(BINARY)-light
 LIGHT_TAGS := light

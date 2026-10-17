@@ -56,7 +56,7 @@ it that crosses a trust boundary as a finding.
   messages), CSRF against state-changing endpoints (`?go-fs=…` actions, the
   admin config editor), open redirects, and session fixation.
 - **Secrets at rest**: stored server passwords and Cryptomator vaults
-  (`internal/cryptomator`) must not be readable without their keys; secrets in
+  (`internal/cryptomator`, in go-fs only) must not be readable without their keys; secrets in
   the configuration must not leak into logs, listings or API answers.
 - **Parsers of untrusted data**: FTP and TFTP commands and options, SFTP
   packets, S3 XML and chunked bodies, multipart uploads, OCI manifests and
@@ -81,7 +81,7 @@ it that crosses a trust boundary as a finding.
 
 - The checkout is at `/src`. The binaries are `/usr/local/bin/go-fs` and
   `/usr/local/bin/go-fs-light` (built with `-tags light`: HTTP, HTTPS, S3 and the
-  registry only; see `internal/features`).
+  registry only, without Cryptomator vaults; see `internal/features`).
 - `go-fs -init` writes the documented starter configuration
   (`internal/config/template.toml`); `go-fs.example.toml` shows every key.
   `go-fs -check -config FILE` validates one. Servers listen on 127.0.0.1 and

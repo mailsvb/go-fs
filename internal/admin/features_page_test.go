@@ -12,8 +12,9 @@ import (
 )
 
 // The page of a binary built without the FTP, SFTP and TFTP servers, sending
-// by SFTP and SMB and the repositories, go-fs-light, shows none of them, and
-// a save keeps the stored servers it does not show in the file as they were.
+// by SFTP and SMB, the vaults and the repositories, go-fs-light, shows none of
+// them, and a save keeps the stored servers it does not show in the file as
+// they were.
 func TestPageLeavesOutWhatIsNotBuilt(t *testing.T) {
 	for _, name := range features.All() {
 		if features.Has(name) {
@@ -40,6 +41,14 @@ type = "smb"
 host = "fileserver"
 username = "john"
 password = "doe"
+
+[[servers]]
+name = "backup"
+type = "artifactory"
+url = "https://acme.jfrog.io/artifactory"
+token = "secret"
+vaultPath = "libs/vault"
+vaultPassword = "pw"
 
 [http]
 enabled = true
@@ -73,14 +82,18 @@ enabled = true
 			for _, f := range table.Fields {
 				switch table.Key + "." + f.Key {
 				case "users.ftp", "users.sftp", "users.authorizedKeys", "users.basefolder",
-					"users.allowLoginWithoutPassword", "servers.hostKeyFingerprint":
+					"users.allowLoginWithoutPassword", "servers.hostKeyFingerprint",
+					"servers.vaultPath", "servers.vaultPassword":
 					t.Errorf("the page shows %s.%s", table.Key, f.Key)
 				}
 			}
 		}
 	}
 	if servers, _ := got.Values["servers"].([]any); len(servers) != 0 {
-		t.Errorf("the page shows a server of a protocol the binary has not: %v", servers)
+		t.Errorf("the page shows a server of a protocol or a vault the binary has not: %v", servers)
+	}
+	if got.Vaults {
+		t.Error("the page offers vaults")
 	}
 	for _, p := range got.Protocols {
 		if p.ID != config.ServerTypeArtifactory {
@@ -99,8 +112,9 @@ enabled = true
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(saved.Servers) != 1 || saved.Servers[0].Name != "share" || saved.Servers[0].Host != "fileserver" ||
-		saved.Servers[0].Password != "doe" {
+	if len(saved.Servers) != 2 || saved.Servers[0].Name != "share" || saved.Servers[0].Host != "fileserver" ||
+		saved.Servers[0].Password != "doe" || saved.Servers[1].Name != "backup" ||
+		saved.Servers[1].VaultPath != "libs/vault" || saved.Servers[1].VaultPassword != "pw" {
 		t.Errorf("the stored servers became %+v", saved.Servers)
 	}
 }

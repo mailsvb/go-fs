@@ -32,6 +32,7 @@ import (
 	"sync"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/features"
 )
 
 //go:embed assets
@@ -112,6 +113,9 @@ type state struct {
 	Summaries map[string]string `json:"summaries,omitempty"`
 	// Protocols are what the dialog of a remote server offers.
 	Protocols []config.ServerType `json:"protocols"`
+	// Vaults reports whether the dialog of a remote server offers a vault of
+	// Cryptomator, which a binary built without vaults does not.
+	Vaults bool `json:"vaults"`
 	// RepositoryTypes are what the dialog of a repository offers, and
 	// Repositories what the page shows of each stored one, by name.
 	RepositoryTypes []config.RepositoryType   `json:"repositoryTypes"`
@@ -290,6 +294,7 @@ func (h *Handler) handleState(w http.ResponseWriter) {
 		Reload:    cfg.General.ReloadConfig,
 		Summaries: h.schema.Summaries(values),
 		Protocols: config.ServerTypes,
+		Vaults:    features.Has(features.Cryptomator),
 
 		RepositoryTypes: config.RepositoryTypes,
 		Repositories:    repositoryViews(cfg),

@@ -32,6 +32,9 @@ const (
 	RPM = "rpm"
 	// FDroid is the F-Droid package repository.
 	FDroid = "fdroid"
+	// Cryptomator is keeping the files of a stored server in a vault of
+	// Cryptomator.
+	Cryptomator = "cryptomator"
 )
 
 // built holds the parts this binary has. It is filled by the init functions
@@ -76,6 +79,6 @@ func List() []string {
 
 // All is every optional part there is, whether built or not.
 func All() []string {
-	all := []string{TFTP, FTP, SFTP, SFTPRemote, SMB, RPM, FDroid}
+	all := []string{TFTP, FTP, SFTP, SFTPRemote, SMB, RPM, FDroid, Cryptomator}
 	return slices.Sorted(slices.Values(all))
 }

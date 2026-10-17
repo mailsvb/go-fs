@@ -25,6 +25,8 @@ func (c Config) Ignored() []string {
 	for i, server := range c.Servers {
 		if absentServerType(server.Type) {
 			ignored = append(ignored, fmt.Sprintf("servers[%d] %q of type %s", i, server.Name, server.Type))
+		} else if absentVault(server) {
+			ignored = append(ignored, fmt.Sprintf("servers[%d] %q with a vault of Cryptomator", i, server.Name))
 		}
 	}
 	for i, repo := range c.Repositories {
@@ -35,13 +37,13 @@ func (c Config) Ignored() []string {
 	return ignored
 }
 
-// AbsentServers are the servers of the file whose protocol the binary was
-// built without, which it neither offers nor lets anybody edit, and keeps in
-// the file as they are when it writes the file.
+// AbsentServers are the servers of the file whose protocol, or whose vault,
+// the binary was built without, which it neither offers nor lets anybody edit,
+// and keeps in the file as they are when it writes the file.
 func (c Config) AbsentServers() []Server {
 	var absent []Server
 	for _, s := range c.Servers {
-		if absentServerType(s.Type) {
+		if absentServer(s) {
 			absent = append(absent, s)
 		}
 	}

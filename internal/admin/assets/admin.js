@@ -35,6 +35,9 @@ const newRecoveryKeys = new WeakMap();
 const storedServers = new WeakMap();
 // the protocols a remote server may be reached with
 let protocols = [];
+// whether a remote server may keep its files in a vault of Cryptomator,
+// which a binary built without vaults does not offer
+let vaults = false;
 // the kinds a package repository may be, and what the server says of each
 // stored repository, by name: the key it signs with and how it is doing
 let repositoryTypes = [];
@@ -77,6 +80,7 @@ async function load() {
   values = state.values;
   summaries = state.summaries || {};
   protocols = state.protocols || [];
+  vaults = state.vaults === true;
   repositoryTypes = state.repositoryTypes || [];
   repositoryViews = state.repositories || {};
   schema.sections.forEach((section) => {
@@ -764,11 +768,16 @@ const serverDialog = (() => {
     });
   }
 
-  // fields shows the fields of the login the protocol chosen asks for
+  // fields shows the fields of the login the protocol chosen asks for, and
+  // those of the vault when the binary has vaults
   function fields() {
     const byToken = protocol() !== null && protocol().token === true;
     form.querySelectorAll("[data-login]").forEach((element) => {
       element.hidden = (element.dataset.login === "token") !== byToken;
+      if (element.tagName !== "LABEL") element.disabled = element.hidden;
+    });
+    form.querySelectorAll("[data-vault]").forEach((element) => {
+      element.hidden = !vaults;
       if (element.tagName !== "LABEL") element.disabled = element.hidden;
     });
   }
@@ -791,9 +800,9 @@ const serverDialog = (() => {
       password: field("password").value,
       url: field("url").value.trim(),
       token: field("token").value.trim(),
-      vaultPath: field("vaultPath").value.trim(),
-      vaultPassword: field("vaultPassword").value,
-      createVault: field("createVault").checked,
+      vaultPath: vaults ? field("vaultPath").value.trim() : "",
+      vaultPassword: vaults ? field("vaultPassword").value : "",
+      createVault: vaults && field("createVault").checked,
     };
   }
 

@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tags: [no_tftp, no_ftp, no_sftpd, no_sftp_remote, no_smb, no_rpm, no_fdroid, "no_sftpd,no_sftp_remote"]
+        tags: [no_tftp, no_ftp, no_sftpd, no_sftp_remote, no_smb, no_rpm, no_fdroid, no_cryptomator, "no_sftpd,no_sftp_remote"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

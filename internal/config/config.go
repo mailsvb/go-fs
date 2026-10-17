@@ -370,10 +370,10 @@ type Server struct {
 	// path without a slash in front is from where the login starts. The
 	// admin interface makes a new vault, or opens one the Cryptomator apps
 	// made; they open the ones go-fs made. Empty for no vault.
-	VaultPath string `toml:"vaultPath,omitempty"`
+	VaultPath string `toml:"vaultPath,omitempty" feature:"cryptomator"`
 	// VaultPassword is what unlocks the vault. It is kept as it is, as the
 	// password is, so the vault is only as private as this file.
-	VaultPassword string `toml:"vaultPassword,omitempty"`
+	VaultPassword string `toml:"vaultPassword,omitempty" feature:"cryptomator"`
 
 	// AllowedUsers are the accounts, by username, that may use the server:
 	// see it in the menu, browse it, fetch from it and send to it. An
@@ -518,12 +518,26 @@ func absentServerType(id string) bool {
 	return false
 }
 
+// absentVault reports a server that keeps its files in a vault, in a binary
+// built without vaults. Reaching it without the vault would show its
+// ciphertext and put cleartext beside it, so it is left alone like a server
+// of an absent protocol.
+func absentVault(s Server) bool {
+	return s.VaultPath != "" && !features.Has(features.Cryptomator)
+}
+
+// absentServer reports a server the binary keeps in the file and otherwise
+// ignores: one of a protocol, or with a vault, it was built without.
+func absentServer(s Server) bool {
+	return absentServerType(s.Type) || absentVault(s)
+}
+
 // UsableServers are the servers of the file the binary can reach: those whose
-// protocol it was built with.
+// protocol it was built with, and without a vault when it has none.
 func (c Config) UsableServers() []Server {
 	var usable []Server
 	for _, s := range c.Servers {
-		if _, ok := ServerTypeOf(s.Type); ok {
+		if _, ok := ServerTypeOf(s.Type); ok && !absentVault(s) {
 			usable = append(usable, s)
 		}
 	}
@@ -1418,7 +1432,7 @@ func (c Config) validateServers() error {
 		if (server.VaultPath == "") != (server.VaultPassword == "") {
 			return fmt.Errorf("%s %q: vaultPath and vaultPassword are set together or not at all", where, server.Name)
 		}
-		if absentServerType(server.Type) {
+		if absentServer(server) {
 			// what this binary cannot reach it does not check either
 			continue
 		}

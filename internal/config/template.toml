@@ -286,6 +286,7 @@ isAdmin = true
 # a slash in front is from where the login starts. The admin interface makes
 # a new vault or opens one that is there. The password is kept as it is, so
 # the vault is only as private as this file. No vault when not set.
+# go-fs-light has no vaults, and leaves a server with one alone.
 # vaultPath = "vaults/backup"
 # vaultPassword = "secret"
 # What go-fs may do on the server, for any account, on top of what the

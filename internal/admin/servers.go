@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-fs/internal/cryptomator"
 	"github.com/mailsvb/go-fs/internal/remote"
 )
 
@@ -206,7 +205,7 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, context.Canceled):
 			status = http.StatusRequestTimeout
-		case errors.Is(err, cryptomator.ErrWrongPassword):
+		case errors.Is(err, remote.ErrWrongVaultPassword):
 			status = http.StatusBadRequest
 		}
 		http.Error(w, err.Error(), status)

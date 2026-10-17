@@ -1,3 +1,5 @@
+//go:build !light && !no_cryptomator
+
 package remote
 
 import (
@@ -21,6 +23,10 @@ import (
 // vault, / being its top, and which encrypts what is written to it and
 // decrypts what is read. The server sees the vault and nothing beside it.
 // What the vault keeps where is in package cryptomator.
+
+// ErrWrongVaultPassword is what opening a vault with another password than
+// its own fails with.
+var ErrWrongVaultPassword = cryptomator.ErrWrongPassword
 
 // errStopped is what the encryption of a file is stopped with once the
 // server stopped reading it.

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // FS is a host once it was logged in to, whatever the protocol: what the file
@@ -63,6 +64,9 @@ func Open(ctx context.Context, l Login, sshCfg config.SSH) (FS, error) {
 func CreateVault(ctx context.Context, l Login, sshCfg config.SSH) (string, error) {
 	if l.VaultPath == "" {
 		return "", errors.New("name the folder of the vault")
+	}
+	if !features.Has(features.Cryptomator) {
+		return "", errNoVaults
 	}
 	fsys, err := openHost(ctx, l, sshCfg)
 	if err != nil {

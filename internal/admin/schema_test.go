@@ -320,7 +320,7 @@ func TestRepositoryTable(t *testing.T) {
 // the list has no blank record to add, and only the name and the rights are
 // typed into it. A folded server is named by its name.
 func TestServerTable(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
+	skipWithout(t, features.SFTPRemote, features.Cryptomator)
 	schema, _ := build()
 	var table Table
 	for _, section := range schema.Sections {
