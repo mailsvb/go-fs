@@ -19,21 +19,23 @@ jobs:
     steps:
       # Every release carries signed .update files, which is what a running
       # go-fs accepts over HTTP, those of go-fs-light signed with a key of
-      # their own. Without the keys there is nothing to sign them with, so
+      # their own, and its rpm packages and repository are signed with the PGP
+      # package key. Without the keys there is nothing to sign them with, so
       # this is checked before anything is committed.
       - name: check the signing keys
         env:
           GOFS_SIGNING_KEY: ${{ secrets.GOFS_SIGNING_KEY }}
           GOFS_LIGHT_SIGNING_KEY: ${{ secrets.GOFS_LIGHT_SIGNING_KEY }}
+          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
         run: |
-          if [ -z "$GOFS_SIGNING_KEY" ]; then
-            echo "::error::the GOFS_SIGNING_KEY secret is not set"
-            exit 1
-          fi
-          if [ -z "$GOFS_LIGHT_SIGNING_KEY" ]; then
-            echo "::error::the GOFS_LIGHT_SIGNING_KEY secret is not set"
-            exit 1
-          fi
+          missing=0
+          for name in GOFS_SIGNING_KEY GOFS_LIGHT_SIGNING_KEY PACKAGE_SIGNING_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::the $name secret is not set"
+              missing=1
+            fi
+          done
+          exit $missing
 
       - uses: actions/checkout@v7
 
