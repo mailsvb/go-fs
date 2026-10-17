@@ -5,8 +5,4 @@
 #   go run ./tools/sign -generate
 # store the private key as the GOFS_SIGNING_KEY secret of the release workflow,
 # and add the public key below. A build without any key refuses every update.
-#
-# TODO before building the first release: replace the placeholder below with
-# the real public key, as a line of its own without the leading "# ".
-#
-# <base64 ed25519 public key of GOFS_SIGNING_KEY>
+GPb80kL3+2ac+CahX/6VQRDKNpU9F90DILUrhapr1Mc=
