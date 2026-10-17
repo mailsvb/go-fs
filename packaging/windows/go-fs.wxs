@@ -74,7 +74,7 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of $(Product) is already installed." />
     <!-- the other product, in any version, is removed along with an older
          version of this one: both install the same files and service -->
-    <Upgrade Code="$(OtherUpgradeCode)">
+    <Upgrade Id="$(OtherUpgradeCode)">
       <UpgradeVersion Minimum="0.0.0" IncludeMinimum="yes" OnlyDetect="no"
                       Property="OTHERPRODUCTFOUND" />
     </Upgrade>
