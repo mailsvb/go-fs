@@ -139,8 +139,8 @@ jobs:
       - name: install the rpm
         run: |
           docker run --rm -v "$PWD/dist:/dist:ro" rockylinux:9 sh -euxc '
-            version=$(ls /dist/go-fs-*.x86_64.rpm | sort -V | head -1)
-            update=$(ls /dist/go-fs-*.x86_64.rpm | sort -V | tail -1)
+            version=$(ls /dist/go-fs-[0-9]*.x86_64.rpm | sort -V | head -1)
+            update=$(ls /dist/go-fs-[0-9]*.x86_64.rpm | sort -V | tail -1)
             dnf install -y "$version"
             id go-fs
             test "$(stat -c %U:%a /etc/go-fs/go-fs.toml)" = go-fs:600
