@@ -761,10 +761,12 @@ const serverDialog = (() => {
   }
 
   // a field of the login the protocol does not use is hidden, and disabled
-  // so that the form does not ask for it
+  // so that the form does not ask for it; a button is hidden by the step
+  // alone, and is ready once it is shown
   function working(on) {
     Array.from(form.elements).forEach((element) => {
-      if (element.value !== "cancel") element.disabled = on || element.hidden;
+      if (element.value === "cancel") return;
+      element.disabled = on || (element.tagName !== "BUTTON" && element.hidden);
     });
   }
 
