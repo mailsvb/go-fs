@@ -28,6 +28,18 @@
     });
   })();
 
+  // The headings of the table stick just below the header, so they need its
+  // height, which changes as the header wraps.
+  (function () {
+    var header = document.querySelector("body > header");
+    if (!header || !window.ResizeObserver) {
+      return;
+    }
+    new ResizeObserver(function () {
+      document.documentElement.style.setProperty("--header-height", header.getBoundingClientRect().height + "px");
+    }).observe(header);
+  })();
+
   var table = document.getElementById("registry");
   if (!table) {
     return;
