@@ -221,7 +221,7 @@ func TestManagerReportsAndReloads(t *testing.T) {
 	os.Mkdir(filepath.Join(base, "one"), 0o755)
 	put(t, filepath.Join(base, "one"), "hello-1.0-1.x86_64.rpm")
 	cfg := config.Config{
-		HTTP: config.HTTP{Basefolder: base},
+		General: config.General{BaseFolderFiles: base},
 		Repositories: []config.Repository{{
 			Name: "one", Type: config.RepositoryTypeRPM, Folder: "/one", SigningKey: signingKey(t),
 		}},

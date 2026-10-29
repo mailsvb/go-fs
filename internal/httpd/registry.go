@@ -23,7 +23,7 @@ import (
 
 // The container registry answers the OCI Distribution Specification v1.1
 // under /v2/, which is what docker, podman, buildx and crane push to and pull
-// from. It is on when http.registryBaseFolder is set, and keeps everything in
+// from. It is on when general.baseFolderRegistry is set, and keeps everything in
 // that folder (see registryStore); it never touches the served folder.
 
 // repositoryPattern is a repository name as the specification allows it:
@@ -413,8 +413,8 @@ func (s *Server) warnAboutTheRegistry(set *settings) {
 		return
 	}
 	if info, err := os.Stat(filepath.Join(s.root.Base(), "v2")); err == nil && info.IsDir() {
-		s.log.Warn("the container registry answers /v2, so the folder v2 in http.basefolder "+
-			"cannot be reached over http", "basefolder", s.root.Base())
+		s.log.Warn("the container registry answers /v2, so the folder v2 in general.baseFolderFiles "+
+			"cannot be reached over http", "baseFolderFiles", s.root.Base())
 	}
 }
 

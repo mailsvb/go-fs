@@ -30,7 +30,7 @@ func withAdmin(t *testing.T, cfg *httpConfig) {
 	t.Helper()
 	folder := t.TempDir()
 	path := filepath.Join(folder, "go-fs.toml")
-	body := "[general]\nbasefolder = " + strconv.Quote(cfg.Basefolder) + "\n" +
+	body := "[general]\nbaseFolderFiles = " + strconv.Quote(cfg.Basefolder) + "\n" +
 		"[ftp]\nenabled = false\n[tftp]\nenabled = false\n[http]\nenabled = true\n"
 	for _, user := range cfg.Users {
 		body += "[[users]]\nusername = " + strconv.Quote(user.Username) +

@@ -7,7 +7,7 @@ import (
 
 func TestShortShareSecretIsRefused(t *testing.T) {
 	cfg := Default()
-	cfg.HTTP.Basefolder = t.TempDir()
+	cfg.General.BaseFolderFiles = t.TempDir()
 	cfg.HTTP.ShareLinkSecret = "short"
 	if err := cfg.validateHTTP(); err == nil || !strings.Contains(err.Error(), "shareLinkSecret") {
 		t.Errorf("validateHTTP = %v", err)

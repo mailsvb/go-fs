@@ -35,16 +35,16 @@ type Sweeper struct {
 }
 
 // New builds a sweeper for the cleanup entries of cfg, whose paths are
-// relative to cfg.Basefolder.
+// relative to cfg.BaseFolderFiles.
 func New(cfg config.General, logger *slog.Logger) (*Sweeper, error) {
-	root, err := vfs.New(cfg.Basefolder)
+	root, err := vfs.New(cfg.BaseFolderFiles)
 	if err != nil {
 		return nil, err
 	}
 	return &Sweeper{
 		log:     logger,
 		entries: cfg.Cleanup,
-		base:    cfg.Basefolder,
+		base:    cfg.BaseFolderFiles,
 		root:    root,
 		done:    make(chan struct{}),
 	}, nil
@@ -56,12 +56,12 @@ func New(cfg config.General, logger *slog.Logger) (*Sweeper, error) {
 func (s *Sweeper) Reload(cfg config.General) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cfg.Basefolder != s.base {
-		root, err := vfs.New(cfg.Basefolder)
+	if cfg.BaseFolderFiles != s.base {
+		root, err := vfs.New(cfg.BaseFolderFiles)
 		if err != nil {
 			return err
 		}
-		s.root, s.base = root, cfg.Basefolder
+		s.root, s.base = root, cfg.BaseFolderFiles
 	}
 	s.entries = cfg.Cleanup
 	return nil

@@ -98,7 +98,7 @@ func (s *Server) Reload(cfg config.SFTP, sshCfg config.SSH, accounts []config.Us
 func New(cfg config.SFTP, sshCfg config.SSH, accounts []config.User, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
-		return nil, fmt.Errorf("sftp.basefolder: %w", err)
+		return nil, fmt.Errorf("general.baseFolderFiles: %w", err)
 	}
 
 	signer, err := hostKey(cfg, logger)

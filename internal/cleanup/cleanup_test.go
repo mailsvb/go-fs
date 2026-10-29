@@ -28,8 +28,8 @@ func TestCleanupKeepsTheNewest(t *testing.T) {
 	}
 
 	sweeper, err := New(config.General{
-		Basefolder: base,
-		Cleanup:    []config.Cleanup{{Path: "/iso", Keep: 2}},
+		BaseFolderFiles: base,
+		Cleanup:         []config.Cleanup{{Path: "/iso", Keep: 2}},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)

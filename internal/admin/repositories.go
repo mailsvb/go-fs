@@ -162,8 +162,8 @@ func (h *Handler) handleRepositorySave(w http.ResponseWriter, r *http.Request) {
 	// repository to a folder that is to hold one means
 	resolved := cfg.Resolved()
 	made := false
-	if resolved.HTTP.Basefolder != "" {
-		folder := config.RepositoryPath(resolved.HTTP.Basefolder, repo.Folder)
+	if cfg.General.BaseFolderFiles != "" {
+		folder := config.RepositoryPath(cfg.General.BaseFolderFiles, repo.Folder)
 		if _, err := os.Stat(folder); errors.Is(err, fs.ErrNotExist) {
 			if err := os.MkdirAll(folder, 0o755); err != nil {
 				http.Error(w, "the folder cannot be made: "+err.Error(), http.StatusConflict)

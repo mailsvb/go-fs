@@ -193,7 +193,7 @@ func TestSelfUpdate(t *testing.T) {
 	port := freePort(t)
 	cfgPath := filepath.Join(dir, "go-fs.toml")
 	cfg := fmt.Sprintf(`[general]
-basefolder = %s
+baseFolderFiles = %s
 reloadConfig = false
 [ftp]
 enabled = false

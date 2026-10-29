@@ -138,7 +138,7 @@ type settings struct {
 	// they are a list of their own, so a registry-only entry cannot reach the
 	// file tree.
 	registryAccounts []*account
-	// registry is the store under http.registryBaseFolder, nil when the
+	// registry is the store under general.baseFolderRegistry, nil when the
 	// registry is off.
 	registry       *registryStore
 	protectedPaths []*regexp.Regexp
@@ -192,7 +192,7 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 	if cfg.RegistryBaseFolder != "" {
 		store, err = newRegistryStore(cfg.RegistryBaseFolder)
 		if err != nil {
-			return nil, fmt.Errorf("http.registryBaseFolder: %w", err)
+			return nil, fmt.Errorf("general.baseFolderRegistry: %w", err)
 		}
 	}
 	bearers, err := buildTokens(tokens, fold)
@@ -259,7 +259,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, 
 func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.User, bearers []config.Token, servers []config.Server, configPath string, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
-		return nil, fmt.Errorf("http.basefolder: %w", err)
+		return nil, fmt.Errorf("general.baseFolderFiles: %w", err)
 	}
 
 	set, err := newSettings(cfg, https, sshCfg, users, bearers, servers, root)

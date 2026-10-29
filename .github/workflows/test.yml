@@ -146,7 +146,7 @@ jobs:
             test "$(stat -c %U:%a /etc/go-fs/go-fs.toml)" = go-fs:600
             test "$(stat -c %U /var/lib/go-fs/files)" = go-fs
             test "$(stat -c %U /var/lib/go-fs/registry)" = go-fs
-            grep -qxF "registryBaseFolder = \"/var/lib/go-fs/registry\"" /etc/go-fs/go-fs.toml
+            grep -qxF "baseFolderRegistry = \"/var/lib/go-fs/registry\"" /etc/go-fs/go-fs.toml
             runuser -u go-fs -- /usr/bin/go-fs -check -config /etc/go-fs/go-fs.toml
             setpriv --reuid go-fs --regid go-fs --init-groups \
               /usr/bin/go-fs -config /etc/go-fs/go-fs.toml > /tmp/go-fs.log 2>&1 &

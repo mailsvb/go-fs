@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/mailsvb/go-fs/internal/features"
@@ -35,11 +36,9 @@ func authorizedKey(t *testing.T) string {
 // servers most of the checks here are about, and every server on folder.
 func servingConfig(folder string) Config {
 	cfg := Default()
+	cfg.General.BaseFolderFiles = folder
 	cfg.FTP.Enabled = true
-	cfg.FTP.Basefolder = folder
 	cfg.TFTP.Enabled = true
-	cfg.TFTP.Basefolder = folder
-	cfg.HTTP.Basefolder = folder
 	return cfg
 }
 
@@ -57,17 +56,18 @@ func writeConfig(t *testing.T, body string) (path string, folder string) {
 func TestLoadAppliesDefaults(t *testing.T) {
 	skipWithout(t, features.FTP)
 	path, _ := writeConfig(t, `
+[general]
+baseFolderFiles = "{{folder}}"
+
 [http]
 enabled = false
 
 [ftp]
 enabled = true
-basefolder = "{{folder}}"
 port = 2121
 
 [tftp]
 enabled = false
-basefolder = "{{folder}}"
 `)
 	cfg, err := Load(path)
 	if err != nil {
@@ -140,12 +140,14 @@ func TestTheDefaultsServeHTTPOnLocalhostOnly(t *testing.T) {
 func TestUserPermissionDefaults(t *testing.T) {
 	skipWithout(t, features.FTP)
 	path, _ := writeConfig(t, `
+[general]
+baseFolderFiles = "{{folder}}"
+
 [http]
 enabled = false
 
 [ftp]
 enabled = true
-basefolder = "{{folder}}"
 
 [[users]]
 username = "john"
@@ -160,7 +162,6 @@ allowUserFileRetrieve = true
 
 [tftp]
 enabled = false
-basefolder = "{{folder}}"
 `)
 	cfg, err := Load(path)
 	if err != nil {
@@ -214,7 +215,10 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		}, "is above ftp.passiveMaxPort"},
 		{"passive port out of range", func(c *Config) { c.FTP.PassiveMaxPort = 70000 }, "ftp.passiveMaxPort"},
 		{"active source port out of range", func(c *Config) { c.FTP.ActiveSourcePort = 70000 }, "ftp.activeSourcePort"},
-		{"missing basefolder", func(c *Config) { c.FTP.Basefolder = filepath.Join(folder, "nope") }, "ftp.basefolder"},
+		{"missing files folder", func(c *Config) {
+			c.General.BaseFolderFiles = filepath.Join(folder, "nope")
+		}, "general.baseFolderFiles"},
+		{"no files folder", func(c *Config) { c.General.BaseFolderFiles = "" }, "general.baseFolderFiles is not set"},
 		{"ftps port", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Port = 0 }, "ftps.port"},
 		{"half a tls pair", func(c *Config) { c.FTPS.Enabled = true; c.FTPS.Cert = "cert.pem" }, "together"},
 		{"user without name", func(c *Config) { c.Users = []User{{Password: "x", FTP: true}} }, "no username"},
@@ -231,10 +235,8 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.Users = []User{{Username: "john", FTP: true, Basefolder: filepath.Join(folder, "nope")}}
 		}, "users[0].basefolder"},
 		{"sftp port", func(c *Config) { c.SFTP.Enabled = true; c.SFTP.Port = 0 }, "sftp.port"},
-		{"sftp basefolder", func(c *Config) { c.SFTP.Enabled = true; c.SFTP.Basefolder = "" }, "sftp.basefolder"},
 		{"sftp host key", func(c *Config) {
 			c.SFTP.Enabled = true
-			c.SFTP.Basefolder = folder
 			c.SFTP.HostKey = "not a key"
 		}, "sftp.hostkey"},
 		{"broken authorized key", func(c *Config) {
@@ -249,11 +251,9 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"https port", func(c *Config) { c.HTTPS.Enabled = true; c.HTTPS.Port = 0 }, "https.port"},
 		{"half an https pair", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
 			c.HTTPS.Enabled = true
 			c.HTTPS.Cert = "cert.pem"
 		}, "together"},
-		{"http basefolder", func(c *Config) { c.HTTP.Basefolder = "" }, "http.basefolder"},
 		// an http account is checked whether or not http is enabled: the entry
 		// is what is wrong, and it stays wrong on the day http is switched on
 		{"http user without a password", func(c *Config) {
@@ -285,68 +285,58 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		}, "tokens[0].paths[0]"},
 		{"broken protected path pattern", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
 			c.HTTP.PathsRequireAuth = []string{"([bad"}
 		}, "http.pathsRequireAuth[0]"},
 		{"cleanup without a path", func(c *Config) {
-			c.General.Basefolder = folder
+			c.General.BaseFolderFiles = folder
 			c.General.Cleanup = []Cleanup{{Keep: 3}}
 		}, "general.cleanup[0] has no path"},
 		{"cleanup with a negative keep", func(c *Config) {
-			c.General.Basefolder = folder
+			c.General.BaseFolderFiles = folder
 			c.General.Cleanup = []Cleanup{{Path: "/iso", Keep: -1}}
 		}, "general.cleanup[0].keep cannot be negative"},
 		{"cleanup without a base folder", func(c *Config) {
-			c.General.Basefolder = ""
+			c.General.BaseFolderFiles = ""
 			c.General.Cleanup = []Cleanup{{Path: "/iso", Keep: 3}}
-		}, "general.cleanup needs general.basefolder"},
+		}, "general.baseFolderFiles is not set"},
 		{"ftp bind address", func(c *Config) { c.FTP.Address = "not-an-address" }, "ftp.address"},
 		{"ftp passive address", func(c *Config) { c.FTP.PassiveAddress = "2001:db8::1" }, "ftp.passiveAddress"},
 		{"ftp data timeout", func(c *Config) { c.FTP.DataTimeout = 0 }, "ftp.dataTimeout"},
 		{"ftp transfer idle timeout", func(c *Config) { c.FTP.TransferIdleTimeout = -1 }, "ftp.transferIdleTimeout"},
 		{"http bind address", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
 			c.HTTP.Address = "nope"
 		}, "http.address"},
 		{"http session token lifetime", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
 			c.HTTP.SessionTokenLifetime = 0
 		}, "http.httpSessionTokenLifetime"},
 		{"http session cap", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
 			c.HTTP.SessionMaxLifetime = 0
 		}, "http.httpSessionMaxLifetime"},
 		{"http session token secret that is not base64", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
 			c.HTTP.SessionTokenSecret = "not base64 at all!!"
 		}, "http.httpSessionTokenSecret"},
 		{"http session token secret that is too short", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
 			c.HTTP.SessionTokenSecret = base64.StdEncoding.EncodeToString(make([]byte, 16))
 		}, "at least 32"},
 		{"http login attempts negative", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
 			c.HTTP.LoginAttempts = -1
 		}, "http.loginAttempts"},
 		{"http login lockout zero", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
 			c.HTTP.LoginLockout = 0
 		}, "http.loginLockout"},
 		{"http trusted proxy that is not an address", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
 			c.HTTP.TrustedProxies = []string{"10.0.0.0/8", "proxy.example"}
 		}, "http.trustedProxies[1]"},
 		{"sftp bind address", func(c *Config) {
 			c.SFTP.Enabled = true
-			c.SFTP.Basefolder = folder
 			c.SFTP.Address = "nope"
 		}, "sftp.address"},
 		{"duplicate account", func(c *Config) {
@@ -367,36 +357,31 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		}, "cannot hold a colon"},
 		{"relative registry folder", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
-			c.HTTP.RegistryBaseFolder = "registry"
-		}, "http.registryBaseFolder \"registry\" has to be an absolute path"},
+			c.General.BaseFolderRegistry = "registry"
+		}, "general.baseFolderRegistry \"registry\" has to be an absolute path"},
 		{"missing registry folder", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
-			c.HTTP.RegistryBaseFolder = filepath.Join(folder, "nope")
-		}, "http.registryBaseFolder"},
+			c.General.BaseFolderRegistry = filepath.Join(folder, "nope")
+		}, "general.baseFolderRegistry"},
 		{"registry folder inside the served folder", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
-			c.HTTP.RegistryBaseFolder = mkdir(t, folder, "registry")
-		}, "overlaps ftp.basefolder"},
+			c.General.BaseFolderRegistry = mkdir(t, folder, "registry")
+		}, "overlaps general.baseFolderFiles"},
 		{"registry folder is the served folder", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = folder
-			c.HTTP.RegistryBaseFolder = folder
+			c.General.BaseFolderRegistry = folder
 		}, "overlaps"},
-		{"registry folder holding the http folder", func(c *Config) {
+		{"registry folder holding the served folder", func(c *Config) {
 			outer := t.TempDir()
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = mkdir(t, outer, "served")
-			c.HTTP.RegistryBaseFolder = outer
-		}, "overlaps http.basefolder"},
+			c.General.BaseFolderFiles = mkdir(t, outer, "served")
+			c.General.BaseFolderRegistry = outer
+		}, "overlaps general.baseFolderFiles"},
 		{"registry folder inside an account's folder", func(c *Config) {
 			own := t.TempDir()
 			c.HTTP.Enabled = true
-			c.HTTP.Basefolder = t.TempDir()
 			c.Users = []User{{Username: "john", FTP: true, Basefolder: own}}
-			c.HTTP.RegistryBaseFolder = mkdir(t, own, "registry")
+			c.General.BaseFolderRegistry = mkdir(t, own, "registry")
 		}, "overlaps users[0].basefolder"},
 		{"tftp type", func(c *Config) { c.TFTP.Type = "sctp" }, "tftp.type"},
 		{"tftp block size", func(c *Config) { c.TFTP.MaxBlockSize = 4 }, "tftp.maxBlockSize"},
@@ -420,7 +405,6 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"large packet size", func(c *Config) { c.General.SSH.MaxPacketSize = 1 << 20 }, "general.ssh.maxPacketSize"},
 		{"grace time within the failure delay", func(c *Config) {
 			c.SFTP.Enabled = true
-			c.SFTP.Basefolder = folder
 			c.SFTP.LoginFailureDelay = 5
 			c.General.SSH.LoginGraceTime = 5
 		}, "general.ssh.loginGraceTime has to be longer than sftp.loginFailureDelay"},
@@ -454,9 +438,8 @@ func TestValidateAcceptsARegistryFolderOfItsOwn(t *testing.T) {
 	parent := t.TempDir()
 	cfg := servingConfig(mkdir(t, parent, "served"))
 	cfg.HTTP.Enabled = true
-	cfg.HTTP.Basefolder = cfg.FTP.Basefolder
 	// a sibling whose name starts like the served folder's is not inside it
-	cfg.HTTP.RegistryBaseFolder = mkdir(t, parent, "served-registry")
+	cfg.General.BaseFolderRegistry = mkdir(t, parent, "served-registry")
 	cfg.Users = []User{{Username: "ci", Password: "secret", Registry: true}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -535,9 +518,9 @@ func TestTemplateRoundTrips(t *testing.T) {
 		t.Error("the template disagrees with the built-in defaults")
 	}
 
-	// the template leaves every server on general.basefolder
-	if cfg.General.Basefolder != folder {
-		t.Errorf("general.basefolder = %q, want %q", cfg.General.Basefolder, folder)
+	// every server serves general.baseFolderFiles
+	if cfg.General.BaseFolderFiles != folder {
+		t.Errorf("general.baseFolderFiles = %q, want %q", cfg.General.BaseFolderFiles, folder)
 	}
 	for name, got := range map[string]string{
 		"ftp":  cfg.FTP.Basefolder,
@@ -546,7 +529,7 @@ func TestTemplateRoundTrips(t *testing.T) {
 		"tftp": cfg.TFTP.Basefolder,
 	} {
 		if got != folder {
-			t.Errorf("%s.basefolder = %q, want the general %q", name, got, folder)
+			t.Errorf("%s serves %q, want general.baseFolderFiles %q", name, got, folder)
 		}
 	}
 
@@ -641,68 +624,114 @@ func TestDecodeHostKey(t *testing.T) {
 	}
 }
 
-func TestGeneralBasefolderIsTheFallback(t *testing.T) {
+// Every server serves general.baseFolderFiles. A basefolder a section still
+// names is no longer read, and RetiredKeys says so.
+func TestEveryServerServesTheFilesFolder(t *testing.T) {
 	shared := t.TempDir()
 	own := t.TempDir()
-	path, _ := writeConfig(t, `
+	body := `
 [general]
-basefolder = "`+strings.ReplaceAll(shared, `\`, `\\`)+`"
+baseFolderFiles = "` + strings.ReplaceAll(shared, `\`, `\\`) + `"
 
 [ftp]
-basefolder = "`+strings.ReplaceAll(own, `\`, `\\`)+`"
+basefolder = "` + strings.ReplaceAll(own, `\`, `\\`) + `"
 
 [sftp]
 enabled = true
 port = 2222
 
-[[sftp.users]]
-username = "john"
-password = "doe"
-
 [tftp]
 enabled = true
-`)
+`
+	path, _ := writeConfig(t, body)
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// a section that names its own folder keeps it
-	if cfg.FTP.Basefolder != own {
-		t.Errorf("ftp.basefolder = %q, want its own %q", cfg.FTP.Basefolder, own)
+	for name, got := range map[string]string{
+		"ftp":  cfg.FTP.Basefolder,
+		"sftp": cfg.SFTP.Basefolder,
+		"http": cfg.HTTP.Basefolder,
+		"tftp": cfg.TFTP.Basefolder,
+	} {
+		if got != shared {
+			t.Errorf("%s serves %q, want general.baseFolderFiles %q", name, got, shared)
+		}
 	}
-	// the others fall back
-	if cfg.SFTP.Basefolder != shared || cfg.TFTP.Basefolder != shared {
-		t.Errorf("sftp %q and tftp %q should both be the general %q",
-			cfg.SFTP.Basefolder, cfg.TFTP.Basefolder, shared)
+	found := RetiredKeys([]byte(body))
+	if len(found) != 1 || !strings.Contains(found[0], "ftp.basefolder is ignored, use general.baseFolderFiles") {
+		t.Errorf("RetiredKeys = %q, want ftp.basefolder", found)
 	}
 }
 
-func TestGeneralBasefolderHasToBeAbsolute(t *testing.T) {
+func TestBaseFolderFilesHasToBeAbsolute(t *testing.T) {
 	cfg := servingConfig(t.TempDir())
-	cfg.General.Basefolder = "relative/path"
+	cfg.General.BaseFolderFiles = "relative/path"
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "absolute path") {
 		t.Errorf("error = %v, want one about an absolute path", err)
 	}
 }
 
-// TestParseLeavesTheFallbackAlone is what the admin interface depends on:
-// Parse says what the file says, and only Resolved hands the fallback out.
-func TestParseLeavesTheFallbackAlone(t *testing.T) {
-	folder := t.TempDir()
-	cfg, err := Parse([]byte("[general]\nbasefolder = " + strconv.Quote(folder) + "\n"))
+// A file written before the folder keys were renamed loads as it did: Parse
+// reads general.basefolder and http.registryBaseFolder as the keys that
+// replaced them, and only Resolved hands the folders to the sections.
+func TestParseReadsTheOldFolderKeys(t *testing.T) {
+	files, registry := t.TempDir(), t.TempDir()
+	cfg, err := Parse([]byte("[general]\nbasefolder = " + strconv.Quote(files) +
+		"\n\n[http]\nregistryBaseFolder = " + strconv.Quote(registry) + "\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.FTP.Basefolder != "" {
-		t.Errorf("Parse resolved ftp.basefolder to %q", cfg.FTP.Basefolder)
+	if cfg.General.BaseFolderFiles != files || cfg.General.BaseFolderRegistry != registry {
+		t.Errorf("read baseFolderFiles %q and baseFolderRegistry %q, want %q and %q",
+			cfg.General.BaseFolderFiles, cfg.General.BaseFolderRegistry, files, registry)
 	}
-	if resolved := cfg.Resolved(); resolved.FTP.Basefolder != folder {
-		t.Errorf("Resolved left ftp.basefolder as %q", resolved.FTP.Basefolder)
+	if cfg.FTP.Basefolder != "" || cfg.HTTP.RegistryBaseFolder != "" {
+		t.Error("Parse handed the folders to the sections")
+	}
+	resolved := cfg.Resolved()
+	if resolved.FTP.Basefolder != files || resolved.HTTP.RegistryBaseFolder != registry {
+		t.Errorf("Resolved handed out %q and %q", resolved.FTP.Basefolder, resolved.HTTP.RegistryBaseFolder)
 	}
 	// the copy is not shared with the original
 	if cfg.FTP.Basefolder != "" {
 		t.Error("Resolved changed the configuration it was called on")
+	}
+}
+
+// Where a file sets a folder under both names, the new one is read.
+func TestTheNewFolderKeyWins(t *testing.T) {
+	cfg, err := Parse([]byte("[general]\nbasefolder = \"/old\"\nbaseFolderFiles = \"/new\"\n" +
+		"baseFolderRegistry = \"/new-registry\"\n\n[http]\nregistryBaseFolder = \"/old-registry\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.General.BaseFolderFiles != "/new" || cfg.General.BaseFolderRegistry != "/new-registry" {
+		t.Errorf("read %q and %q, want the new keys", cfg.General.BaseFolderFiles, cfg.General.BaseFolderRegistry)
+	}
+}
+
+// A file the admin interface writes names the folders by the new keys alone,
+// whatever the file it read named them by.
+func TestSaveWritesNoOldFolderKey(t *testing.T) {
+	cfg, err := Parse([]byte("[general]\nbasefolder = \"/files\"\n\n[http]\nregistryBaseFolder = \"/registry\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := toml.Marshal(cfg.Resolved())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if setsOldKeys(data) {
+		t.Errorf("the written file still sets an old folder key:\n%s", data)
+	}
+	again, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.General.BaseFolderFiles != "/files" || again.General.BaseFolderRegistry != "/registry" {
+		t.Errorf("read back %q and %q", again.General.BaseFolderFiles, again.General.BaseFolderRegistry)
 	}
 }
 
@@ -957,7 +986,7 @@ func TestTheExampleFileIsTheTemplate(t *testing.T) {
 // ignored rather than refused, and RetiredKeys is what tells its author.
 func TestARetiredKeyIsStillAccepted(t *testing.T) {
 	folder := t.TempDir()
-	file := []byte("[general]\nbasefolder = " + strconv.Quote(folder) +
+	file := []byte("[general]\nbaseFolderFiles = " + strconv.Quote(folder) +
 		"\n\n[http]\nenabled = true\nsessionTimeout = 86400\n")
 
 	cfg, err := Parse(file)
@@ -978,7 +1007,7 @@ func TestARetiredKeyIsStillAccepted(t *testing.T) {
 // where they went.
 func TestPerServerAccountsAreRetired(t *testing.T) {
 	folder := t.TempDir()
-	file := []byte("[general]\nbasefolder = " + strconv.Quote(folder) +
+	file := []byte("[general]\nbaseFolderFiles = " + strconv.Quote(folder) +
 		"\n\n[[ftp.users]]\nusername = \"john\"\npassword = \"doe\"\n" +
 		"\n[[http.users]]\nusername = \"max\"\npassword = \"mustermann\"\n")
 

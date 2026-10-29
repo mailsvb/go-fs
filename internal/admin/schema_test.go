@@ -118,7 +118,7 @@ func TestFieldKinds(t *testing.T) {
 	for key, want := range map[string]string{
 		"ftp.enabled":                       kindBool,
 		"ftp.port":                          kindInt,
-		"ftp.basefolder":                    kindText,
+		"general.baseFolderFiles":           kindText,
 		"http.maxUploadSize":                kindInt,
 		"http.pathsRequireAuth":             kindLines,
 		"general.logLevel":                  kindText,
@@ -127,7 +127,7 @@ func TestFieldKinds(t *testing.T) {
 		"http.s3Region":                     kindText,
 		"users.users.s3":                    kindBool,
 		"users.users.registry":              kindBool,
-		"http.registryBaseFolder":           kindText,
+		"general.baseFolderRegistry":        kindText,
 		"http.registryAnonymousRead":        kindBool,
 		"users.users.isAdmin":               kindBool,
 		"sftp.hostkey":                      kindSecret,
@@ -193,7 +193,7 @@ func TestValuesRoundTrip(t *testing.T) {
 
 	yes := true
 	cfg := config.Default()
-	cfg.General.Basefolder = "/srv/files"
+	cfg.General.BaseFolderFiles = "/srv/files"
 	cfg.HTTP.MaxUploadSize = 1 << 30
 	cfg.Users = []config.User{
 		{Username: "john", Password: "doe", FTP: true, HTTP: true, Paths: []string{"^/public/"}, AllowUserFileRetrieve: &yes},
@@ -354,30 +354,33 @@ func TestServerTable(t *testing.T) {
 	}
 }
 
-// TestInheritedBasefolderStaysInherited guards the reason the interface parses
-// the file rather than loading it: a section that leans on general.basefolder
-// must not come back with its own copy of it.
-func TestInheritedBasefolderStaysInherited(t *testing.T) {
+// TestTheFoldersAreGeneralKeys guards that the folders are edited in one
+// place: no section has a folder of its own, and the ones Resolved hands out
+// are no field of the page.
+func TestTheFoldersAreGeneralKeys(t *testing.T) {
 	schema, _ := build()
-	cfg := config.Default()
-	cfg.General.Basefolder = "/srv/files"
+	for _, section := range schema.Sections {
+		for _, field := range section.Fields {
+			if field.Key == "-" || (section.Key != "general" && strings.EqualFold(field.Key, "basefolder")) {
+				t.Errorf("%s has a field %q", section.Key, field.Key)
+			}
+		}
+	}
 
-	applied, err := schema.Apply(roundTripJSON(t, schema.Values(cfg)))
+	cfg := config.Default()
+	cfg.General.BaseFolderFiles = "/srv/files"
+	cfg.General.BaseFolderRegistry = "/srv/registry"
+	applied, err := schema.Apply(roundTripJSON(t, schema.Values(cfg.Resolved())))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, folder := range map[string]string{
-		"ftp":  applied.FTP.Basefolder,
-		"sftp": applied.SFTP.Basefolder,
-		"http": applied.HTTP.Basefolder,
-		"tftp": applied.TFTP.Basefolder,
-	} {
-		if folder != "" {
-			t.Errorf("%s.basefolder became %q, it should still be inherited", name, folder)
-		}
+	if applied.General.BaseFolderFiles != "/srv/files" || applied.General.BaseFolderRegistry != "/srv/registry" {
+		t.Errorf("the folders came back as %q and %q",
+			applied.General.BaseFolderFiles, applied.General.BaseFolderRegistry)
 	}
-	if applied.Resolved().FTP.Basefolder != "/srv/files" {
-		t.Error("the fallback is no longer applied")
+	if resolved := applied.Resolved(); resolved.FTP.Basefolder != "/srv/files" ||
+		resolved.HTTP.RegistryBaseFolder != "/srv/registry" {
+		t.Error("the folders are no longer handed to the sections")
 	}
 }
 

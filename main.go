@@ -145,6 +145,18 @@ func run(stop <-chan struct{}) error {
 		"logFormat", cfg.General.LogFormat)
 	warnAboutSecrets(logger.Logger, *configPath, cfg)
 
+	// a file written for an older version names the folders by keys that
+	// have since been renamed; it was read through them, and is given the
+	// new ones
+	if changes, err := config.Migrate(*configPath); err != nil {
+		logger.Warn("cannot rename the folder keys of the configuration file, so it is "+
+			"read through the old ones as before", "path", *configPath, "error", err)
+	} else {
+		for _, change := range changes {
+			logger.Info("migrated the configuration file", "change", change, "path", *configPath)
+		}
+	}
+
 	// the share links of files and the login tokens of browsers are signed
 	// with keys the file keeps, so a link handed out and a browser logged in
 	// survive a restart and an update; a file without them is given them

@@ -576,7 +576,7 @@ func stagingPath(set *settings, target string) string {
 // real target. Rename is tried first — one syscall, no second read of a
 // possibly large file — and only falls back to copying the bytes across when
 // that fails, which is what a staging folder configured on a different
-// filesystem than basefolder causes: the docs already warn against that, but
+// filesystem than general.baseFolderFiles causes: the docs already warn against that, but
 // a chunked upload should still be able to finish rather than sitting fully
 // staged with no way to complete.
 //

@@ -96,7 +96,7 @@ func (s *Server) Reload(cfg config.TFTP) error {
 func New(cfg config.TFTP, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
-		return nil, fmt.Errorf("tftp.basefolder: %w", err)
+		return nil, fmt.Errorf("general.baseFolderFiles: %w", err)
 	}
 	server := &Server{
 		root:          root,

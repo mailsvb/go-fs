@@ -15,10 +15,10 @@ import (
 // shows, and so that two people editing it cannot silently overwrite a file
 // neither of them has seen.
 
-// read parses the configuration file without resolving general.basefolder into
-// the sections. What the page edits has to be what the file says: resolving it
-// first and writing the result back would turn the one fallback into four
-// explicit copies of it.
+// read parses the configuration file without resolving or validating it. What
+// the page edits has to be what the file says, with the keys an older file
+// names the folders by read as the ones that replaced them, so that a save
+// writes the new names.
 func (h *Handler) read() (config.Config, error) {
 	data, err := os.ReadFile(h.path)
 	if err != nil {

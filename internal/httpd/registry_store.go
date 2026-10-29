@@ -16,7 +16,7 @@ import (
 )
 
 // registryStore is the on-disk layout of the container registry under
-// http.registryBaseFolder:
+// general.baseFolderRegistry:
 //
 //	blobs/<alg>/<hex[0:2]>/<hex>                 every blob and manifest, once
 //	repositories/<name>/_manifests/<alg>/<hex>   the manifests a repository holds

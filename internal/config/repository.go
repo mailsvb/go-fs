@@ -26,8 +26,8 @@ type Repository struct {
 	// Type is the kind of repository: rpm, for zypper and dnf, or fdroid,
 	// for the F-Droid app on Android.
 	Type string `toml:"type"`
-	// Folder is where the repository is, a folder of http.basefolder as the
-	// file listing shows it, such as /rpm/go-fs. It has to exist.
+	// Folder is where the repository is, a folder of general.baseFolderFiles
+	// as the file listing shows it, such as /rpm/go-fs. It has to exist.
 	Folder string `toml:"folder"`
 	// SigningKey is the key the repository signs with, base64 as the other
 	// keys in this file are, without a passphrase, and RSA only. For rpm it
@@ -195,7 +195,7 @@ func RepositoryFolder(raw string) (string, error) {
 }
 
 // RepositoryPath is where the folder of the repository is on disk, inside
-// basefolder, the folder the http server serves.
+// basefolder, the folder the servers serve.
 func RepositoryPath(basefolder, folder string) string {
 	return filepath.Join(basefolder, filepath.FromSlash(strings.TrimPrefix(folder, "/")))
 }
@@ -268,11 +268,7 @@ func (c Config) validateRepositories() error {
 		if folder != repo.Folder {
 			return fmt.Errorf("%s: folder %q has to be %q", where, repo.Folder, folder)
 		}
-		if c.HTTP.Basefolder == "" {
-			return fmt.Errorf("%s: a repository is in the folder the http server serves, "+
-				"and http.basefolder is not set", where)
-		}
-		onDisk := RepositoryPath(c.HTTP.Basefolder, folder)
+		onDisk := RepositoryPath(c.General.BaseFolderFiles, folder)
 		if err := checkFolder(where+": folder", onDisk); err != nil {
 			return err
 		}

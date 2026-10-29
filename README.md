@@ -185,7 +185,7 @@ working file can be this short:
 
 ```toml
 [general]
-basefolder = "/srv/files"
+baseFolderFiles = "/srv/files"
 
 [[users]]
 username = "john"
@@ -208,17 +208,24 @@ listens on `127.0.0.1` alone, and the ports are 8021 for FTP, 8990 for FTPS,
 8022 for SFTP, 8080 for HTTP, 8443 for HTTPS and 8069 for TFTP. `address = ""`
 listens on every interface.
 
-`general.basefolder` is the folder every server falls back to when its own
-section does not name one, which is usually what you want — they all serve the
-same tree. It has to be an absolute path and it has to exist. A section that
-sets its own `basefolder` keeps it, so one server can be pointed somewhere else
-without repeating the folder for the rest.
+`general.baseFolderFiles` is the folder every server serves: FTP, SFTP, HTTP,
+S3, WebDAV and TFTP all see the same tree. It has to be an absolute path and it
+has to exist. `general.baseFolderRegistry` is the folder of the
+[container registry](#container-registry), which is off while it is empty.
+These are the only two folders: no server has a folder of its own, and only an
+account can be pointed elsewhere, see [Accounts](#accounts).
+
+A file written for an older version names them `general.basefolder` and
+`http.registryBaseFolder`. It is still read, and go-fs renames both keys in
+it at the next start, keeping the comments and the file as it was beside it as
+`go-fs.toml.bak`. A `basefolder` in `[ftp]`, `[sftp]`, `[http]` or `[tftp]` is
+no longer read: it is reported at startup and removed by the same rename.
 
 `[[general.cleanup]]` keeps a folder from growing without bound: once an hour
 everything but the newest `keep` files in it is removed. Paths are relative to
-`general.basefolder`, which has to be set for it, and the sweep runs whichever
-servers are enabled. It is the one thing in go-fs that deletes without a client
-asking, so every removal is logged.
+`general.baseFolderFiles`, and the sweep runs whichever servers are enabled. It
+is the one thing in go-fs that deletes without a client asking, so every
+removal is logged.
 
 ```toml
 [[general.cleanup]]
@@ -237,7 +244,8 @@ What happens depends on what changed:
 | Changed | Effect |
 |---|---|
 | accounts, permissions, paths, limits, timeouts, the cleanup list | applied to the running server, **nothing is dropped** — a download in flight finishes |
-| a port, a `basefolder`, a TLS certificate, an SSH host key | that one server is restarted and its connections drop; the other four are untouched |
+| a port, a TLS certificate, an SSH host key | that one server is restarted and its connections drop; the other four are untouched |
+| `general.baseFolderFiles` | every server is restarted |
 | a server switched on or off | it is started or stopped, the others untouched |
 
 A file that does not parse or does not validate is reported at error level and
@@ -267,7 +275,7 @@ one entry with both switches on. An entry that switches nothing on is kept
 without being served, which is the way to park an account.
 
 Each account may have its own `basefolder`, which FTP and SFTP serve instead of
-the server's; HTTP scopes an account by `paths` instead. `allowLoginWithoutPassword`
+`general.baseFolderFiles`; HTTP scopes an account by `paths` instead. `allowLoginWithoutPassword`
 is read by FTP alone, `authorizedKeys` by SFTP alone and `paths` by HTTP and S3;
 the servers a key does not apply to ignore it. The container registry reads
 neither `paths` nor the rights below: `registry = true` is the whole of what an
@@ -574,7 +582,6 @@ allowUserFileCreate = true
 [sftp]
 enabled = true
 port = 2222
-basefolder = "/srv/sftp"
 hostkey = ""
 ```
 
@@ -655,7 +662,7 @@ creates folders, renames and deletes. Each row has an options menu with
 **Download** — a folder downloads as one `.tar.xz` — and, where the account may,
 **Rename** and **Delete**. It needs no assets from anywhere: the page
 carries its own style and script, so every URL the server answers stays a path in
-`basefolder`. Without JavaScript the listing still renders and the column headers
+`general.baseFolderFiles`. Without JavaScript the listing still renders and the column headers
 still sort, as ordinary links.
 
 Access has two layers:
@@ -676,7 +683,6 @@ allowUserFolderDelete = true
 [http]
 enabled = true
 port = 8080
-basefolder = "/srv/http"
 pathsRequireAuth = ["^/private/.*"]
 httpSessionTokenLifetime = 28800   # idle timeout, renewed while in use
 httpSessionMaxLifetime = 604800    # a login lasts a week at most
@@ -900,15 +906,15 @@ allowUserFolderCreate = true
 | | |
 |---|---|
 | Endpoint | `https://host:8443` (or the plain port) |
-| Buckets | every folder directly in `http.basefolder`, by its name ignoring case |
+| Buckets | every folder directly in `general.baseFolderFiles`, by its name ignoring case |
 | Region | `us-east-1`, the one region, fixed |
 | Access key / secret key | the account's `username` / `password` |
 | Addressing | path style only: `https://host:8443/<folder>/<key>` |
 
-Each folder directly in `http.basefolder` is a bucket holding that folder exactly
+Each folder directly in `general.baseFolderFiles` is a bucket holding that folder exactly
 as HTTP shows it: `s3://docs/a.txt` is the file served at `/docs/a.txt`, and the
 account's `paths` are matched against that same path. A file directly in
-`http.basefolder` is in no bucket and cannot be reached over S3. A bucket name is
+`general.baseFolderFiles` is in no bucket and cannot be reached over S3. A bucket name is
 matched against the folder names ignoring case, so `s3://docs/` reaches the
 folder `Docs`, and the folder is named as it is spelled on disk in every answer.
 Where two folders differ in case only, the one spelled as asked wins, and
@@ -1005,14 +1011,16 @@ The HTTP server can also be a **container registry**: docker, podman, buildx,
 crane and every other client of the
 [OCI Distribution Specification](https://github.com/opencontainers/distribution-spec)
 v1.1 push images to it and pull them from it, on its plain port and its TLS
-port alike. It is off until `http.registryBaseFolder` names the folder the
+port alike. It is off until `general.baseFolderRegistry` names the folder the
 registry keeps its images in; each account that should push sets
 `registry = true`:
 
 ```toml
+[general]
+baseFolderRegistry = "/srv/registry"
+
 [http]
 enabled = true
-registryBaseFolder = "/srv/registry"
 registryAnonymousRead = true
 
 [[users]]
@@ -1031,7 +1039,7 @@ docker pull host:8443/team/app:1.0
 | | |
 |---|---|
 | Endpoint | `host:8443` (or the plain port), under `/v2/` |
-| Storage | `http.registryBaseFolder`, which nothing else may serve |
+| Storage | `general.baseFolderRegistry`, which nothing else may serve |
 | Pulling | anyone while `http.registryAnonymousRead = true` (the default), otherwise an account that sets `registry` |
 | Pushing, tagging, deleting | an account that sets `registry` |
 | Credentials | a token from `/v2/_token`, fetched with the account's username and password as `docker login` does, or HTTP Basic on every request |
@@ -1041,7 +1049,7 @@ nor hold one or lie inside one: go-fs refuses to start with it otherwise, and
 `-check` says why. Everything in it is managed by the registry, which addresses
 content by its digest alone, so a layer that several images, architectures or
 repositories share is stored once. While the registry is on it answers every path under `/v2`, so a folder
-`v2` in `http.basefolder` cannot be reached over HTTP; go-fs says so at warning
+`v2` in `general.baseFolderFiles` cannot be reached over HTTP; go-fs says so at warning
 level. Both settings take effect on a reload.
 
 `registry` is independent of `http`: an account that sets only `registry`
@@ -1171,7 +1179,7 @@ image archive is named as such: the file system of a container
 (`docker export`, `crane export`), a zip, a Singularity image, a `dir:` copy of
 skopeo, a save of a Docker older than 1.10. `maxUploadSize` applies to the
 uploaded archive and to each file in it. The uploaded archive and what was
-read are kept under `registryBaseFolder/_uploads` while the import runs and
+read are kept under `baseFolderRegistry/_uploads` while the import runs and
 removed when it ends.
 
 Who may see the page follows who may pull. With
@@ -1242,7 +1250,7 @@ with a dot. Source rpms are left out.
 [[repositories]]
 name = "go-fs"                  # the id clients give it
 type = "rpm"
-folder = "/rpm/go-fs"           # in http.basefolder, as the listing shows it
+folder = "/rpm/go-fs"           # in general.baseFolderFiles, as the listing shows it
 signingKey = "…"                # armored OpenPGP private key, base64, no passphrase
 keep = 5                        # versions per package and architecture; 0 keeps all
 pollInterval = 60               # seconds between two looks at the folder
@@ -1595,7 +1603,7 @@ the answer carries no `Content-Length`. It needs the right that listing the
 folder needs, and what goes into it is decided entry by entry as a `GET` of that
 entry would be: a sub-folder that `pathsRequireAuth` or the account's `paths`
 keep from the requester is left out. A symbolic link goes in as the file it
-points to while that file is inside `basefolder`; a link to a folder, or to
+points to while that file is inside `general.baseFolderFiles`; a link to a folder, or to
 anything outside, is left out. Compressing takes one CPU core of the server:
 text and other data that compresses well packs at around 80 MB/s, but data that
 does not — video, images, archives — at well under 10 MB/s, so a large folder of

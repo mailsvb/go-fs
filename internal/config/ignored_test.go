@@ -19,7 +19,7 @@ func TestAbsentPartsAreIgnored(t *testing.T) {
 	folder := t.TempDir()
 	cfg := Default()
 	cfg.HTTP.Enabled = true
-	cfg.HTTP.Basefolder = folder
+	cfg.General.BaseFolderFiles = folder
 	// all of it wrong, which a binary with the parts would refuse
 	cfg.FTP.Enabled, cfg.FTP.Port = true, 70000
 	cfg.SFTP.Enabled, cfg.SFTP.HostKey = true, "not a key"
@@ -72,7 +72,7 @@ func TestVaultedServersAreIgnoredWithoutVaults(t *testing.T) {
 	}
 	cfg := Default()
 	cfg.HTTP.Enabled = true
-	cfg.HTTP.Basefolder = t.TempDir()
+	cfg.General.BaseFolderFiles = t.TempDir()
 	plain := Server{Name: "libs", Type: ServerTypeArtifactory, URL: "https://acme.jfrog.io/artifactory", Token: "t"}
 	vaulted := plain
 	vaulted.Name, vaulted.VaultPath, vaulted.VaultPassword = "backup", "libs/vault", "pw"

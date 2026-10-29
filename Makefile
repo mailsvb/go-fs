@@ -58,15 +58,15 @@ endef
 # themselves land in DIST beside the release binaries.
 PKG  := build/pkg
 NFPM := go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
-# the basefolder line of the template, and what it says for each installer
-TEMPLATE_BASEFOLDER := basefolder = "/srv/files"
-LINUX_BASEFOLDER    := basefolder = "/var/lib/go-fs/files"
-WINDOWS_BASEFOLDER  := basefolder = "C:/ProgramData/go-fs/files"
-# the registryBaseFolder line of the template, and what it says for each
+# the baseFolderFiles line of the template, and what it says for each installer
+TEMPLATE_BASEFOLDER := baseFolderFiles = "/srv/files"
+LINUX_BASEFOLDER    := baseFolderFiles = "/var/lib/go-fs/files"
+WINDOWS_BASEFOLDER  := baseFolderFiles = "C:/ProgramData/go-fs/files"
+# the baseFolderRegistry line of the template, and what it says for each
 # installer: the folder registry beside the served folder
-TEMPLATE_REGISTRY := registryBaseFolder = ""
-LINUX_REGISTRY    := registryBaseFolder = "/var/lib/go-fs/registry"
-WINDOWS_REGISTRY  := registryBaseFolder = "C:/ProgramData/go-fs/registry"
+TEMPLATE_REGISTRY := baseFolderRegistry = ""
+LINUX_REGISTRY    := baseFolderRegistry = "/var/lib/go-fs/registry"
+WINDOWS_REGISTRY  := baseFolderRegistry = "C:/ProgramData/go-fs/registry"
 
 .PHONY: all build test race cover fuzz vet fmt lint clean release sign checksums version \
 	packages rpm msi-inputs
@@ -161,8 +161,8 @@ checksums:
 packages: rpm msi-inputs
 	@$(MAKE) --no-print-directory checksums
 
-# installerconfig writes the template with its basefolder line replaced by
-# the first argument and its registryBaseFolder line by the third, and fails
+# installerconfig writes the template with its baseFolderFiles line replaced
+# by the first argument and its baseFolderRegistry line by the third, and fails
 # when the template no longer has those lines to replace.
 define installerconfig
 	@mkdir -p $(dir $(2))

@@ -25,7 +25,7 @@ func TestPageLeavesOutWhatIsNotBuilt(t *testing.T) {
 	path := filepath.Join(folder, "go-fs.toml")
 	body := `
 [general]
-basefolder = ` + strconv.Quote(folder) + `
+baseFolderFiles = ` + strconv.Quote(folder) + `
 
 [[users]]
 username = "john"

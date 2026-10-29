@@ -113,12 +113,14 @@ func TestTheSSHSectionIsDocumented(t *testing.T) {
 func TestAFileWithoutTheSSHSectionGetsTheDefaults(t *testing.T) {
 	skipWithout(t, features.FTP)
 	path, _ := writeConfig(t, `
+[general]
+baseFolderFiles = "{{folder}}"
+
 [http]
 enabled = false
 
 [ftp]
 enabled = true
-basefolder = "{{folder}}"
 
 [tftp]
 enabled = false

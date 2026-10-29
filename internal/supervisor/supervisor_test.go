@@ -76,7 +76,7 @@ func baseConfig(t *testing.T) config.Config {
 	t.Helper()
 	folder := t.TempDir()
 	cfg := config.Default()
-	cfg.General.Basefolder = folder
+	cfg.General.BaseFolderFiles = folder
 	cfg.FTP.Enabled = false
 	cfg.SFTP.Enabled = false
 	cfg.TFTP.Enabled = false

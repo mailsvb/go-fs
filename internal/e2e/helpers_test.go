@@ -119,7 +119,7 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 	base := t.TempDir()
 
 	cfg := config.Default()
-	cfg.General.Basefolder = base
+	cfg.General.BaseFolderFiles = base
 	cfg.Users = users
 
 	cfg.HTTP.Enabled = true

@@ -40,8 +40,8 @@ type Manager struct {
 	wg      sync.WaitGroup
 }
 
-// New builds a manager for the repositories of cfg, which is resolved: the
-// folders are in cfg.HTTP.Basefolder.
+// New builds a manager for the repositories of cfg, whose folders are in
+// cfg.General.BaseFolderFiles.
 func New(cfg config.Config, logger *slog.Logger) (*Manager, error) {
 	m := &Manager{log: logger, running: map[string]*runner{}}
 	wanted, err := build(cfg, logger)
@@ -58,7 +58,7 @@ func build(cfg config.Config, logger *slog.Logger) (map[string]*runner, error) {
 	repos := cfg.UsableRepositories()
 	out := make(map[string]*runner, len(repos))
 	for _, repo := range repos {
-		r, err := newRunner(repo, cfg.HTTP.Basefolder, logger)
+		r, err := newRunner(repo, cfg.General.BaseFolderFiles, logger)
 		if err != nil {
 			return nil, fmt.Errorf("repository %q: %w", repo.Name, err)
 		}

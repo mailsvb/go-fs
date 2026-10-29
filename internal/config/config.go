@@ -62,10 +62,16 @@ type Config struct {
 
 // General holds what every server shares.
 type General struct {
-	// Basefolder is the folder the servers fall back to when their own
-	// section does not name one, so that a configuration where they all serve
-	// the same tree says it once. It has to be an absolute path.
-	Basefolder string `toml:"basefolder"`
+	// BaseFolderFiles is the folder every server serves. It has to be an
+	// absolute path to a folder that exists.
+	BaseFolderFiles string `toml:"baseFolderFiles"`
+	// BaseFolderRegistry serves an OCI container registry under /v2/ on both
+	// listeners of the http server and keeps its blobs, manifests and tags in
+	// this folder. Empty turns the registry off. It has to be an absolute path
+	// to an existing folder that neither is nor contains nor lies inside a
+	// folder any server serves, since everything in it is managed by the
+	// registry alone.
+	BaseFolderRegistry string `toml:"baseFolderRegistry"`
 
 	// ReloadConfig watches the configuration file and applies what changes in
 	// it without a restart. A file that does not parse or does not validate is
@@ -86,7 +92,7 @@ type General struct {
 	SSH SSH `toml:"ssh" feature:"sftp,sftp-remote"`
 
 	// Cleanup are the folders kept from growing without bound, relative to
-	// Basefolder. They are swept whichever servers are enabled.
+	// BaseFolderFiles. They are swept whichever servers are enabled.
 	Cleanup []Cleanup `toml:"cleanup"`
 }
 
@@ -194,7 +200,7 @@ type User struct {
 	// of HTTP, and the same Paths and rights apply to it.
 	S3 bool `toml:"s3,omitempty"`
 	// Registry lets the account push to and delete from the container
-	// registry of the HTTP server (see HTTP.RegistryBaseFolder), logging in
+	// registry of the HTTP server (see General.BaseFolderRegistry), logging in
 	// with its username and password, and pull from it where
 	// RegistryAnonymousRead is off. It is independent of HTTP; Paths and the
 	// rights below do not apply to it.
@@ -658,8 +664,10 @@ type FTP struct {
 	Port    int  `toml:"port"`
 	// Address is the interface the control ports and the passive data ports
 	// bind to. Empty binds every interface.
-	Address    string `toml:"address"`
-	Basefolder string `toml:"basefolder"`
+	Address string `toml:"address"`
+	// Basefolder is general.baseFolderFiles, which Resolved hands the server.
+	// It is no key of the section.
+	Basefolder string `toml:"-"`
 
 	MaxConnections int `toml:"maxConnections"`
 
@@ -712,8 +720,10 @@ type SFTP struct {
 	Enabled bool `toml:"enabled"`
 	Port    int  `toml:"port"`
 	// Address is the interface the listener binds to. Empty binds every one.
-	Address    string `toml:"address"`
-	Basefolder string `toml:"basefolder"`
+	Address string `toml:"address"`
+	// Basefolder is general.baseFolderFiles, which Resolved hands the server.
+	// It is no key of the section.
+	Basefolder string `toml:"-"`
 
 	// HostKey is the SSH host key itself rather than a path to it, base64 of
 	// its PEM encoding, so that the whole configuration stays in one file.
@@ -746,8 +756,10 @@ type HTTP struct {
 	Enabled bool `toml:"enabled"`
 	Port    int  `toml:"port"`
 	// Address is the interface both listeners bind to. Empty binds every one.
-	Address    string `toml:"address"`
-	Basefolder string `toml:"basefolder"`
+	Address string `toml:"address"`
+	// Basefolder is general.baseFolderFiles, which Resolved hands the server.
+	// It is no key of the section.
+	Basefolder string `toml:"-"`
 
 	// Realm is what clients are challenged with and, because it is hashed into
 	// the digest response, changing it invalidates saved credentials.
@@ -770,12 +782,9 @@ type HTTP struct {
 	// found by its name ignoring case, in the one region, S3Region, and only
 	// the accounts that set s3 may use it.
 	EnableS3 bool `toml:"enableS3"`
-	// RegistryBaseFolder serves an OCI container registry under /v2/ on both
-	// listeners and keeps its blobs, manifests and tags in this folder. Empty
-	// turns the registry off. It has to be an absolute path to an existing
-	// folder that neither is nor contains nor lies inside a folder any server
-	// serves, since everything in it is managed by the registry alone.
-	RegistryBaseFolder string `toml:"registryBaseFolder"`
+	// RegistryBaseFolder is general.baseFolderRegistry, which Resolved hands
+	// the server. It is no key of the section.
+	RegistryBaseFolder string `toml:"-"`
 	// RegistryAnonymousRead lets anyone pull from the registry without
 	// credentials. With it off, pulling takes an account that sets registry,
 	// as pushing and deleting always do.
@@ -904,11 +913,13 @@ type Cleanup struct {
 
 // TFTP configures the TFTP server.
 type TFTP struct {
-	Enabled    bool   `toml:"enabled"`
-	Port       int    `toml:"port"`
-	Address    string `toml:"address"`
-	Type       string `toml:"type"`
-	Basefolder string `toml:"basefolder"`
+	Enabled bool   `toml:"enabled"`
+	Port    int    `toml:"port"`
+	Address string `toml:"address"`
+	Type    string `toml:"type"`
+	// Basefolder is general.baseFolderFiles, which Resolved hands the server.
+	// It is no key of the section.
+	Basefolder string `toml:"-"`
 
 	AllowRead            bool `toml:"allowRead"`
 	AllowWrite           bool `toml:"allowWrite"`
@@ -1016,7 +1027,30 @@ func Parse(data []byte) (Config, error) {
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return cfg, err
 	}
+	var old legacy
+	if err := toml.Unmarshal(data, &old); err != nil {
+		return cfg, err
+	}
+	if cfg.General.BaseFolderFiles == "" {
+		cfg.General.BaseFolderFiles = old.General.Basefolder
+	}
+	if cfg.General.BaseFolderRegistry == "" {
+		cfg.General.BaseFolderRegistry = old.HTTP.RegistryBaseFolder
+	}
 	return cfg, nil
+}
+
+// legacy are the keys a file written before baseFolderFiles and
+// baseFolderRegistry named the two folders by. Parse reads them where the new
+// key is not set, so that such a file loads as it did until Migrate has
+// renamed them.
+type legacy struct {
+	General struct {
+		Basefolder string `toml:"basefolder"`
+	} `toml:"general"`
+	HTTP struct {
+		RegistryBaseFolder string `toml:"registryBaseFolder"`
+	} `toml:"http"`
 }
 
 // retired names the keys a configuration file may still hold and what replaced
@@ -1047,10 +1081,15 @@ var retired = map[string]string{
 	"users.cookie":     "nothing: every http account may log in through the browser",
 	"users.cookiePath": "nothing: the session cookie is always scoped to /",
 	// the folder sweep is not part of the http server
-	"http.cleanup": "[[general.cleanup]], whose paths are relative to general.basefolder",
+	"http.cleanup": "[[general.cleanup]], whose paths are relative to general.baseFolderFiles",
 	// every write and every WebDAV listing needs an account, and what an
 	// account may do is decided by its rights
 	"http.methodsRequireAuth": "http.pathsRequireAuth to protect reading, \"^/\" for the whole server",
+	// every server serves the one folder
+	"ftp.basefolder":  "general.baseFolderFiles",
+	"sftp.basefolder": "general.baseFolderFiles",
+	"http.basefolder": "general.baseFolderFiles",
+	"tftp.basefolder": "general.baseFolderFiles",
 }
 
 // RetiredKeys reports the retired keys a file still sets, each as
@@ -1118,25 +1157,18 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// Resolved is a copy that hands general.basefolder to every server that did not
-// name one of its own. It is applied before validation, so an error names the
-// section the folder ended up in rather than the one it came from.
+// Resolved is a copy that hands general.baseFolderFiles to every server and
+// general.baseFolderRegistry to the http server, which is where they read
+// them from. Neither is a key of their sections, so nothing that is written
+// back to the file carries what this fills in.
 //
 // The copy is shallow, which is safe because only string fields are written.
 func (c Config) Resolved() Config {
-	if c.General.Basefolder == "" {
-		return c
-	}
-	for _, folder := range []*string{
-		&c.FTP.Basefolder,
-		&c.SFTP.Basefolder,
-		&c.HTTP.Basefolder,
-		&c.TFTP.Basefolder,
-	} {
-		if *folder == "" {
-			*folder = c.General.Basefolder
-		}
-	}
+	c.FTP.Basefolder = c.General.BaseFolderFiles
+	c.SFTP.Basefolder = c.General.BaseFolderFiles
+	c.HTTP.Basefolder = c.General.BaseFolderFiles
+	c.TFTP.Basefolder = c.General.BaseFolderFiles
+	c.HTTP.RegistryBaseFolder = c.General.BaseFolderRegistry
 	return c
 }
 
@@ -1223,17 +1255,9 @@ func (c Config) Validate() error {
 		return errors.New("general.ssh.loginGraceTime has to be longer than sftp.loginFailureDelay, " +
 			"or every wrong password would end the login")
 	}
-	if c.General.Basefolder != "" {
-		if !filepath.IsAbs(c.General.Basefolder) {
-			return fmt.Errorf("general.basefolder %q has to be an absolute path",
-				c.General.Basefolder)
-		}
-		if err := checkFolder("general.basefolder", c.General.Basefolder); err != nil {
-			return err
-		}
-	}
-	if len(c.General.Cleanup) > 0 && c.General.Basefolder == "" {
-		return errors.New("general.cleanup needs general.basefolder")
+	if c.General.BaseFolderFiles != "" && !filepath.IsAbs(c.General.BaseFolderFiles) {
+		return fmt.Errorf("general.baseFolderFiles %q has to be an absolute path",
+			c.General.BaseFolderFiles)
 	}
 	for i, entry := range c.General.Cleanup {
 		if entry.Path == "" {
@@ -1245,6 +1269,10 @@ func (c Config) Validate() error {
 	}
 	if !c.ftpOn() && !c.sftpOn() && !c.HTTP.Enabled && !c.HTTPS.Enabled && !c.tftpOn() {
 		return errors.New("no server is enabled, nothing to do")
+	}
+	// every server serves this one folder, so whichever is on needs it
+	if err := checkFolder("general.baseFolderFiles", c.General.BaseFolderFiles); err != nil {
+		return err
 	}
 	if err := c.validateUsers(); err != nil {
 		return err
@@ -1571,29 +1599,25 @@ func (c Config) validateHTTP() error {
 	if err := c.validateRegistry(); err != nil {
 		return err
 	}
-	return checkFolder("http.basefolder", h.Basefolder)
+	return nil
 }
 
-// validateRegistry checks http.registryBaseFolder. The registry is the only
+// validateRegistry checks general.baseFolderRegistry. The registry is the only
 // thing that may write to its folder: a served folder that overlapped it would
 // let a file upload replace a blob under its digest, or a listing show them.
 func (c Config) validateRegistry() error {
-	folder := c.HTTP.RegistryBaseFolder
+	folder := c.General.BaseFolderRegistry
 	if folder == "" {
 		return nil
 	}
 	if !filepath.IsAbs(folder) {
-		return fmt.Errorf("http.registryBaseFolder %q has to be an absolute path", folder)
+		return fmt.Errorf("general.baseFolderRegistry %q has to be an absolute path", folder)
 	}
-	if err := checkFolder("http.registryBaseFolder", folder); err != nil {
+	if err := checkFolder("general.baseFolderRegistry", folder); err != nil {
 		return err
 	}
 	served := []struct{ name, folder string }{
-		{"general.basefolder", c.General.Basefolder},
-		{"ftp.basefolder", c.FTP.Basefolder},
-		{"sftp.basefolder", c.SFTP.Basefolder},
-		{"http.basefolder", c.HTTP.Basefolder},
-		{"tftp.basefolder", c.TFTP.Basefolder},
+		{"general.baseFolderFiles", c.General.BaseFolderFiles},
 	}
 	for i, user := range c.Users {
 		served = append(served, struct{ name, folder string }{
@@ -1605,7 +1629,7 @@ func (c Config) validateRegistry() error {
 			continue
 		}
 		if overlaps(registry, comparablePath(other.folder)) {
-			return fmt.Errorf("http.registryBaseFolder %q overlaps %s %q; "+
+			return fmt.Errorf("general.baseFolderRegistry %q overlaps %s %q; "+
 				"it has to be a folder of its own", folder, other.name, other.folder)
 		}
 	}
@@ -1711,9 +1735,6 @@ func (c Config) validateFTP() error {
 	if f.MaxCommandLength < 16 {
 		return errors.New("ftp.maxCommandLength has to be at least 16")
 	}
-	if err := checkFolder("ftp.basefolder", f.Basefolder); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -1733,9 +1754,6 @@ func (s SFTP) validate() error {
 		if _, err := Decode(KindSSHKey, s.HostKey); err != nil {
 			return fmt.Errorf("sftp.hostkey: %w", err)
 		}
-	}
-	if err := checkFolder("sftp.basefolder", s.Basefolder); err != nil {
-		return err
 	}
 	return nil
 }
@@ -1773,7 +1791,7 @@ func (t TFTP) validate() error {
 	if t.MaxFileSize < 0 {
 		return errors.New("tftp.maxFileSize cannot be negative")
 	}
-	return checkFolder("tftp.basefolder", t.Basefolder)
+	return nil
 }
 
 // checkPair reports a certificate and private key that cannot be served. Both

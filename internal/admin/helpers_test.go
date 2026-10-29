@@ -22,7 +22,7 @@ func testConfig(t *testing.T) string {
 	path := filepath.Join(folder, "go-fs.toml")
 	body := `
 [general]
-basefolder = ` + strconv.Quote(folder) + `
+baseFolderFiles = ` + strconv.Quote(folder) + `
 
 [[users]]
 username = "john"

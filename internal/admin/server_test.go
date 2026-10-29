@@ -36,9 +36,12 @@ func TestStateDescribesTheFile(t *testing.T) {
 	if port := section(t, body.Values, "ftp")["port"]; port != float64(2121) {
 		t.Errorf("ftp.port is %v, want the 2121 the file says", port)
 	}
-	// an inherited folder stays inherited in what the page shows
-	if folder := section(t, body.Values, "ftp")["basefolder"]; folder != "" {
-		t.Errorf("ftp.basefolder is %q, the file leaves it to general.basefolder", folder)
+	// the folder is a key of general alone
+	if folder := section(t, body.Values, "general")["baseFolderFiles"]; folder == "" || folder == nil {
+		t.Error("general.baseFolderFiles is not shown")
+	}
+	if folder, shown := section(t, body.Values, "ftp")["basefolder"]; shown {
+		t.Errorf("ftp.basefolder is shown as %q, it is no key any more", folder)
 	}
 }
 

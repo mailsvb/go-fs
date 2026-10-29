@@ -9,11 +9,20 @@
 # help; a comment above a run of keys covers every one of them. A paragraph
 # set apart by a blank line is for this file alone.
 
-# What every server shares. basefolder is the folder they all fall back to when
-# their own section does not name one, so a setup where they serve the same tree
-# says it once here. It has to be an absolute path and it has to exist.
+# What every server shares.
 [general]
-basefolder = "/srv/files"
+# The folder every server serves: ftp, sftp, http, s3, webdav and tftp alike.
+# It has to be an absolute path and it has to exist.
+baseFolderFiles = "/srv/files"
+# Serve an OCI container registry under /v2/ on both listeners of the http
+# server, which docker, podman and buildx push to and pull from, and keep its
+# blobs, manifests and tags in this folder. Empty turns the registry off, and
+# /v2 is then an ordinary path of the served folder. The folder has to exist,
+# and it must neither be nor hold nor lie inside baseFolderFiles or the
+# basefolder of an account: nothing but the registry may write to it. Pushing
+# and deleting take a [[users]] entry that sets registry = true. The rpm and
+# msi installers set it to the folder registry beside the served folder files.
+baseFolderRegistry = ""
 
 # Watch this file and apply what changes in it without a restart. Accounts,
 # permissions and limits are swapped without disturbing anything in flight; a
@@ -98,8 +107,8 @@ banner = []
 
 # Folders that are kept from growing without bound: once an hour everything but
 # the newest "keep" files in them is deleted. No entry means no sweep. Paths
-# are relative to general.basefolder, and the sweep runs whichever servers are
-# enabled.
+# are relative to general.baseFolderFiles, and the sweep runs whichever servers
+# are enabled.
 # [[general.cleanup]]
 # path = "/iso"
 # keep = 10
@@ -116,7 +125,7 @@ banner = []
 # change it, before any server listens on more than 127.0.0.1. It is not a
 # default, an account only exists while it is listed in this file. It may also
 # push to the container registry, which the rpm and msi installers turn on
-# (see http.registryBaseFolder).
+# (see general.baseFolderRegistry).
 [[users]]
 username = "admin"
 password = "admin"
@@ -147,12 +156,12 @@ isAdmin = true
 # independent of http, and the paths and rights below apply to it alike.
 # s3 = true
 # Let this account push images to and delete them from the container registry
-# of the http server (see http.registryBaseFolder), logging in with its
+# of the http server (see general.baseFolderRegistry), logging in with its
 # username and password as docker login does, and pull from it when
 # http.registryAnonymousRead is off. It is independent of http; the paths and
 # rights below do not apply to it.
 # registry = true
-# own folder for this account on ftp and sftp, the server's basefolder when
+# own folder for this account on ftp and sftp, general.baseFolderFiles when
 # empty
 # basefolder = "/srv/files/john"
 # What this account may reach over http: regular expressions matched against
@@ -343,8 +352,8 @@ isAdmin = true
 # fdroid repository leaves the APKs as their developer signed them, and signs
 # its index.
 # type = "rpm"
-# The folder of the repository in http.basefolder, as the file listing shows
-# it. It has to exist.
+# The folder of the repository in general.baseFolderFiles, as the file listing
+# shows it. It has to exist.
 # folder = "/rpm/go-fs"
 # The key the repository signs with, base64 encoded, without a passphrase;
 # only RSA keys are accepted. For rpm the OpenPGP private key packages and
@@ -382,9 +391,6 @@ port = 8021
 # interface the control ports and the passive data ports bind to, empty binds
 # to all; 127.0.0.1 is reachable from this host alone
 address = "127.0.0.1"
-# served folder, general.basefolder when not set; it has to exist either
-# way
-# basefolder = "/srv/ftp"
 
 # maximum simultaneous control connections
 maxConnections = 10
@@ -457,9 +463,6 @@ port = 8022
 # interface to bind to, empty binds to all; 127.0.0.1 is reachable from this
 # host alone
 address = "127.0.0.1"
-# served folder, general.basefolder when not set; it has to exist either
-# way
-# basefolder = "/srv/sftp"
 
 # The SSH host key, base64 of its PEM encoding, so the whole configuration
 # stays in this one file. Empty generates a key at every start, which makes
@@ -490,9 +493,6 @@ port = 8080
 # interface both listeners bind to, empty binds to all; 127.0.0.1 is
 # reachable from this host alone
 address = "127.0.0.1"
-# served folder, general.basefolder when not set; it has to exist either
-# way
-# basefolder = "/srv/http"
 # what clients are challenged with. It is hashed into the digest response, so
 # changing it makes browsers ask for the password again.
 realm = "go-fs"
@@ -529,16 +529,8 @@ enableSelfUpdate = false
 # it always was.
 enableS3 = true
 
-# Serve an OCI container registry under /v2/ on both listeners, which docker,
-# podman and buildx push to and pull from, and keep its blobs, manifests and
-# tags in this folder. Empty turns the registry off, and /v2 is then an
-# ordinary path of the served folder. The folder has to exist, and it must
-# neither be nor hold nor lie inside a folder that any server serves: nothing
-# but the registry may write to it. Pushing and deleting take a [[users]]
-# entry that sets registry = true. The rpm and msi installers set it to the
-# folder registry beside the served folder files.
-registryBaseFolder = ""
-# Let anyone pull from the registry without credentials. With it off, pulling
+# Let anyone pull from the container registry (see
+# general.baseFolderRegistry) without credentials. With it off, pulling
 # takes an account that sets registry = true, as pushing always does.
 registryAnonymousRead = true
 
@@ -573,12 +565,12 @@ maxUploadSize = 0
 # chunked upload entirely: a PUT carrying a Content-Range header is refused.
 maxChunkSize = 52428800
 # Where the not-yet-finalized bytes of a chunked upload are kept while it is in
-# progress. Must not be inside basefolder: nothing here filters a partial
-# upload out of a directory listing, so it would be visible and downloadable
-# while still being written. Empty uses a "go-fs-uploads" folder under the
-# OS's temp directory. Keep it on the same filesystem as basefolder so
-# finishing an upload is a fast rename rather than a slow or failing
-# cross-device copy.
+# progress. Must not be inside general.baseFolderFiles: nothing here filters a
+# partial upload out of a directory listing, so it would be visible and
+# downloadable while still being written. Empty uses a "go-fs-uploads" folder
+# under the OS's temp directory. Keep it on the same filesystem as
+# general.baseFolderFiles so finishing an upload is a fast rename rather than
+# a slow or failing cross-device copy.
 uploadStagingFolder = ""
 # How long a browser that logged in with the login form stays logged in
 # without being used, in seconds. A browser in use has its login renewed, so
@@ -656,9 +648,6 @@ address = "127.0.0.1"
 # which also accepts IPv4 clients on a dual stack host. Set udp4 explicitly on
 # hosts configured with bindv6only.
 type = ""
-# served folder, general.basefolder when not set; it has to exist either
-# way
-# basefolder = "/srv/tftp"
 
 # what anyone who reaches the port may do: read files, and write them
 allowRead = true

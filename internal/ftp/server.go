@@ -116,7 +116,7 @@ func checkUserFolders(users []config.User) error {
 func New(cfg config.FTP, ftps config.FTPS, users []config.User, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
-		return nil, fmt.Errorf("ftp.basefolder: %w", err)
+		return nil, fmt.Errorf("general.baseFolderFiles: %w", err)
 	}
 	if err := checkUserFolders(users); err != nil {
 		return nil, err

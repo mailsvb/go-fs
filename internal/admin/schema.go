@@ -415,10 +415,11 @@ func help(path, source string) string {
 	return config.Docs()[source]
 }
 
-// tomlName is the key a field has in the file, or "" for one that has none.
+// tomlName is the key a field has in the file, or "" for one that has none:
+// an untagged field, or one tagged "-", which Resolved fills in.
 func tomlName(field reflect.StructField) string {
 	tag, ok := field.Tag.Lookup("toml")
-	if !ok {
+	if !ok || tag == "-" {
 		return ""
 	}
 	name, _, _ := strings.Cut(tag, ",")

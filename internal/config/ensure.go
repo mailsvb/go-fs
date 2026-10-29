@@ -87,30 +87,34 @@ func EnsureSecrets(path string, cfg Config) (Config, []string, error) {
 		}
 	}
 
-	// written beside the file and renamed over it, so that the watcher never
-	// reads it half written
-	temp, err := os.CreateTemp(filepath.Dir(target), ".go-fs-config-*")
-	if err != nil {
-		return cfg, nil, err
-	}
-	defer func() { _ = os.Remove(temp.Name()) }()
-	if _, err := temp.WriteString(edited); err != nil {
-		_ = temp.Close()
-		return cfg, nil, err
-	}
-	if err := temp.Close(); err != nil {
-		return cfg, nil, err
-	}
-	if err := os.Chmod(temp.Name(), info.Mode().Perm()); err != nil {
-		return cfg, nil, err
-	}
-	if err := os.Rename(temp.Name(), target); err != nil {
+	if err := replaceFile(target, []byte(edited), info.Mode().Perm()); err != nil {
 		return cfg, nil, err
 	}
 	for i, secret := range missing {
 		*secret.get(&cfg) = values[i]
 	}
 	return cfg, names, nil
+}
+
+// replaceFile writes data beside target and renames it over it, so that the
+// watcher never reads the file half written.
+func replaceFile(target string, data []byte, mode os.FileMode) error {
+	temp, err := os.CreateTemp(filepath.Dir(target), ".go-fs-config-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(temp.Name()) }()
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(temp.Name(), mode); err != nil {
+		return err
+	}
+	return os.Rename(temp.Name(), target)
 }
 
 // withHTTPKey is the file with key in [http] set to value.
