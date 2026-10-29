@@ -1026,6 +1026,11 @@ func TestRetiredKeysAreReported(t *testing.T) {
 			t.Errorf("RetiredKeys = %q, want %q", found, want)
 		}
 	}
+	// the methods that need an account are fixed; reading is protected by path
+	found = RetiredKeys([]byte("[http]\nmethodsRequireAuth = [\"GET\", \"PUT\"]\n"))
+	if len(found) != 1 || !strings.Contains(found[0], "http.methodsRequireAuth is ignored, use http.pathsRequireAuth") {
+		t.Errorf("RetiredKeys = %q, want methodsRequireAuth pointed at pathsRequireAuth", found)
+	}
 	// [[users]] is an array of tables; a key set in any entry is reported once
 	users := "[[users]]\nusername = \"john\"\ncookie = true\n" +
 		"[[users]]\nusername = \"jane\"\ncookie = true\ncookiePath = \"/public/\"\n"

@@ -194,7 +194,7 @@ func (s *Server) davChecked(set *settings, w http.ResponseWriter, r *http.Reques
 		if target.IsRoot() {
 			return refuse(target.Virtual)
 		}
-		return s.permits(set, user, http.MethodPut, target.Virtual, davWriteAction(user, target.Path)) ||
+		return s.permits(set, user, http.MethodPut, target.Virtual, davWriteAction(target.Path)) ||
 			refuse(target.Virtual)
 	case http.MethodDelete:
 		if target.IsRoot() {
@@ -321,15 +321,13 @@ func (s *Server) davRenameCase(set *settings, w http.ResponseWriter, r *http.Req
 // davWriteAction is the right writing a file needs: creating it where the
 // name is free, replacing it where it is taken.
 //
-// An empty file counts as a free name for an account. Explorer and Finder
-// both create a file with an empty PUT, and lock it, before they send what is
-// in it, so an account that may create files and not replace them could
-// otherwise copy nothing but empty files onto the drive. A request without an
-// account is held to the promise every public PUT keeps, that it never
-// replaces what is there.
-func davWriteAction(user *account, osPath string) action {
+// An empty file counts as a free name. Explorer and Finder both create a file
+// with an empty PUT, and lock it, before they send what is in it, so an
+// account that may create files and not replace them could otherwise copy
+// nothing but empty files onto the drive.
+func davWriteAction(osPath string) action {
 	info, err := os.Stat(osPath)
-	if err != nil || (user != nil && info.Mode().IsRegular() && info.Size() == 0) {
+	if err != nil || (info.Mode().IsRegular() && info.Size() == 0) {
 		return actCreate
 	}
 	return actOverwrite

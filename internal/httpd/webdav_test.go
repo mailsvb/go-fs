@@ -86,7 +86,7 @@ func TestWebDAVPropfind(t *testing.T) {
 	server.write(t, "a.txt", "a")
 	server.write(t, "sub/b.txt", "b")
 
-	res := dav(t, server, methodPropfind, "/", "", "", map[string]string{"Depth": "1"}, "")
+	res := dav(t, server, methodPropfind, "/", "john", "doe", map[string]string{"Depth": "1"}, "")
 	body := bodyOf(t, res)
 	if res.StatusCode != http.StatusMultiStatus {
 		t.Fatalf("status %d: %s", res.StatusCode, body)
@@ -105,7 +105,7 @@ func TestWebDAVPropfind(t *testing.T) {
 		if depth != "" {
 			headers["Depth"] = depth
 		}
-		res := dav(t, server, methodPropfind, "/", "", "", headers, "")
+		res := dav(t, server, methodPropfind, "/", "john", "doe", headers, "")
 		if body := bodyOf(t, res); res.StatusCode != http.StatusForbidden || !strings.Contains(body, "propfind-finite-depth") {
 			t.Errorf("Depth %q: status %d: %s", depth, res.StatusCode, body)
 		}
@@ -116,7 +116,7 @@ func TestWebDAVPropfind(t *testing.T) {
 // reach is refused, as it is to GET.
 func TestWebDAVPropfindKeepsToTheAccount(t *testing.T) {
 	server := davServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = append(cfg.MethodsRequireAuth, http.MethodGet)
+		cfg.PathsRequireAuth = []string{"^/"}
 		scoped := readOnlyUser("scoped", "pw")
 		scoped.Paths = []string{"^/$", "^/public(/.*)?$"}
 		cfg.Users = append(cfg.Users, scoped)
@@ -137,6 +137,30 @@ func TestWebDAVPropfindKeepsToTheAccount(t *testing.T) {
 	}
 	if res := dav(t, server, methodPropfind, "/", "", "", map[string]string{"Depth": "1"}, ""); res.StatusCode != http.StatusUnauthorized {
 		t.Errorf("PROPFIND without an account where GET needs one: status %d, want 401", res.StatusCode)
+	}
+}
+
+// Finder and Explorer send their credentials only when they are challenged.
+// A listing of a folder whose GET is public is challenged all the same, or
+// the drive is mounted with what a stranger sees, and the account the user
+// typed in is never asked for.
+func TestWebDAVPropfindIsChallengedWhereGetIsPublic(t *testing.T) {
+	server := davServer(t, nil)
+	server.write(t, "public/a.txt", "a")
+	server.write(t, "private/b.txt", "b")
+
+	res := dav(t, server, methodPropfind, "/", "", "", map[string]string{"Depth": "1"}, "")
+	if res.StatusCode != http.StatusUnauthorized || res.Header.Get("WWW-Authenticate") == "" {
+		t.Fatalf("PROPFIND without an account: status %d, challenge %q, want 401 with one",
+			res.StatusCode, res.Header.Get("WWW-Authenticate"))
+	}
+	res = dav(t, server, methodPropfind, "/", "john", "doe", map[string]string{"Depth": "1"}, "")
+	body := bodyOf(t, res)
+	if res.StatusCode != http.StatusMultiStatus || !strings.Contains(body, "/public/") || !strings.Contains(body, "/private/") {
+		t.Errorf("PROPFIND with an account: status %d, want both folders: %s", res.StatusCode, body)
+	}
+	if res, _ := get(t, server, "/public/a.txt"); res.StatusCode != http.StatusOK {
+		t.Errorf("GET without an account: status %d, want 200", res.StatusCode)
 	}
 }
 

@@ -120,7 +120,7 @@ func TestFieldKinds(t *testing.T) {
 		"ftp.port":                          kindInt,
 		"ftp.basefolder":                    kindText,
 		"http.maxUploadSize":                kindInt,
-		"http.methodsRequireAuth":           kindLines,
+		"http.pathsRequireAuth":             kindLines,
 		"general.logLevel":                  kindText,
 		"http.enableAdminInterface":         kindBool,
 		"http.enableS3":                     kindBool,

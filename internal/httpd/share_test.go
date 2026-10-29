@@ -128,9 +128,7 @@ func TestShareLinkStopsWorkingWhenTheFileChanges(t *testing.T) {
 }
 
 func TestShareLinkOnlyReads(t *testing.T) {
-	server := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = []string{"PUT", "DELETE"}
-	})
+	server := newServer(t, nil)
 	server.write(t, "private/report.txt", "secret content")
 	link := shareLink(t, server, "/private/report.txt")
 

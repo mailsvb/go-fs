@@ -15,10 +15,7 @@ import (
 )
 
 func TestDirectoryListing(t *testing.T) {
-	server := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = nil
-		cfg.PathsRequireAuth = nil
-	})
+	server := newServer(t, publicServer)
 	server.write(t, "sub/old.txt", "old")
 	server.write(t, "sub/new.iso", "newer")
 	server.write(t, "sub/alpha.txt", "first by name, last by date")
@@ -387,7 +384,7 @@ func TestOtherPostsAreNotFound(t *testing.T) {
 }
 
 func TestUnsupportedMethod(t *testing.T) {
-	server := newServer(t, func(cfg *httpConfig) { cfg.MethodsRequireAuth = nil })
+	server := newServer(t, publicServer)
 
 	req, _ := http.NewRequest(http.MethodPatch, server.url("/"), nil)
 	res := do(t, req)

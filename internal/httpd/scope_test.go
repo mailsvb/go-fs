@@ -61,24 +61,19 @@ func TestDirectoryReaderStaysInTheAccountsScope(t *testing.T) {
 	}
 }
 
-// With POST public, the reader is open to anyone, and still must not list a
-// folder that pathsRequireAuth protects.
-func TestAPublicDirectoryReaderKeepsProtectedFoldersClosed(t *testing.T) {
-	server := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = nil
-		cfg.PathsRequireAuth = []string{"^/private/.*"}
-	})
-	server.write(t, "private/secret.txt", "secret")
+// POST needs an account, so the reader without the DLS pair is challenged
+// even for a folder anyone may read with GET.
+func TestTheDirectoryReaderNeedsAnAccount(t *testing.T) {
+	server := newServer(t, publicServer)
 	server.write(t, "open/file.txt", "open")
 
-	res := readerPost(t, server, "/dls_directory_reader.php", "private", "", "")
-	if body := bodyOf(t, res); res.StatusCode != http.StatusNotFound || strings.Contains(body, "secret.txt") {
-		t.Errorf("an anonymous reader listed a protected folder: %d\n%s", res.StatusCode, body)
+	res := readerPost(t, server, "/dls_directory_reader.php", "open", "", "")
+	if body := bodyOf(t, res); res.StatusCode != http.StatusUnauthorized || strings.Contains(body, "file.txt") {
+		t.Errorf("an anonymous reader got %d, want 401:\n%s", res.StatusCode, body)
 	}
-
-	res = readerPost(t, server, "/dls_directory_reader.php", "open", "", "")
+	res = readerPost(t, server, "/dls_directory_reader.php", "open", "john", "doe")
 	if body := bodyOf(t, res); res.StatusCode != http.StatusOK || !strings.Contains(body, "file.txt") {
-		t.Errorf("a public folder got %d:\n%s", res.StatusCode, body)
+		t.Errorf("the reader with an account got %d:\n%s", res.StatusCode, body)
 	}
 }
 
@@ -86,8 +81,7 @@ func TestAPublicDirectoryReaderKeepsProtectedFoldersClosed(t *testing.T) {
 // the file is there at all. A server that protects GET protects HEAD with it.
 func TestHeadIsProtectedAlongWithGet(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = []string{http.MethodGet}
-		cfg.PathsRequireAuth = nil
+		cfg.PathsRequireAuth = []string{"^/"}
 	})
 	server.write(t, "file.txt", "content")
 
@@ -124,7 +118,6 @@ func caseInsensitive(t *testing.T, dir string) bool {
 // protects one has to protect the other.
 func TestProtectedPathsCoverOtherCases(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = nil
 		cfg.PathsRequireAuth = []string{"^/private/.*"}
 	})
 	if !caseInsensitive(t, server.base) {
@@ -147,7 +140,7 @@ func TestProtectedPathsCoverOtherCases(t *testing.T) {
 // under whatever case the client spells it in, as the filesystem does.
 func TestAccountPathsCoverOtherCases(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = []string{http.MethodGet}
+		cfg.PathsRequireAuth = []string{"^/"}
 		cfg.Users = []config.User{scopedUser("jane", "roe")}
 	})
 	if !caseInsensitive(t, server.base) {
@@ -167,7 +160,6 @@ func TestWindowsPathVariantsAreRefused(t *testing.T) {
 		t.Skip("backslashes, colons and trailing dots are ordinary name characters here")
 	}
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = nil
 		cfg.PathsRequireAuth = []string{"^/private/.*"}
 	})
 	server.write(t, "private/secret.txt", "secret")
@@ -275,7 +267,7 @@ func TestDLSCredentialsKeepProtectedFoldersClosed(t *testing.T) {
 // A server that protects GET protects every listing, the reader's included.
 func TestDLSCredentialsDoNotOpenAProtectedGet(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = []string{http.MethodGet, http.MethodPost}
+		cfg.PathsRequireAuth = []string{"^/"}
 	})
 	server.write(t, "phonesoftware/firmware.bin", "firmware")
 

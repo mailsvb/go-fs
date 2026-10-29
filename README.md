@@ -677,7 +677,6 @@ allowUserFolderDelete = true
 enabled = true
 port = 8080
 basefolder = "/srv/http"
-methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 pathsRequireAuth = ["^/private/.*"]
 httpSessionTokenLifetime = 28800   # idle timeout, renewed while in use
 httpSessionMaxLifetime = 604800    # a login lasts a week at most
@@ -688,8 +687,12 @@ loginLockout = 60
 trustedProxies = []
 ```
 
-A request is **public** unless its method is in `methodsRequireAuth` or its path
-matches one of `pathsRequireAuth`. Anything else has to be answered by one of
+**Reading is public** — `GET` and `HEAD` — unless the path matches one of
+`pathsRequireAuth`; `pathsRequireAuth = ["^/"]` makes the whole server
+private. **Everything else always needs an account**: every method that changes
+something (`PUT`, `DELETE`, `POST`, `MKCOL`, `MOVE`, and WebDAV's `COPY`,
+`LOCK`, `UNLOCK` and `PROPPATCH`) and WebDAV's listing, `PROPFIND`. There is no
+public upload. Such a request has to be answered by one of
 the `[[users]]` entries that set `http = true`, and that account's own `paths`
 then decide what it may reach, and its rights what it may do there: the same
 `allowUser*` flags as on the other servers, mapped as the table under Accounts
@@ -697,15 +700,12 @@ says — `allowUserFileCreate` for a `PUT` of a new name, `allowUserFileOverwrit
 for a `PUT` over a file that exists, `allowUserFolderCreate` for `MKCOL`,
 `allowUserFileDelete` and `allowUserFolderDelete` for `DELETE` of the one or
 the other, create and delete both for `MOVE`, and `allowUserFileRetrieve` for
-reading and listing, all false unless set. A public `PUT` never replaces a file
-whoever is signed in; that takes the right. A path an account may not reach is
+reading and listing, all false unless set. A path an account may not reach is
 `403`, not another challenge.
 
-`MKCOL` and `MOVE` do not have to appear in `methodsRequireAuth`: `MKCOL` is
-protected wherever `PUT` is and `MOVE` wherever `PUT` or `DELETE` is, so a
-configuration written before those methods existed still covers them. The
-methods of WebDAV follow the same rule: `PROPFIND` is protected wherever `GET`
-is, and `COPY`, `LOCK`, `UNLOCK` and `PROPPATCH` wherever `PUT` is.
+`methodsRequireAuth` is gone: a file that still sets it loads, and the key is
+ignored with a warning at startup. A file that listed `GET` there, to keep the
+whole server private, needs `pathsRequireAuth = ["^/"]` instead.
 
 `paths` are matched against the request path **after** it has been normalized,
 so `/private/../secret` is tested as `/secret` and cannot be used to slip past a
@@ -749,6 +749,11 @@ as a drive with nothing to install:
 - **Windows Explorer:** This PC → Map network drive, `https://host:8443/`, or
   `net use Z: https://host:8443/`
 - **Linux:** `davs://host:8443/` in GNOME Files, or davfs2
+
+The drive is always mounted with an account. These clients send their
+credentials only when the server asks for them, so every `PROPFIND` needs an
+account, even of a folder anyone may read with `GET`. Otherwise the drive
+would show what a visitor without an account sees.
 
 go-fs-light is built without WebDAV, and ignores `webdav = true`; so does a
 build with the tag `no_webdav`.
@@ -794,10 +799,9 @@ may do.** Every path a request touches is checked against the account's
 | `PROPPATCH`, `UNLOCK` | `allowUserFileRetrieve`; properties are accepted but not stored |
 
 Explorer and Finder create a file with an empty `PUT` and lock it before
-sending what is in it. So for an account, an empty file counts as a free name,
-and `allowUserFileCreate` alone is enough to fill it. A file with anything in
-it still takes `allowUserFileOverwrite`. A request without an account never
-replaces a file, empty or not.
+sending what is in it. So an empty file counts as a free name, and
+`allowUserFileCreate` alone is enough to fill it. A file with anything in it
+still takes `allowUserFileOverwrite`.
 
 A `MOVE` or `COPY` onto its own source, or into or onto a folder that holds
 it, is refused, because overwriting the destination would remove the source
@@ -1265,8 +1269,7 @@ sudo dnf config-manager addrepo --from-repofile=https://files.example.com/rpm/go
 ```
 
 zypper and dnf read the folder without logging in, so it has to be public: not
-in `pathsRequireAuth`, and with `GET` not in `methodsRequireAuth`. Uploading to
-it is protected as any upload is.
+in `pathsRequireAuth`. Uploading to it is protected as any upload is.
 
 #### F-Droid repository
 
@@ -2096,9 +2099,9 @@ authentication, bearer tokens (RFC 6750) for scripts, browser login with a signe
 the `dls_directory_reader` listing endpoint. Downloads answer range requests, so a large one can be resumed.
 The OSEM directory scanner (the HTTPS storage provider) posts to `dls_directory_reader.php` and `.asp` with its fixed
 credentials in the form (`PHP_DLS_USER`, `PHP_DLS_PW`) instead of an `Authorization` header, as the original
-scripts expected. A POST that carries them needs what browsing the listed folder with `GET` needs, so it works
-with POST in `methodsRequireAuth`. The pair is public, so it opens no protected folder. A folder in
-`pathsRequireAuth`, or any folder when `GET` is protected, still needs Basic, Digest or bearer credentials as well.
+scripts expected. A POST that carries them needs what browsing the listed folder with `GET` needs, though every
+other POST needs an account. The pair is public, so it opens no protected folder. A folder in
+`pathsRequireAuth` still needs Basic, Digest or bearer credentials as well.
 
 **WebDAV** — RFC 4918 class 1 and 2 on the HTTP listeners, through
 `golang.org/x/net/webdav`, when `http.webdav` is on: `OPTIONS`, `PROPFIND` of

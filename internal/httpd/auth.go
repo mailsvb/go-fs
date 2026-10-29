@@ -401,45 +401,23 @@ func accountNamed(accounts []*account, name string) *account {
 // needsAuth decides whether credentials are required at all: because of the
 // method, or because the path is one of the protected ones.
 func (s *Server) needsAuth(set *settings, method, virtual string) bool {
-	implied := impliedBy(method)
-	for _, protected := range set.cfg.MethodsRequireAuth {
-		if strings.EqualFold(protected, method) {
-			return true
-		}
-		for _, older := range implied {
-			if strings.EqualFold(protected, older) {
-				return true
-			}
-		}
-	}
-	return matchesPath(set.protectedPaths, virtual)
+	return accountMethod(method) || matchesPath(set.protectedPaths, virtual)
 }
 
-// impliedBy is the older methods a newer one is protected along with.
-//
-// MKCOL and MOVE arrived after methodsRequireAuth had been written into the
-// configurations that exist, so a file on disk names PUT and DELETE and not
-// them. They are the same two writes under another verb — creating something,
-// and creating it while removing what was there — so an upgrade that left them
-// to be listed by hand would quietly open them to anyone.
-//
-// HEAD is GET without the body. It still answers whether a file is there, how
-// large it is and when it changed, so a server that protects GET protects HEAD
-// with it.
-//
-// The methods of WebDAV follow the same rule: PROPFIND lists a folder, as GET
-// does, and COPY, LOCK, UNLOCK and PROPPATCH claim or create what a PUT would.
-func impliedBy(method string) []string {
+// accountMethod reports whether a method needs an account wherever it is
+// sent. Every method that changes something does: there is no public upload,
+// and what an account may change is decided by its rights. So does PROPFIND,
+// though it only lists: a WebDAV client sends its credentials only when it is
+// challenged, and a listing answered without one would show the account no
+// more than a stranger sees. What is left — GET, HEAD and OPTIONS — is public
+// unless pathsRequireAuth protects the path.
+func accountMethod(method string) bool {
 	switch strings.ToUpper(method) {
-	case http.MethodHead, methodPropfind:
-		return []string{http.MethodGet}
-	case methodMkcol, methodCopy, methodLock, methodUnlock, methodProppatch:
-		return []string{http.MethodPut}
-	case methodMove:
-		return []string{http.MethodPut, http.MethodDelete}
-	default:
-		return nil
+	case http.MethodPut, http.MethodDelete, http.MethodPost, methodMkcol, methodMove,
+		methodCopy, methodLock, methodUnlock, methodProppatch, methodPropfind:
+		return true
 	}
+	return false
 }
 
 // action is what a request is about to do to a path. It is finer than the
@@ -508,12 +486,10 @@ func actionOf(method string, target vfs.Target) action {
 //
 // A request that needs no account for that method is permitted whoever is
 // signed in. An identity adds to what a request may do and never takes
-// anything away: on a server whose GET is public and whose PUT is not, logging
-// in must not be what stops someone reading a folder. Replacing a file is the
-// one exception: a public PUT never replaced what was there, and it still does
-// not — only an account granted allowUserFileOverwrite may.
+// anything away: where GET is public, logging in must not be what stops
+// someone reading a folder.
 func (s *Server) permits(set *settings, user *account, method, virtual string, act action) bool {
-	if act != actOverwrite && !s.needsAuth(set, method, virtual) {
+	if !s.needsAuth(set, method, virtual) {
 		return true
 	}
 	if user == nil || !user.allows(virtual) {

@@ -380,7 +380,7 @@ func TestFetchIsOfferedToASessionThatMayCreate(t *testing.T) {
 		t.Error("an anonymous visitor of a public folder is offered Fetch")
 	}
 	res, _ = transferRequest(t, open, http.MethodPost, "/?go-fs=fetch", nil, body)
-	if res.StatusCode != http.StatusForbidden {
+	if res.StatusCode != http.StatusUnauthorized {
 		t.Errorf("an anonymous fetch into a public folder answered %d", res.StatusCode)
 	}
 }

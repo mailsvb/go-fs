@@ -226,12 +226,12 @@ func TestUploadReplacesOnlyWithTheRight(t *testing.T) {
 		}
 	})
 
-	// a public PUT never replaced a file, and being public is not a right
+	// a folder anyone may read is not one anyone may write
 	t.Run("public", func(t *testing.T) {
 		server := newServer(t, publicServer)
 		server.write(t, "private/exists.txt", "original")
-		if status := put(t, server, "", ""); status != http.StatusForbidden {
-			t.Errorf("status = %d, want 403", status)
+		if status := put(t, server, "", ""); status != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", status)
 		}
 		if got := server.read(t, "private/exists.txt"); got != "original" {
 			t.Errorf("the file was changed to %q", got)
@@ -350,10 +350,7 @@ func TestPermissionsAreEnforced(t *testing.T) {
 // The served folder is the whole of the filesystem a client can reach, whether
 // it climbs out with .. or follows a symbolic link out.
 func TestConfinement(t *testing.T) {
-	server := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = nil
-		cfg.PathsRequireAuth = nil
-	})
+	server := newServer(t, publicServer)
 	server.write(t, "hello.txt", "hello")
 	outside := filepath.Join(t.TempDir(), "secret.txt")
 	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {

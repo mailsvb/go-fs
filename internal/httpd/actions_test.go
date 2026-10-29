@@ -225,27 +225,25 @@ func TestNewMethodsNeedTheRights(t *testing.T) {
 	}
 }
 
-// methodsRequireAuth was written into the configurations that exist before
-// MKCOL and MOVE were answered at all, so a file on disk names PUT and DELETE
-// and not them. An upgrade must not leave the two new writes public.
-func TestExistingConfigStillProtectsTheNewMethods(t *testing.T) {
-	server := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = []string{"PUT", "DELETE", "POST"}
-		cfg.PathsRequireAuth = nil
-	})
+// Every method that changes something needs an account, and so does a WebDAV
+// listing, on a server whose every path may be read without one.
+func TestWritesAlwaysNeedAnAccount(t *testing.T) {
+	server := newServer(t, publicServer)
 	server.write(t, "one.txt", "x")
 
-	req, _ := http.NewRequest(methodMkcol, server.url("/anyone/"), nil)
-	if res := do(t, req); res.StatusCode != http.StatusUnauthorized {
-		t.Errorf("MKCOL status = %d, want 401", res.StatusCode)
-	}
-	req, _ = http.NewRequest(methodMove, server.url("/one.txt"), nil)
-	req.Header.Set("Destination", "/two.txt")
-	if res := do(t, req); res.StatusCode != http.StatusUnauthorized {
-		t.Errorf("MOVE status = %d, want 401", res.StatusCode)
+	for _, method := range []string{http.MethodPut, http.MethodDelete, http.MethodPost, methodMkcol,
+		methodMove, methodCopy, methodLock, methodUnlock, methodProppatch, methodPropfind} {
+		req, _ := http.NewRequest(method, server.url("/anyone/"), nil)
+		req.Header.Set("Destination", "/two.txt")
+		if res := do(t, req); res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s status = %d, want 401", method, res.StatusCode)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(server.base, "anyone")); !os.IsNotExist(err) {
-		t.Error("an unauthenticated MKCOL created a folder")
+		t.Error("an unauthenticated request created a folder")
+	}
+	if res, _ := get(t, server, "/one.txt"); res.StatusCode != http.StatusOK {
+		t.Errorf("GET status = %d, want 200", res.StatusCode)
 	}
 }
 
@@ -332,25 +330,13 @@ func TestListingOffersDeletePerRow(t *testing.T) {
 	}
 }
 
-// A public server offers what a public request may do, which is what the
-// dispatch lets one do rather than what an account would have been allowed.
+// A public listing offers what a public request may do, which is to read: the
+// writes need an account however public the folder is.
 func TestListingFollowsWhatAPublicRequestMayDo(t *testing.T) {
 	server := newServer(t, publicServer)
 	server.write(t, "one.txt", "x")
 
 	_, body := get(t, server, "/")
-	for _, want := range []string{`id="new-folder"`, `data-do="rename"`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the page is missing %q", want)
-		}
-	}
-
-	locked := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = []string{"PUT", "DELETE", "POST"}
-		cfg.PathsRequireAuth = nil
-	})
-	locked.write(t, "one.txt", "x")
-	_, body = get(t, locked, "/")
 	for _, gone := range []string{`id="new-folder"`, `data-do="rename"`, `data-do="delete"`} {
 		if strings.Contains(body, gone) {
 			t.Errorf("a request that could not write is offered %q", gone)

@@ -34,8 +34,7 @@ import (
 //
 // The server reaches whatever URL it is given, inside the network it is in as
 // well as outside, so the dialog is offered to a session of an account and to
-// nobody else: not to a folder whose PUT is public, and not to a header or a
-// bearer token, which have the API.
+// nobody else: not to a header or a bearer token, which have the API.
 
 const (
 	actionFetch     = "fetch"

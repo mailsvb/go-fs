@@ -9,9 +9,7 @@ import (
 // A path that is not protected and a method that is not protected are served
 // to anyone, which is what the Node implementation does.
 func TestPublicRequestNeedsNoCredentials(t *testing.T) {
-	server := newServer(t, func(cfg *httpConfig) {
-		cfg.MethodsRequireAuth = []string{"PUT", "DELETE"}
-	})
+	server := newServer(t, nil)
 	server.write(t, "public/hello.txt", "hello")
 
 	res, body := get(t, server, "/public/hello.txt")

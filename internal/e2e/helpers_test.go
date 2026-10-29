@@ -38,11 +38,6 @@ import (
 	sftpd "github.com/mailsvb/go-fs/internal/sftp"
 )
 
-// allMethods makes every HTTP method need an account, so that an account's
-// rights decide every request as they do over FTP and SFTP, where there is no
-// such thing as a public request.
-var allMethods = []string{"GET", "HEAD", "PUT", "DELETE", "POST", "MKCOL", "MOVE"}
-
 // right names one of the allowUser* switches of an account.
 type right int
 
@@ -133,8 +128,10 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 	cfg.HTTP.UploadStagingFolder = t.TempDir()
 	cfg.HTTP.LoginFailureDelay = 0
 	cfg.HTTP.LoginAttempts = 0
-	cfg.HTTP.MethodsRequireAuth = allMethods
-	cfg.HTTP.PathsRequireAuth = nil
+	// every path needs an account, so that an account's rights decide every
+	// request as they do over FTP and SFTP, where there is no such thing as a
+	// public request
+	cfg.HTTP.PathsRequireAuth = []string{"^/"}
 
 	cfg.FTP.Enabled = true
 	cfg.FTP.Port = 0

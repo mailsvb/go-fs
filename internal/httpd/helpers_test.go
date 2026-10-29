@@ -324,10 +324,9 @@ func sha256Hex(in string) string {
 
 var _ = url.PathEscape
 
-// publicServer makes everything public, which is what the listing tests need:
+// publicServer makes reading everything public, which is what the listing tests need:
 // they are about the page rather than about who may see it.
 func publicServer(cfg *httpConfig) {
-	cfg.MethodsRequireAuth = nil
 	cfg.PathsRequireAuth = nil
 }
 

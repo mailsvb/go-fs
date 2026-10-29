@@ -99,7 +99,7 @@ func (d *davFS) create(target vfs.Target) (webdav.File, error) {
 	if exists && !info.Mode().IsRegular() {
 		return nil, denied
 	}
-	if !d.s.permits(d.set, d.user, http.MethodPut, target.Virtual, davWriteAction(d.user, target.Path)) {
+	if !d.s.permits(d.set, d.user, http.MethodPut, target.Virtual, davWriteAction(target.Path)) {
 		return nil, denied
 	}
 	// a file is not given the folders above it, as a PUT of the page's

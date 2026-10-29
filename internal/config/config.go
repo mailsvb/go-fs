@@ -735,10 +735,11 @@ type SFTP struct {
 // uploading with PUT, removing with DELETE, creating a folder with MKCOL and
 // renaming with MOVE.
 //
-// Access has two layers. A request is public unless its method is in
-// MethodsRequireAuth or its path matches one of PathsRequireAuth; when it is
-// not public it has to be answered by one of the [[users]] entries that set
-// http, and that account's own paths and rights then decide what it may do.
+// Access has two layers. A request that changes something, or a WebDAV
+// listing, always needs an account; a GET or a HEAD needs one where its path
+// matches one of PathsRequireAuth. Such a request has to be answered by one of
+// the [[users]] entries that set http, and that account's own paths and rights
+// then decide what it may do.
 type HTTP struct {
 	// Enabled serves the plain port. The TLS listener has its own switch in
 	// [https]; the rest of this section applies to both.
@@ -861,13 +862,9 @@ type HTTP struct {
 	// is marked Secure. From anywhere else both headers are ignored.
 	TrustedProxies []string `toml:"trustedProxies"`
 
-	// MethodsRequireAuth are the methods that always need an account. MKCOL
-	// and MOVE do not have to be listed: MKCOL is protected wherever PUT is,
-	// and MOVE wherever PUT or DELETE is, so a configuration written before
-	// they existed still covers them.
-	MethodsRequireAuth []string `toml:"methodsRequireAuth"`
 	// PathsRequireAuth are regular expressions; a request whose path matches
-	// one of them needs an account whatever its method.
+	// one of them needs an account whatever its method. "^/" makes the whole
+	// server private.
 	PathsRequireAuth []string `toml:"pathsRequireAuth"`
 }
 
@@ -990,7 +987,6 @@ func Default() Config {
 			LoginFailureDelay:     1,
 			LoginAttempts:         5,
 			LoginLockout:          60,
-			MethodsRequireAuth:    []string{"PUT", "DELETE", "POST", "MKCOL", "MOVE"},
 		},
 		HTTPS: HTTPS{
 			Port: 8443,
@@ -1052,6 +1048,9 @@ var retired = map[string]string{
 	"users.cookiePath": "nothing: the session cookie is always scoped to /",
 	// the folder sweep is not part of the http server
 	"http.cleanup": "[[general.cleanup]], whose paths are relative to general.basefolder",
+	// every write and every WebDAV listing needs an account, and what an
+	// account may do is decided by its rights
+	"http.methodsRequireAuth": "http.pathsRequireAuth to protect reading, \"^/\" for the whole server",
 }
 
 // RetiredKeys reports the retired keys a file still sets, each as
