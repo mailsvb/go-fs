@@ -222,7 +222,7 @@ func (s *Server) basicChallenge(set *settings, w http.ResponseWriter, r *http.Re
 	if delay := set.cfg.LoginFailureDelay; delay > 0 && failed {
 		time.Sleep(time.Duration(delay) * time.Second)
 	}
-	w.Header().Set("WWW-Authenticate", fmt.Sprintf("Basic realm=%q", set.cfg.Realm))
+	w.Header().Set("WWW-Authenticate", fmt.Sprintf("Basic realm=%q", realm))
 	writeRegistryError(w, r, regErr(http.StatusUnauthorized, "UNAUTHORIZED", "authentication required"))
 }
 

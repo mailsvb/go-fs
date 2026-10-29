@@ -220,7 +220,7 @@ func TestDigestRefusesAForeignNonce(t *testing.T) {
 	server.write(t, "private/secret.txt", "secret")
 
 	params := map[string]string{
-		"realm":     server.settings().cfg.Realm,
+		"realm":     realm,
 		"nonce":     "1700000000:" + strings.Repeat("a", 64),
 		"algorithm": "MD5",
 	}

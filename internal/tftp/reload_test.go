@@ -38,7 +38,6 @@ func TestReloadReportsWhatNeedsARestart(t *testing.T) {
 	cases := map[string]func(*config.TFTP){
 		"port":       func(c *config.TFTP) { c.Port = 6969 },
 		"address":    func(c *config.TFTP) { c.Address = "::1" },
-		"type":       func(c *config.TFTP) { c.Type = "udp6" },
 		"basefolder": func(c *config.TFTP) { c.Basefolder = t.TempDir() },
 	}
 	for name, change := range cases {

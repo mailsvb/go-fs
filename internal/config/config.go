@@ -761,10 +761,6 @@ type HTTP struct {
 	// It is no key of the section.
 	Basefolder string `toml:"-"`
 
-	// Realm is what clients are challenged with and, because it is hashed into
-	// the digest response, changing it invalidates saved credentials.
-	Realm string `toml:"realm"`
-
 	// EnableAdminInterface serves the web interface that edits this file at
 	// ?go-fs=admin on both listeners. It is reachable only by an account that
 	// sets isAdmin and has logged in through the browser; the page carries
@@ -916,7 +912,6 @@ type TFTP struct {
 	Enabled bool   `toml:"enabled"`
 	Port    int    `toml:"port"`
 	Address string `toml:"address"`
-	Type    string `toml:"type"`
 	// Basefolder is general.baseFolderFiles, which Resolved hands the server.
 	// It is no key of the section.
 	Basefolder string `toml:"-"`
@@ -984,7 +979,6 @@ func Default() Config {
 			Enabled:               true,
 			Port:                  8080,
 			Address:               "127.0.0.1",
-			Realm:                 "go-fs",
 			EnableAdminInterface:  true,
 			EnableS3:              true,
 			RegistryAnonymousRead: true,
@@ -1588,9 +1582,6 @@ func (c Config) validateHTTP() error {
 	if h.UploadStagingFolder != "" && !filepath.IsAbs(h.UploadStagingFolder) {
 		return errors.New("http.uploadStagingFolder has to be an absolute path")
 	}
-	if h.Realm == "" {
-		return errors.New("http.realm is not set")
-	}
 	for i, pattern := range h.PathsRequireAuth {
 		if _, err := regexp.Compile(pattern); err != nil {
 			return fmt.Errorf("http.pathsRequireAuth[%d]: %w", i, err)
@@ -1761,11 +1752,6 @@ func (s SFTP) validate() error {
 func (t TFTP) validate() error {
 	if err := checkPort("tftp.port", t.Port); err != nil {
 		return err
-	}
-	switch t.Type {
-	case "", "udp4", "udp6":
-	default:
-		return fmt.Errorf("tftp.type %q is not one of udp4, udp6", t.Type)
 	}
 	if t.MaxConnections < 1 {
 		return errors.New("tftp.maxConnections has to be at least 1")

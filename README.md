@@ -722,8 +722,7 @@ the one public thing about it.
 
 Both Digest and Basic authentication are accepted. A **program** is challenged
 with Digest, using SHA-256 for Chromium and Firefox and MD5 for everything
-else, which is what those clients handle; `realm` is hashed into the response, so changing it makes saved
-credentials stop matching. A digest response is bound to the path it was made
+else, which is what those clients handle. A digest response is bound to the path it was made
 for and to a nonce that is good for five minutes, so a header captured off the
 wire cannot be turned on another path or replayed later; a client that still has
 the credentials answers the stale challenge without asking anyone. `curl -u`

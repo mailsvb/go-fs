@@ -663,6 +663,10 @@ func clearCookie(w http.ResponseWriter, name string) {
 	})
 }
 
+// realm is what clients are challenged with. It is hashed into the digest
+// response, so it never changes: saved credentials would stop matching.
+const realm = "go-fs"
+
 // nonceLifetime is how long a digest nonce is accepted for. It bounds how long
 // a captured Authorization header can be replayed; a client that still holds
 // the credentials answers the stale challenge without asking anyone.
@@ -718,14 +722,14 @@ func (s *Server) challenge(set *settings, w http.ResponseWriter, r *http.Request
 	_, _ = rand.Read(opaque)
 	challenge := fmt.Sprintf(
 		`Digest realm=%q, qop="auth", opaque=%q, nonce=%q, algorithm=%s`,
-		set.cfg.Realm, hex.EncodeToString(opaque), s.newNonce(),
+		realm, hex.EncodeToString(opaque), s.newNonce(),
 		defaultAlgorithm(r.Header.Get("User-Agent")))
 	if stale {
 		challenge += ", stale=true"
 	}
 	w.Header().Set("WWW-Authenticate", challenge)
 	if davBasic(set, r) {
-		w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Basic realm=%q, charset="UTF-8"`, set.cfg.Realm))
+		w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Basic realm=%q, charset="UTF-8"`, realm))
 	}
 	w.WriteHeader(http.StatusUnauthorized)
 }
@@ -809,7 +813,7 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*ac
 		if user.name != name {
 			continue
 		}
-		ha1 := digest(user.name + ":" + set.cfg.Realm + ":" + user.password)
+		ha1 := digest(user.name + ":" + realm + ":" + user.password)
 
 		var expected string
 		if params["qop"] == "auth" {

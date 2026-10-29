@@ -74,6 +74,6 @@ func (s *Server) refuseBearer(set *settings, w http.ResponseWriter) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("WWW-Authenticate",
-		fmt.Sprintf(`Bearer realm=%q, error="invalid_token"`, set.cfg.Realm))
+		fmt.Sprintf(`Bearer realm=%q, error="invalid_token"`, realm))
 	http.Error(w, "Invalid token", http.StatusUnauthorized)
 }

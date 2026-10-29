@@ -383,7 +383,6 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.Users = []User{{Username: "john", FTP: true, Basefolder: own}}
 			c.General.BaseFolderRegistry = mkdir(t, own, "registry")
 		}, "overlaps users[0].basefolder"},
-		{"tftp type", func(c *Config) { c.TFTP.Type = "sctp" }, "tftp.type"},
 		{"tftp block size", func(c *Config) { c.TFTP.MaxBlockSize = 4 }, "tftp.maxBlockSize"},
 		{"tftp maxTimeout below timeout", func(c *Config) { c.TFTP.Timeout = 30; c.TFTP.MaxTimeout = 10 }, "maxTimeout"},
 		{"unknown cipher", func(c *Config) { c.General.SSH.Ciphers = []string{"aes128-gmc"} },

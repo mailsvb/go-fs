@@ -85,7 +85,7 @@ func newSettings(cfg config.TFTP) *settings {
 func (s *Server) Reload(cfg config.TFTP) error {
 	current := s.settings().cfg
 	if cfg.Enabled != current.Enabled || cfg.Port != current.Port ||
-		cfg.Address != current.Address || cfg.Type != current.Type ||
+		cfg.Address != current.Address ||
 		cfg.Basefolder != current.Basefolder {
 		return service.ErrNeedsRestart
 	}
@@ -109,16 +109,10 @@ func New(cfg config.TFTP, logger *slog.Logger) (*Server, error) {
 	return server, nil
 }
 
-// network returns the network to listen on.
-//
-// An empty type binds dual stack, so IPv4 clients are served as well; udp4 and
-// udp6 restrict the server to that family.
+// network returns the network to listen on: udp4 for an IPv4 address, and
+// otherwise dual stack, so IPv4 clients are served as well.
 func (s *Server) network() string {
 	cfg := s.settings().cfg
-	switch cfg.Type {
-	case "udp4", "udp6":
-		return cfg.Type
-	}
 	if cfg.Address != "" && net.ParseIP(cfg.Address).To4() != nil {
 		return "udp4"
 	}

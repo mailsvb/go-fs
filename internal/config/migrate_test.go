@@ -223,10 +223,15 @@ func TestMigrateLeavesACurrentFileAlone(t *testing.T) {
 // The shipped template of the previous release, with its comments, comes out
 // as a file that loads to what it did and keeps every comment.
 func TestMigrateKeepsTheConfiguration(t *testing.T) {
+	// a checkout on Windows may have turned the template's newlines into \r\n
+	newline := "\n"
+	if strings.Contains(string(template), "\r\n") {
+		newline = "\r\n"
+	}
 	old := strings.Replace(string(template), `baseFolderFiles = "/srv/files"`, `basefolder = "/srv/files"`, 1)
-	old = strings.Replace(old, "baseFolderRegistry = \"\"\n", "", 1)
-	old = strings.Replace(old, "registryAnonymousRead = true", "registryBaseFolder = \"/srv/registry\"\nregistryAnonymousRead = true", 1)
-	old = strings.Replace(old, "realm = \"go-fs\"", "basefolder = \"/srv/http\"\nrealm = \"go-fs\"", 1)
+	old = strings.Replace(old, `baseFolderRegistry = ""`+newline, "", 1)
+	old = strings.Replace(old, "registryAnonymousRead = true", `registryBaseFolder = "/srv/registry"`+newline+"registryAnonymousRead = true", 1)
+	old = strings.Replace(old, "enableAdminInterface = true", `basefolder = "/srv/http"`+newline+"enableAdminInterface = true", 1)
 	if old == string(template) || !setsOldKeys([]byte(old)) {
 		t.Fatal("the template no longer has the lines this test turns back into the old keys")
 	}

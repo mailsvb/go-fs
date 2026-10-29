@@ -135,7 +135,7 @@ func TestAStaleNonceIsNotAFailedLogin(t *testing.T) {
 
 	issued := strconv.FormatInt(time.Now().Add(-10*time.Minute).Unix(), 10)
 	params := map[string]string{
-		"realm":     server.settings().cfg.Realm,
+		"realm":     realm,
 		"nonce":     issued + ":" + server.signNonce(issued),
 		"algorithm": "MD5",
 	}

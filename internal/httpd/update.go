@@ -81,7 +81,7 @@ func (s *Server) handleUpdate(set *settings, w http.ResponseWriter, r *http.Requ
 	case cred.user == nil:
 		s.log.Info("http self update refused, no credentials", "credentials", cred.method,
 			"address", address)
-		w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q", set.cfg.Realm))
+		w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q", realm))
 		http.Error(w, "Not authenticated", http.StatusUnauthorized)
 		return
 	case !mayUpdate(cred):

@@ -493,9 +493,6 @@ port = 8080
 # interface both listeners bind to, empty binds to all; 127.0.0.1 is
 # reachable from this host alone
 address = "127.0.0.1"
-# what clients are challenged with. It is hashed into the digest response, so
-# changing it makes browsers ask for the password again.
-realm = "go-fs"
 
 # The web interface that edits this file, served by this server at
 # ?go-fs=admin on both listeners (http://host:8080/?go-fs=admin, or #/admin
@@ -644,10 +641,6 @@ port = 8069
 # interface to bind to, empty binds to all; 127.0.0.1 is reachable from this
 # host alone
 address = "127.0.0.1"
-# udp4, udp6 or empty. Empty derives it from address and otherwise uses udp6,
-# which also accepts IPv4 clients on a dual stack host. Set udp4 explicitly on
-# hosts configured with bindv6only.
-type = ""
 
 # what anyone who reaches the port may do: read files, and write them
 allowRead = true

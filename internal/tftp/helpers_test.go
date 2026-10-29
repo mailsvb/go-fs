@@ -97,8 +97,6 @@ func newServer(t *testing.T, tune func(*config.TFTP)) *testServer {
 	cfg := config.Default().TFTP
 	cfg.Basefolder = base
 	cfg.Port = 0
-	// bind IPv4 so the tests do not depend on how localhost resolves
-	cfg.Type = "udp4"
 	if tune != nil {
 		tune(&cfg)
 	}
