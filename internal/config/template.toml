@@ -540,6 +540,21 @@ registryBaseFolder = ""
 # takes an account that sets registry = true, as pushing always does.
 registryAnonymousRead = true
 
+# Answer WebDAV on the paths of the served folder, on both listeners, so that
+# Windows Explorer (Map network drive) and macOS Finder (Connect to Server)
+# mount https://host:8443/ as a drive. To a WebDAV client DELETE removes a
+# folder with everything in it, and MOVE moves across folders and onto a name
+# that is taken; to the browser page and to scripts both mean what they always
+# did. Either way an account may do no more than its paths and rights allow,
+# checked for every file a request touches. Windows sends a password to a
+# WebDAV server only over TLS, and only to a certificate it trusts, so serve
+# it over [https] with a certificate of your own.
+webdav = false
+# What the User-Agent of a WebDAV client contains, ignoring case. These
+# clients get the WebDAV meaning of PUT, DELETE and MOVE; so does any request
+# that carries a Depth or an If header.
+webdavClients = ["Microsoft-WebDAV-MiniRedir", "WebDAVFS", "WebDAVLib", "Microsoft Office", "davfs2", "gvfs", "Cyberduck", "Mountain Duck", "rclone", "WinSCP"]
+
 # maximum simultaneous connections
 maxConnections = 100
 # Seconds, 0 disables one. writeTimeout is off by default because it would cap
@@ -602,9 +617,10 @@ trustedProxies = []
 
 # Methods that always need an account. HEAD, MKCOL and MOVE do not have to be
 # listed: HEAD is protected wherever GET is, MKCOL wherever PUT is and MOVE
-# wherever PUT or DELETE is. A dls_directory_reader POST that carries the DLS
-# scanner's fixed credentials in its form is protected as the GET of the folder
-# it lists instead.
+# wherever PUT or DELETE is. The methods of WebDAV follow: PROPFIND wherever
+# GET is, COPY, LOCK, UNLOCK and PROPPATCH wherever PUT is. A
+# dls_directory_reader POST that carries the DLS scanner's fixed credentials
+# in its form is protected as the GET of the folder it lists instead.
 methodsRequireAuth = ["PUT", "DELETE", "POST", "MKCOL", "MOVE"]
 # Regular expressions; a request whose path matches one of these needs an
 # account whatever its method. Everything else is public. On a filesystem that

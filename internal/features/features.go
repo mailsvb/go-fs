@@ -35,6 +35,9 @@ const (
 	// Cryptomator is keeping the files of a stored server in a vault of
 	// Cryptomator.
 	Cryptomator = "cryptomator"
+	// WebDAV is answering WebDAV on the paths the HTTP server serves, so
+	// that the folder mounts as a drive.
+	WebDAV = "webdav"
 )
 
 // built holds the parts this binary has. It is filled by the init functions
@@ -79,6 +82,6 @@ func List() []string {
 
 // All is every optional part there is, whether built or not.
 func All() []string {
-	all := []string{TFTP, FTP, SFTP, SFTPRemote, SMB, RPM, FDroid, Cryptomator}
+	all := []string{TFTP, FTP, SFTP, SFTPRemote, SMB, RPM, FDroid, Cryptomator, WebDAV}
 	return slices.Sorted(slices.Values(all))
 }

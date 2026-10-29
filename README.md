@@ -492,6 +492,7 @@ data connection owes nothing on the control one.
 | `http.trustedProxies` | `[]` | a forwarded address, and a forwarded `https`, is believed only from a proxy listed here |
 | `users[].ftp`, `users[].sftp`, `users[].http`, `users[].s3` | `false` | an account logs in only to the servers it switches on |
 | `http.enableS3` | `true` | the S3 API is there wherever the HTTP server is, and serves only the accounts that set `s3` |
+| `http.webdav` | `false` | a WebDAV client deletes folders recursively and moves across them, so mounting the folder as a drive is switched on deliberately |
 | `users[].allowUser*` | `false` | an account is granted only the rights its table lists |
 | `http.enabled` | `true` | the one server that is on, so the admin interface can be reached to set up the rest |
 | `ftp.enabled`, `ftps.enabled`, `sftp.enabled`, `https.enabled`, `tftp.enabled` | `false` | each server is switched on deliberately |
@@ -645,7 +646,8 @@ of a channel at 2 MB, so one transfer moves at most 2 MB per round trip, about
 uploads, `DELETE` removes, `MKCOL` creates a folder and `MOVE` renames one entry
 in place. `[https]` is the same server on a TLS port, with `cert` and `key`
 holding the material as in `[ftps]`, and the two `enabled` switches are
-independent.
+independent. With `webdav = true` the same folder also mounts as a drive in
+Explorer and Finder; see [Mounting as a drive](#mounting-as-a-drive-webdav).
 
 Browsing it in a browser gives a listing that sorts on any column, filters as you
 type, and — for an account that holds the rights — uploads by drag and drop,
@@ -701,7 +703,9 @@ whoever is signed in; that takes the right. A path an account may not reach is
 
 `MKCOL` and `MOVE` do not have to appear in `methodsRequireAuth`: `MKCOL` is
 protected wherever `PUT` is and `MOVE` wherever `PUT` or `DELETE` is, so a
-configuration written before those methods existed still covers them.
+configuration written before those methods existed still covers them. The
+methods of WebDAV follow the same rule: `PROPFIND` is protected wherever `GET`
+is, and `COPY`, `LOCK`, `UNLOCK` and `PROPPATCH` wherever `PUT` is.
 
 `paths` are matched against the request path **after** it has been normalized,
 so `/private/../secret` is tested as `/secret` and cannot be used to slip past a
@@ -734,6 +738,105 @@ can cause. `loginAttempts = 0` switches the lock off.
 The credential check takes the same time whichever name is sent: the name and
 the password are compared for every account, so an account that exists is
 refused no faster than one that does not.
+
+### Mounting as a drive (WebDAV)
+
+With `webdav = true` the HTTP server also answers WebDAV (RFC 4918, class 1
+and 2) on the paths it already serves, on both listeners, so the folder mounts
+as a drive with nothing to install:
+
+- **macOS Finder:** Go → Connect to Server (⌘K), `https://host:8443/`
+- **Windows Explorer:** This PC → Map network drive, `https://host:8443/`, or
+  `net use Z: https://host:8443/`
+- **Linux:** `davs://host:8443/` in GNOME Files, or davfs2
+
+go-fs-light is built without WebDAV, and ignores `webdav = true`; so does a
+build with the tag `no_webdav`.
+
+```toml
+[http]
+webdav = true
+webdavClients = ["Microsoft-WebDAV-MiniRedir", "WebDAVFS", "WebDAVLib", "Microsoft Office",
+  "davfs2", "gvfs", "Cyberduck", "Mountain Duck", "rclone", "WinSCP"]
+
+[https]
+enabled = true
+```
+
+WebDAV shares `PUT`, `DELETE` and `MOVE` with the browser page and with
+scripts, and gives two of them another meaning:
+
+- **`DELETE` of a folder** removes it with everything in it.
+- **`MOVE`** moves across folders, and onto a name that is taken when the
+  client sends `Overwrite: T`, which is how many programs save a file.
+
+**Only a WebDAV client gets that meaning.** A client is taken for one when its
+`User-Agent` contains one of `webdavClients`, ignoring case, or when the
+request carries a `Depth` or an `If` header, which only WebDAV defines.
+Everyone else keeps the meaning these methods always had: the page and a
+`curl -X DELETE` still cannot remove a folder that is not empty. `PROPFIND`,
+`PROPPATCH`, `LOCK`, `UNLOCK`, `COPY` and `OPTIONS` are WebDAV whoever sends
+them. `GET`, `HEAD` and `MKCOL` mean the same to everyone and are answered as
+they always were.
+
+**Telling the clients apart decides what a method means, never what an account
+may do.** Every path a request touches is checked against the account's
+`paths` and rights, as the page's requests are:
+
+| Request | Needs |
+|---|---|
+| `PROPFIND` (listing) | `allowUserFileRetrieve`; a listing leaves out what the account may not reach |
+| `PUT`, `LOCK` of a free name | `allowUserFileCreate` |
+| `PUT`, `LOCK` of a taken name | `allowUserFileOverwrite`, except for an empty file (see below) |
+| `DELETE` of a folder | `allowUserFileDelete` and `allowUserFolderDelete` for everything in it, at paths the account may reach; if one thing fails, nothing is removed |
+| `MOVE` | create and delete, at the path each file leaves and the path it lands on; overwriting also needs the right to delete what is there |
+| `COPY` | `allowUserFileRetrieve` on what is copied and `allowUserFileCreate`/`allowUserFolderCreate` for the copies; overwriting also needs the right to delete what is there |
+| `PROPPATCH`, `UNLOCK` | `allowUserFileRetrieve`; properties are accepted but not stored |
+
+Explorer and Finder create a file with an empty `PUT` and lock it before
+sending what is in it. So for an account, an empty file counts as a free name,
+and `allowUserFileCreate` alone is enough to fill it. A file with anything in
+it still takes `allowUserFileOverwrite`. A request without an account never
+replaces a file, empty or not.
+
+A `MOVE` or `COPY` onto its own source, or into or onto a folder that holds
+it, is refused, because overwriting the destination would remove the source
+with it. The one exception is renaming to another spelling of the same name
+on a filesystem that ignores case, which simply renames.
+
+**Locks** are kept in memory, so a restart drops them. While a WebDAV client
+holds one, a `PUT`, `DELETE`, `MKCOL` or `MOVE` of that path from the page or
+a script is answered `423 Locked`.
+
+**Limits:**
+
+- A `PROPFIND` has to say `Depth: 0` or `Depth: 1`. Walking the whole tree in
+  one request is refused, as RFC 4918 allows.
+- `maxUploadSize` and `readTimeout` hold for WebDAV uploads as they do for the
+  page's.
+- An upload is written to `uploadStagingFolder` and moved to its name once it
+  has arrived whole, so a copy that breaks off leaves nothing behind.
+
+**Windows** sends a password to a WebDAV server only over TLS, and only when
+it trusts the certificate. A self-signed certificate therefore has to be
+imported into the Trusted Root Certification Authorities store of the machine
+first, or replaced by one Windows already trusts. Over TLS the challenge offers
+Basic beside Digest, since Explorer answers nothing else; over the plain port
+it offers Digest alone. Explorer mounts through the WebClient service, so if
+mapping the drive fails at once, check that the service is running
+(`sc query webclient`). By default Windows also refuses to download a file
+larger than 50 MB over WebDAV. The limit is `FileSizeLimitInBytes` under
+`HKLM\SYSTEM\CurrentControlSet\Services\WebClient\Parameters`; raise it and
+restart the service.
+
+**Logging in:** a client is asked for an account only when a request needs
+one. On a server whose `GET` is public, a drive therefore mounts without a
+login and is read-only until something asks. Protect `GET`, or the paths, to
+be asked at once. A client that retries a wrong password by itself can use
+up `loginAttempts` with one typo.
+
+Finder writes `._name` and `.DS_Store` files beside what it copies, as it does
+on every network drive.
 
 ### Bearer tokens
 
@@ -1996,6 +2099,12 @@ credentials in the form (`PHP_DLS_USER`, `PHP_DLS_PW`) instead of an `Authorizat
 scripts expected. A POST that carries them needs what browsing the listed folder with `GET` needs, so it works
 with POST in `methodsRequireAuth`. The pair is public, so it opens no protected folder. A folder in
 `pathsRequireAuth`, or any folder when `GET` is protected, still needs Basic, Digest or bearer credentials as well.
+
+**WebDAV** — RFC 4918 class 1 and 2 on the HTTP listeners, through
+`golang.org/x/net/webdav`, when `http.webdav` is on: `OPTIONS`, `PROPFIND` of
+depth 0 and 1, `PROPPATCH` (accepted, not stored), `PUT`, recursive `DELETE`,
+`COPY`, `MOVE`, and exclusive and shared write locks with `LOCK` and `UNLOCK`,
+kept in memory. `GET`, `HEAD` and `MKCOL` are the HTTP server's own.
 
 **S3** — the object API of Amazon S3 on the HTTP listeners, authenticated with
 AWS Signature Version 4 (header, presigned URL, signed and unsigned

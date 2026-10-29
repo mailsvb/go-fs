@@ -779,6 +779,17 @@ type HTTP struct {
 	// credentials. With it off, pulling takes an account that sets registry,
 	// as pushing and deleting always do.
 	RegistryAnonymousRead bool `toml:"registryAnonymousRead"`
+	// WebDAV answers WebDAV on the paths of the served folder, on both
+	// listeners, so that Explorer and Finder mount it as a drive. To a WebDAV
+	// client DELETE then removes a folder with everything in it and MOVE moves
+	// across folders and onto a name that is taken; to everyone else they
+	// mean what they always did. The rights are the same for both.
+	WebDAV bool `toml:"webdav" feature:"webdav"`
+	// WebDAVClients are what the User-Agent of a WebDAV client contains,
+	// compared ignoring case: the clients that get the WebDAV meaning of
+	// PUT, DELETE and MOVE. A request with a Depth or an If header gets it
+	// whatever it names.
+	WebDAVClients []string `toml:"webdavClients" feature:"webdav"`
 
 	MaxConnections int `toml:"maxConnections"`
 	// ReadTimeout, WriteTimeout and IdleTimeout are seconds, 0 disables one.
@@ -863,6 +874,15 @@ type HTTP struct {
 // S3Region is the one region the S3 API of the HTTP server answers for. It is
 // not a key of the file, because there is nothing to choose between.
 const S3Region = "us-east-1"
+
+// DefaultWebDAVClients are what the User-Agent of the clients that mount a
+// WebDAV folder contains: Explorer, Finder, Office, davfs2 and GNOME on Linux,
+// and the mount tools of Cyberduck, rclone and WinSCP. A fresh list each call,
+// so that a configuration that appends to its own does not change the next.
+func DefaultWebDAVClients() []string {
+	return []string{"Microsoft-WebDAV-MiniRedir", "WebDAVFS", "WebDAVLib", "Microsoft Office",
+		"davfs2", "gvfs", "Cyberduck", "Mountain Duck", "rclone", "WinSCP"}
+}
 
 // HTTPS configures the TLS interface of the HTTP server. It is a section of
 // its own because TOML tables are top level; the folder, accounts and limits
@@ -960,6 +980,7 @@ func Default() Config {
 			EnableAdminInterface:  true,
 			EnableS3:              true,
 			RegistryAnonymousRead: true,
+			WebDAVClients:         DefaultWebDAVClients(),
 			MaxConnections:        100,
 			ReadTimeout:           120,
 			IdleTimeout:           120,

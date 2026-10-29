@@ -19,6 +19,7 @@ require (
 	github.com/smallstep/pkcs7 v0.2.3
 	github.com/ulikunitz/xz v0.5.17
 	golang.org/x/crypto v0.58.0
+	golang.org/x/net v0.61.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/text v0.43.0
 )
@@ -43,5 +44,4 @@ require (
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/kr/fs v0.1.0 // indirect
-	golang.org/x/net v0.61.0 // indirect
 )

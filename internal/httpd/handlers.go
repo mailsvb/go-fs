@@ -880,6 +880,11 @@ func (s *Server) handleMove(set *settings, w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Precondition Failed", http.StatusPreconditionFailed)
 		return
 	}
+	release, ok := s.davHold(set, w, destination.Virtual)
+	if !ok {
+		return
+	}
+	defer release()
 
 	if err := os.Rename(target.Path, destination.Path); err != nil {
 		s.log.Error("http rename failed", "from", target.Virtual,

@@ -22,6 +22,9 @@ func (c Config) Ignored() []string {
 	if c.TFTP.Enabled && !features.Has(features.TFTP) {
 		ignored = append(ignored, "tftp")
 	}
+	if c.HTTP.WebDAV && !features.Has(features.WebDAV) {
+		ignored = append(ignored, "http.webdav")
+	}
 	for i, server := range c.Servers {
 		if absentServerType(server.Type) {
 			ignored = append(ignored, fmt.Sprintf("servers[%d] %q of type %s", i, server.Name, server.Type))

@@ -44,6 +44,13 @@ var readerPath = regexp.MustCompile(`/dls_directory_reader\.(php|asp)$`)
 const (
 	methodMkcol = "MKCOL"
 	methodMove  = "MOVE"
+	// the rest are WebDAV's own, answered while http.webdav is on; see
+	// webdav.go
+	methodPropfind  = "PROPFIND"
+	methodProppatch = "PROPPATCH"
+	methodLock      = "LOCK"
+	methodUnlock    = "UNLOCK"
+	methodCopy      = "COPY"
 )
 
 // Server serves the file tree over HTTP, over TLS, or over both.
@@ -105,6 +112,8 @@ type Server struct {
 	// registryJobs are the pulls from and pushes to other registries the
 	// registry page started; see registry_jobs.go.
 	registryJobs registryJobs
+	// dav holds the locks of the WebDAV clients; see webdav.go.
+	dav davState
 }
 
 // New prepares a server. The base folder has to exist and every configured
@@ -280,6 +289,7 @@ func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.
 		shareFallback: shareFallback,
 		logins:        newLoginTracker(),
 		done:          make(chan struct{}),
+		dav:           newDAVState(),
 	}
 	if configPath != "" {
 		// built whether or not the switch is on: the switch is read from the
@@ -588,12 +598,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := cred.user
+	// a WebDAV client, or a method only WebDAV has, is answered by WebDAV,
+	// which checks what the account may do path by path
+	if davRequest(set, r) {
+		s.serveDAV(set, w, r, target, user)
+		return
+	}
 	act := actionOf(r.Method, target)
 	if !s.permits(set, user, method, target.Virtual, act) {
 		s.log.Debug("http request not allowed for the account",
 			"user", nameOf(user), "method", r.Method, "action", act, "path", target.Virtual)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
+	}
+
+	// a file a WebDAV client has locked is not changed under it
+	switch r.Method {
+	case http.MethodPut, http.MethodDelete, methodMkcol, methodMove:
+		release, ok := s.davHold(set, w, target.Virtual)
+		if !ok {
+			return
+		}
+		defer release()
 	}
 
 	switch r.Method {

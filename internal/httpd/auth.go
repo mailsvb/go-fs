@@ -426,11 +426,14 @@ func (s *Server) needsAuth(set *settings, method, virtual string) bool {
 // HEAD is GET without the body. It still answers whether a file is there, how
 // large it is and when it changed, so a server that protects GET protects HEAD
 // with it.
+//
+// The methods of WebDAV follow the same rule: PROPFIND lists a folder, as GET
+// does, and COPY, LOCK, UNLOCK and PROPPATCH claim or create what a PUT would.
 func impliedBy(method string) []string {
 	switch strings.ToUpper(method) {
-	case http.MethodHead:
+	case http.MethodHead, methodPropfind:
 		return []string{http.MethodGet}
-	case methodMkcol:
+	case methodMkcol, methodCopy, methodLock, methodUnlock, methodProppatch:
 		return []string{http.MethodPut}
 	case methodMove:
 		return []string{http.MethodPut, http.MethodDelete}
@@ -745,6 +748,9 @@ func (s *Server) challenge(set *settings, w http.ResponseWriter, r *http.Request
 		challenge += ", stale=true"
 	}
 	w.Header().Set("WWW-Authenticate", challenge)
+	if davBasic(set, r) {
+		w.Header().Add("WWW-Authenticate", fmt.Sprintf(`Basic realm=%q, charset="UTF-8"`, set.cfg.Realm))
+	}
 	w.WriteHeader(http.StatusUnauthorized)
 }
 
