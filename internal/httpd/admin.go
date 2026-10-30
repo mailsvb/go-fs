@@ -71,7 +71,7 @@ func (s *Server) handleAdmin(set *settings, w http.ResponseWriter, r *http.Reque
 	// and its menu offers the registry where the listing's would
 	who := s.sessionViewFor(set, r, cred)
 	ctx := admin.WithClient(r.Context(), address)
-	nav := admin.Nav{Registry: who.Registry, User: who.User}
+	nav := admin.Nav{Registry: who.Registry, Trash: who.Trash, User: who.User}
 	for _, server := range who.Servers {
 		nav.Servers = append(nav.Servers, admin.NavLink{Name: server.Name, Link: server.Link})
 	}

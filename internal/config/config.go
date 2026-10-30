@@ -83,6 +83,17 @@ type General struct {
 	// finishing an upload is a fast, atomic rename rather than a slow or
 	// outright-failing cross-device move.
 	BaseFolderTemp string `toml:"baseFolderTemp"`
+	// BaseFolderTrash is where what is deleted over the http server goes, by
+	// the listing, WebDAV or S3, at the path it had in the served folder, so
+	// that an administrator can restore it from the Trash page. Empty turns
+	// the trash off and deletes for good. It must neither be nor hold nor lie
+	// inside a folder any server serves, the registry's or the temp folder,
+	// and should stay on the same filesystem as BaseFolderFiles, so moving
+	// into it is a rename rather than a copy.
+	BaseFolderTrash string `toml:"baseFolderTrash"`
+	// TrashRetentionDays is how many days something stays in the trash
+	// before it is deleted for good. 0 keeps it until it is deleted by hand.
+	TrashRetentionDays int `toml:"trashRetentionDays"`
 
 	// ReloadConfig watches the configuration file and applies what changes in
 	// it without a restart. A file that does not parse or does not validate is
@@ -830,6 +841,10 @@ type HTTP struct {
 	// UploadStagingFolder is general.baseFolderTemp, which Resolved hands the
 	// server.
 	UploadStagingFolder string `toml:"-"`
+	// TrashFolder is general.baseFolderTrash and TrashRetentionDays is
+	// general.trashRetentionDays, which Resolved hands the server.
+	TrashFolder        string `toml:"-"`
+	TrashRetentionDays int    `toml:"-"`
 	// SessionTokenLifetime is how long a browser that logged in with the
 	// login form stays logged in without being used, in seconds. Every
 	// request it makes in the second half of that window renews its token,
@@ -944,10 +959,11 @@ type TFTP struct {
 func Default() Config {
 	return Config{
 		General: General{
-			ReloadConfig:   true,
-			ReloadInterval: 5,
-			LogLevel:       "info",
-			LogFormat:      "text",
+			TrashRetentionDays: 30,
+			ReloadConfig:       true,
+			ReloadInterval:     5,
+			LogLevel:           "info",
+			LogFormat:          "text",
 			SSH: SSH{
 				LoginGraceTime:    30,
 				MaxAuthTries:      6,
@@ -1165,11 +1181,12 @@ func Load(path string) (Config, error) {
 }
 
 // Resolved is a copy that hands general.baseFolderFiles to every server and
-// general.baseFolderRegistry and general.baseFolderTemp to the http server,
-// which is where they read them from. None is a key of their sections, so
-// nothing that is written back to the file carries what this fills in.
+// general.baseFolderRegistry, general.baseFolderTemp and the trash to the
+// http server, which is where they read them from. None is a key of their
+// sections, so nothing that is written back to the file carries what this
+// fills in.
 //
-// The copy is shallow, which is safe because only string fields are written.
+// The copy is shallow, which is safe because only plain fields are written.
 func (c Config) Resolved() Config {
 	c.FTP.Basefolder = c.General.BaseFolderFiles
 	c.SFTP.Basefolder = c.General.BaseFolderFiles
@@ -1177,6 +1194,8 @@ func (c Config) Resolved() Config {
 	c.TFTP.Basefolder = c.General.BaseFolderFiles
 	c.HTTP.RegistryBaseFolder = c.General.BaseFolderRegistry
 	c.HTTP.UploadStagingFolder = c.General.BaseFolderTemp
+	c.HTTP.TrashFolder = c.General.BaseFolderTrash
+	c.HTTP.TrashRetentionDays = c.General.TrashRetentionDays
 	return c
 }
 
@@ -1268,6 +1287,9 @@ func (c Config) Validate() error {
 			c.General.BaseFolderFiles)
 	}
 	if err := c.validateTemp(); err != nil {
+		return err
+	}
+	if err := c.validateTrash(); err != nil {
 		return err
 	}
 	for i, entry := range c.General.Cleanup {
@@ -1669,6 +1691,44 @@ func (c Config) validateTemp() error {
 		}
 		if overlaps(temp, comparablePath(other.folder)) {
 			return fmt.Errorf("general.baseFolderTemp %q overlaps %s %q; "+
+				"it has to be a folder of its own", folder, other.name, other.folder)
+		}
+	}
+	return nil
+}
+
+// validateTrash checks general.baseFolderTrash and its retention. What is in
+// the trash has left the served tree and the rights that guard it, so a trash
+// that overlapped a served folder would hand it back to anyone who may read
+// there, and one that overlapped the registry's or the temp folder would be
+// swept by them. It need not exist: it is made with the other folders.
+func (c Config) validateTrash() error {
+	if c.General.TrashRetentionDays < 0 {
+		return errors.New("general.trashRetentionDays cannot be negative")
+	}
+	folder := c.General.BaseFolderTrash
+	if folder == "" {
+		return nil
+	}
+	if !filepath.IsAbs(folder) {
+		return fmt.Errorf("general.baseFolderTrash %q has to be an absolute path", folder)
+	}
+	others := []struct{ name, folder string }{
+		{"general.baseFolderFiles", c.General.BaseFolderFiles},
+		{"general.baseFolderRegistry", c.General.BaseFolderRegistry},
+		{"general.baseFolderTemp", c.General.BaseFolderTemp},
+	}
+	for i, user := range c.Users {
+		others = append(others, struct{ name, folder string }{
+			fmt.Sprintf("users[%d].basefolder", i), user.Basefolder})
+	}
+	trash := comparablePath(folder)
+	for _, other := range others {
+		if other.folder == "" {
+			continue
+		}
+		if overlaps(trash, comparablePath(other.folder)) {
+			return fmt.Errorf("general.baseFolderTrash %q overlaps %s %q; "+
 				"it has to be a folder of its own", folder, other.name, other.folder)
 		}
 	}

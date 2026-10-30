@@ -518,7 +518,8 @@ func (s *Server) s3DeleteObject(q *s3Request, obj s3Object) *s3Error {
 	} else if !info.Mode().IsRegular() {
 		return nil
 	}
-	if err := os.Remove(obj.target.Path); err != nil {
+	trashed, err := s.discard(q.set, obj.target, false)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
@@ -530,7 +531,7 @@ func (s *Server) s3DeleteObject(q *s3Request, obj s3Object) *s3Error {
 		return errInternal
 	}
 	s.log.Info("s3 delete", "user", q.user.name, "path", obj.target.Virtual, "folder", obj.folder,
-		"bytes", info.Size(), "address", clientAddress(q.set, q.r))
+		"bytes", info.Size(), "trash", trashed, "address", clientAddress(q.set, q.r))
 	s.pruneFolders(q, obj.target.Virtual)
 	return nil
 }

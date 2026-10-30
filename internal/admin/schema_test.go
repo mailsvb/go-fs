@@ -370,16 +370,21 @@ func TestTheFoldersAreGeneralKeys(t *testing.T) {
 	cfg := config.Default()
 	cfg.General.BaseFolderFiles = "/srv/files"
 	cfg.General.BaseFolderRegistry = "/srv/registry"
+	cfg.General.BaseFolderTrash = "/srv/trash"
+	cfg.General.TrashRetentionDays = 7
 	applied, err := schema.Apply(roundTripJSON(t, schema.Values(cfg.Resolved())))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if applied.General.BaseFolderFiles != "/srv/files" || applied.General.BaseFolderRegistry != "/srv/registry" {
-		t.Errorf("the folders came back as %q and %q",
-			applied.General.BaseFolderFiles, applied.General.BaseFolderRegistry)
+	if applied.General.BaseFolderFiles != "/srv/files" || applied.General.BaseFolderRegistry != "/srv/registry" ||
+		applied.General.BaseFolderTrash != "/srv/trash" || applied.General.TrashRetentionDays != 7 {
+		t.Errorf("the folders came back as %q, %q and %q, kept for %d days",
+			applied.General.BaseFolderFiles, applied.General.BaseFolderRegistry,
+			applied.General.BaseFolderTrash, applied.General.TrashRetentionDays)
 	}
 	if resolved := applied.Resolved(); resolved.FTP.Basefolder != "/srv/files" ||
-		resolved.HTTP.RegistryBaseFolder != "/srv/registry" {
+		resolved.HTTP.RegistryBaseFolder != "/srv/registry" ||
+		resolved.HTTP.TrashFolder != "/srv/trash" || resolved.HTTP.TrashRetentionDays != 7 {
 		t.Error("the folders are no longer handed to the sections")
 	}
 }

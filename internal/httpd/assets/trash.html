@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%232f6f4f' stroke-width='2' d='M4 7h16M10 7V4h4v3m-8 0 1 13h10l1-13'/%3E%3C/svg%3E">
+<title>{{.Title}}</title>
+<style nonce="{{.Nonce}}">{{.Style}}</style>
+<script nonce="{{.Nonce}}">document.documentElement.className = "js";</script>
+</head>
+<body>
+
+{{template "icons"}}
+
+<header>
+  <nav class="crumbs" aria-label="Path">
+    <svg class="ic"><use href="#i-trash"/></svg>
+    {{range .Crumbs}}{{if .Link}}<a href="{{.Link}}">{{.Name}}</a>{{else}}<span class="here">{{.Name}}</span>{{end}}{{if .Sep}}<span class="sep">/</span>{{end}}{{end}}
+  </nav>
+  <div class="tools">
+    <input id="filter" class="needs-js" type="search" placeholder="Filter&#8230;" aria-label="Filter this folder of the trash">
+    <button id="empty-trash" class="plain needs-js" type="button" title="Delete everything in the trash for good"><svg class="ic"><use href="#i-trash"/></svg>Empty trash</button>
+    {{template "session" .Session}}
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden><span class="text"></span><button type="button" class="close" title="Dismiss" aria-label="Dismiss"><svg class="ic"><use href="#i-close"/></svg></button></div>
+
+<main>
+<table id="trash" data-base="{{.Base}}">
+  <thead>
+    <tr>
+      {{range .Columns}}
+      <th class="{{.Class}}"{{if .Active}} aria-sort="{{.Order}}"{{end}} data-key="{{.Key}}"><a href="{{.Link}}">{{.Label}} <span class="caret">{{.Caret}}</span></a></th>
+      {{end}}
+      <th class="c-mod"><span class="head">Deleted</span></th>
+      <th class="c-acts needs-js" aria-label="Actions"></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{if .Parent}}
+    <tr>
+      <td><span class="name"><svg class="ic dir"><use href="#i-up"/></svg><a href="{{.Parent}}">..</a></span></td>
+      <td class="meta c-mod">&#8212;</td>
+      <td class="meta c-kind">&#8212;</td>
+      <td class="meta num c-size">&#8212;</td>
+      <td class="meta c-mod">&#8212;</td>
+      <td class="c-acts needs-js"></td>
+    </tr>
+    {{end}}
+    {{range .Entries}}
+    <tr data-name="{{.Name}}" data-dir="{{.Group}}">
+      <td><span class="name"><svg class="ic{{if .IsDir}} dir{{end}}"><use href="{{if .IsDir}}#i-folder{{else}}#i-file{{end}}"/></svg>{{if .IsDir}}<a href="{{.Link}}">{{.Label}}</a>{{else}}<span>{{.Label}}</span>{{end}}</span></td>
+      <td class="meta c-mod">{{.Modified}}</td>
+      <td class="meta c-kind">{{.Kind}}</td>
+      <td class="meta num c-size">{{.Size}}</td>
+      <td class="meta c-mod">{{.Deleted}}</td>
+      <td class="c-acts needs-js"><button type="button" data-do="menu" title="Options" aria-haspopup="menu" aria-expanded="false" aria-label="Options for {{.Name}}"><svg class="ic"><use href="#i-more"/></svg></button></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{if not .Entries}}<p class="empty">{{if .Parent}}This folder of the trash is empty.{{else}}The trash is empty.{{end}}</p>{{end}}
+<p class="empty">{{if .Retention}}What is deleted stays in the trash for {{.Retention}} {{if eq .Retention 1}}day{{else}}days{{end}}, then it is deleted for good.{{else}}What is deleted stays in the trash until it is deleted here.{{end}}</p>
+</main>
+
+<div id="menu" class="menu" role="menu" hidden>
+  <button type="button" role="menuitem" data-do="restore"><svg class="ic"><use href="#i-restore"/></svg>Restore</button>
+  <button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete for good</button>
+</div>
+
+<dialog id="confirm">
+  <form method="dialog">
+    <h2></h2>
+    <p></p>
+    <div class="fields" hidden>
+      <label class="toggle"><input name="overwrite" type="checkbox"> Overwrite existing files with the version from the trash</label>
+    </div>
+    <div class="row">
+      <button class="go danger" type="submit" value="agree">Delete</button>
+      <button class="plain" type="submit" value="cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<script nonce="{{.Nonce}}">{{.Script}}</script>
+</body>
+</html>

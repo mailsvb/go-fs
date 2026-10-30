@@ -211,13 +211,14 @@ func TestTheListingOffersAdminToAdminsOnly(t *testing.T) {
 
 // The header of every page holds one menu, labelled with the page it is on.
 // It offers the other pages in a fixed order, Files or Registry first, then
-// Admin, and the way in or out of the session last.
+// Trash and Admin, and the way in or out of the session last.
 func TestTheMenuOffersTheOtherPagesInOrder(t *testing.T) {
 	folder := t.TempDir()
 	server := adminServer(t, func(cfg *httpConfig) {
 		publicServer(cfg)
 		cfg.RegistryBaseFolder = folder
 		cfg.RegistryAnonymousRead = true
+		cfg.TrashFolder = t.TempDir()
 	})
 	root := login(t, server, "/", "root", "secret")
 
@@ -239,18 +240,25 @@ func TestTheMenuOffersTheOtherPagesInOrder(t *testing.T) {
 
 	listing := bodyOf(t, withSession(t, server, http.MethodGet, "/", root))
 	inOrder("listing", listing, `<summary class="plain"><svg class="ic"><use href="#i-folder"/></svg>Files<`,
-		`</svg>Registry</a>`, `</svg>Admin</a>`, `</svg>Log out root</button>`)
+		`</svg>Registry</a>`, `</svg>Trash</a>`, `</svg>Admin</a>`, `</svg>Log out root</button>`)
 	if strings.Contains(listing, `</svg>Files</a>`) {
 		t.Error("the listing links to itself")
 	}
 
 	registry := bodyOf(t, withSession(t, server, http.MethodGet, "/?go-fs=registry", root))
 	inOrder("registry", registry, `<summary class="plain"><svg class="ic"><use href="#i-box"/></svg>Registry<`,
-		`</svg>Files</a>`, `</svg>Admin</a>`, `</svg>Log out root</button>`)
+		`</svg>Files</a>`, `</svg>Trash</a>`, `</svg>Admin</a>`, `</svg>Log out root</button>`)
+
+	trash := bodyOf(t, withSession(t, server, http.MethodGet, "/?go-fs=trash", root))
+	inOrder("trash", trash, `<summary class="plain"><svg class="ic"><use href="#i-trash"/></svg>Trash<`,
+		`</svg>Files</a>`, `</svg>Registry</a>`, `</svg>Admin</a>`, `</svg>Log out root</button>`)
+	if strings.Contains(trash, `</svg>Trash</a>`) {
+		t.Error("the Trash page links to itself")
+	}
 
 	admin := bodyOf(t, withSession(t, server, http.MethodGet, "/?go-fs=admin", root))
 	inOrder("admin", admin, `<summary class="plain"><svg class="ic"><use href="#i-gear"/></svg>Admin<`,
-		`</svg>Files</a>`, `<a href="/?go-fs=registry">`, `</svg>Log out root</button>`)
+		`</svg>Files</a>`, `<a href="/?go-fs=registry">`, `<a href="/?go-fs=trash">`, `</svg>Log out root</button>`)
 
 	// without a registry the admin page offers none
 	plain := adminServer(t, nil)

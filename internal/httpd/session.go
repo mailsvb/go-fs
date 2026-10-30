@@ -57,7 +57,7 @@ func cleanURL(u *url.URL) string {
 	query := stripped.Query()
 	query.Del(sessionParam)
 	switch then := query.Get(returnParam); then {
-	case actionRegistry, actionRemote:
+	case actionRegistry, actionRemote, actionTrash:
 		query.Set(sessionParam, then)
 	}
 	query.Del(returnParam)
@@ -79,6 +79,12 @@ func markedURL(u *url.URL, action string) string {
 	switch query.Get(sessionParam) {
 	case actionRegistry:
 		query.Set(returnParam, actionRegistry)
+	case actionTrash:
+		// the Trash page is only shown to a session, so it is returned to
+		// after a login and left after a logout, as a stored server is
+		if action == actionLogin {
+			query.Set(returnParam, actionTrash)
+		}
 	case actionRemote:
 		// a stored server is only shown to a session, so the page is
 		// returned to after a login and left after a logout
@@ -273,6 +279,9 @@ func (s *Server) sessionViewFor(set *settings, r *http.Request, cred credential)
 			for _, server := range serversFor(set, cred.user) {
 				who.Servers = append(who.Servers, serverLink{Name: server.Name, Link: remoteURL(server.Name, "")})
 			}
+		}
+		if offersTrash(set, cred) {
+			who.Trash = trashURL()
 		}
 		if s.admits(set, cred) {
 			who.Admin = adminURL(r.URL)

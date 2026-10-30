@@ -95,6 +95,9 @@ type Server struct {
 	// called directly, and a file one of them removes is reported before the
 	// other one looks.
 	sweepMu sync.Mutex
+	// trashMu serializes every change to the trash and its index; see
+	// trash.go.
+	trashMu sync.Mutex
 
 	mu       sync.Mutex
 	shutdown bool
@@ -515,6 +518,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// so it is not resolved the way a path of the file tree is
 	if isS3Request(r) {
 		s.handleS3(set, w, r)
+		return
+	}
+
+	// the Trash page shows the paths of the trash rather than of the served
+	// folder, and decides for itself who may be there
+	if action := trashPageAction(r); action != "" {
+		s.handleTrash(set, w, r, action)
 		return
 	}
 

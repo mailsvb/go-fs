@@ -18,12 +18,13 @@ const cleanupInterval = time.Hour
 // shorten this into a race with a legitimately slow but still-active upload.
 const stagingMaxAge = 24 * time.Hour
 
-// runCleanup keeps the chunked-upload staging folder and the registry folder
-// from growing without bound. Every removal is reported. The folders of
-// [[general.cleanup]] are swept by the cleanup package, not here.
+// runCleanup keeps the chunked-upload staging folder, the registry folder and
+// the trash from growing without bound. Every removal is reported. The folders
+// of [[general.cleanup]] are swept by the cleanup package, not here.
 func (s *Server) runCleanup(ctx context.Context) {
 	s.sweepStaging()
 	s.sweepRegistry()
+	s.purgeTrash()
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 	for {
@@ -35,6 +36,7 @@ func (s *Server) runCleanup(ctx context.Context) {
 		case <-ticker.C:
 			s.sweepStaging()
 			s.sweepRegistry()
+			s.purgeTrash()
 		}
 	}
 }

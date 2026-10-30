@@ -216,30 +216,35 @@ staged until it is whole — a chunked upload, an S3 object, a WebDAV file or a
 fetch — and a `go-fs-uploads` folder under the OS's temp directory while it is
 empty; it must not overlap either of the other two or an account's folder,
 and belongs on the same filesystem as `general.baseFolderFiles` so finishing
-an upload is a rename. These are the only folders: no server has a folder of
-its own, and only an account can be pointed elsewhere, see
+an upload is a rename. `general.baseFolderTrash` is where the HTTP server puts
+what it deletes, see [The trash](#the-trash); it is off while it is empty,
+must not overlap any of the others, and belongs on the same filesystem as
+`general.baseFolderFiles` as well. These are the only folders: no server has a
+folder of its own, and only an account can be pointed elsewhere, see
 [Accounts](#accounts).
 
-The starter file keeps all three in one place:
+The starter file keeps all four in one place:
 
 ```toml
 [general]
 baseFolderFiles = "/var/lib/go-fs/files"
 baseFolderRegistry = "/var/lib/go-fs/registry"
 baseFolderTemp = "/var/lib/go-fs/temp"
+baseFolderTrash = "/var/lib/go-fs/trash"
+trashRetentionDays = 30
 ```
 
 Each has to be an absolute path. One that is not there is made when go-fs
 starts, reloads the file or saves it from the admin interface, with every
 folder above it, as `mkdir -p` would: it belongs to the user go-fs runs as,
 with mode `0750` for the files and the registry and `0700` for the temp
-folder, and `0755` for a folder made above them. A folder that is there
+folder and the trash, and `0755` for a folder made above them. A folder that is there
 already is left as it is. go-fs has to be allowed to write to the folder it
 makes them in, and `/var/lib` belongs to root: the rpm makes `/var/lib/go-fs`
 for the go-fs account it runs as, and the msi makes `C:\ProgramData\go-fs`.
 Run by hand as another account, make the folder once and hand it over,
 `sudo install -d -o <user> -g <group> -m 0750 /var/lib/go-fs`, or point the
-three keys at a folder that account owns.
+four keys at a folder that account owns.
 
 A file written for an older version names them `general.basefolder`,
 `http.registryBaseFolder` and `http.uploadStagingFolder`. It is still read,
@@ -274,6 +279,7 @@ What happens depends on what changed:
 | a port, a TLS certificate, an SSH host key | that one server is restarted and its connections drop; the other four are untouched |
 | `general.baseFolderFiles` | every server is restarted |
 | `general.baseFolderTemp` | applied to the next upload, nothing is restarted |
+| `general.baseFolderTrash`, `general.trashRetentionDays` | applied to the next delete and the next hourly sweep, nothing is restarted |
 | a server switched on or off | it is started or stopped, the others untouched |
 
 A file that does not parse or does not validate is reported at error level and
@@ -1614,6 +1620,35 @@ browser.
 `http.sessionTimeout` was what this used to be called, before the session became
 a token that expires rather than a row in memory. A file that still sets it
 loads, and says on startup that it is ignored.
+
+### The trash
+
+What is deleted over HTTP or HTTPS is not removed but moved to
+`general.baseFolderTrash`: **Delete** in the listing, a `DELETE`, a WebDAV
+client deleting a file or a folder or replacing one with `MOVE` or `COPY`, and
+S3's `DeleteObject` and `DeleteObjects`. It keeps the path it had, so
+`/photos/2024/a.jpg` is `<trash>/photos/2024/a.jpg`, with its modification
+time. Deleting the same path again replaces what the trash held for it; a
+folder is merged into the one in the trash, its files replacing those of the
+same name. FTP, SFTP and TFTP still delete for good, and so does everything
+when `general.baseFolderTrash` is empty.
+
+An account that sets `isAdmin` and has logged in through the browser finds
+**Trash** in the menu of the header, just above **Admin**. It shows the trash
+the way the listing shows a folder, with when each entry was deleted.
+**Restore** in the row menu of a file or a folder moves it back to where it was
+deleted from, making the folders above it that are gone. A file that is in its
+place again is kept unless **Overwrite existing files with the version from the
+trash** is ticked; what is kept stays in the trash. **Delete for good** removes
+one entry, and **Empty trash** in the header everything; each of them asks
+first. Nobody else is answered: a browser with no session is sent to the login
+page, any other session is `403`, and the trash does not depend on
+`enableAdminInterface`.
+
+Once an hour, what has been in the trash longer than `general.trashRetentionDays`
+(30 by default) is deleted for good and logged; `0` keeps it until it is
+deleted on the page. When each path was deleted is kept in
+`<trash>/.go-fs-trash.json`.
 
 ### Downloading a folder
 

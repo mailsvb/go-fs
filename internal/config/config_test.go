@@ -402,6 +402,32 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.Users = []User{{Username: "john", FTP: true, Basefolder: own}}
 			c.General.BaseFolderTemp = filepath.Join(own, "temp")
 		}, "overlaps users[0].basefolder"},
+		{"relative trash folder", func(c *Config) {
+			c.General.BaseFolderTrash = "trash"
+		}, "general.baseFolderTrash \"trash\" has to be an absolute path"},
+		{"trash folder inside the served folder", func(c *Config) {
+			c.General.BaseFolderTrash = filepath.Join(folder, "trash")
+		}, "overlaps general.baseFolderFiles"},
+		{"trash folder holds the served folder", func(c *Config) {
+			c.General.BaseFolderTrash = filepath.Dir(folder)
+		}, "overlaps general.baseFolderFiles"},
+		{"trash folder inside the registry", func(c *Config) {
+			registry := t.TempDir()
+			c.General.BaseFolderRegistry = registry
+			c.General.BaseFolderTrash = filepath.Join(registry, "trash")
+		}, "overlaps general.baseFolderRegistry"},
+		{"trash folder is the temp folder", func(c *Config) {
+			temp := t.TempDir()
+			c.General.BaseFolderTemp = temp
+			c.General.BaseFolderTrash = temp
+		}, "overlaps general.baseFolderTemp"},
+		{"trash folder inside an account's folder", func(c *Config) {
+			own := t.TempDir()
+			c.Users = []User{{Username: "john", FTP: true, Basefolder: own}}
+			c.General.BaseFolderTrash = filepath.Join(own, "trash")
+		}, "overlaps users[0].basefolder"},
+		{"negative trash retention", func(c *Config) { c.General.TrashRetentionDays = -1 },
+			"general.trashRetentionDays"},
 		{"tftp block size", func(c *Config) { c.TFTP.MaxBlockSize = 4 }, "tftp.maxBlockSize"},
 		{"tftp maxTimeout below timeout", func(c *Config) { c.TFTP.Timeout = 30; c.TFTP.MaxTimeout = 10 }, "maxTimeout"},
 		{"unknown cipher", func(c *Config) { c.General.SSH.Ciphers = []string{"aes128-gmc"} },
@@ -557,7 +583,15 @@ func TestTemplateRoundTrips(t *testing.T) {
 	if filepath.Clean(cfg.HTTP.UploadStagingFolder) != filepath.Join(root, "temp") {
 		t.Errorf("http stages uploads in %q, want general.baseFolderTemp", cfg.HTTP.UploadStagingFolder)
 	}
-	for _, made := range []string{"files", "registry", "temp"} {
+	// and puts what it deletes in general.baseFolderTrash for the days it says
+	if filepath.Clean(cfg.HTTP.TrashFolder) != filepath.Join(root, "trash") {
+		t.Errorf("http trashes into %q, want general.baseFolderTrash", cfg.HTTP.TrashFolder)
+	}
+	if cfg.HTTP.TrashRetentionDays != defaults.General.TrashRetentionDays {
+		t.Errorf("http keeps the trash for %d days, want the default %d",
+			cfg.HTTP.TrashRetentionDays, defaults.General.TrashRetentionDays)
+	}
+	for _, made := range []string{"files", "registry", "temp", "trash"} {
 		if info, err := os.Stat(filepath.Join(root, made)); err != nil || !info.IsDir() {
 			t.Errorf("loading the template did not make %s: %v", made, err)
 		}

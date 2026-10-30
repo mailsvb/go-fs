@@ -260,6 +260,9 @@ type rights struct {
 	// stores it in a folder of the served tree. It is offered to a session
 	// that may create files; the folder chosen decides the rest.
 	RemoteFetch bool
+	// Trash says Delete moves to the trash rather than deleting for good,
+	// which is what its question says.
+	Trash bool
 }
 
 // sendView is what the Send File dialog offers: the stored servers, by name
@@ -332,6 +335,9 @@ type sessionView struct {
 	// Registry is the link to the registry page, empty while the registry is
 	// off or for an account that is signed in and may not use it.
 	Registry string
+	// Trash is the link to the Trash page, empty while there is no trash and
+	// for everyone but an admin account signed in with a session.
+	Trash string
 	// Page is the name of the page the header is on, which is what its menu
 	// is labelled with, and Files the link back to the listing from a page
 	// that is not it.

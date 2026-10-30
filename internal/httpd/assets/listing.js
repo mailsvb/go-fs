@@ -640,9 +640,11 @@
     var name = row.dataset.name;
     var isFolder = row.dataset.dir === "1";
     checking.querySelector("h2").textContent = isFolder ? "Delete folder" : "Delete file";
+    var trashed = table.dataset.trash === "1";
     checking.querySelector("p").textContent = isFolder
-      ? "Delete " + shown + name + "? Only an empty folder can be removed."
-      : "Delete " + shown + name + "? This cannot be undone.";
+      ? "Delete " + shown + name + "? Only an empty folder can be removed." +
+        (trashed ? " It is moved to the trash." : "")
+      : "Delete " + shown + name + (trashed ? "? It is moved to the trash." : "? This cannot be undone.");
     onAgree = function () {
       send(isFolder ? "folder" : "file", "DELETE", segment(name)).then(done).catch(failed);
     };

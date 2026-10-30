@@ -26,6 +26,7 @@ func (c Config) MakeFolders() error {
 		{"general.baseFolderFiles", c.General.BaseFolderFiles, 0o750},
 		{"general.baseFolderRegistry", c.General.BaseFolderRegistry, 0o750},
 		{"general.baseFolderTemp", c.General.BaseFolderTemp, 0o700},
+		{"general.baseFolderTrash", c.General.BaseFolderTrash, 0o700},
 	} {
 		if err := makeFolder(folder.path, folder.mode); err != nil {
 			return fmt.Errorf("%s: %w", folder.name, err)

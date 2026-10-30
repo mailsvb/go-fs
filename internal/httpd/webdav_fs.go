@@ -156,11 +156,14 @@ func (d *davFS) RemoveAll(_ context.Context, name string) error {
 	if err := d.s.davRemovable(d.set, d.user, target); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(target.Path); err != nil {
+	// a MOVE or a COPY onto a name that is taken comes here for what it
+	// replaces, which goes to the trash as a DELETE does
+	trashed, err := d.s.discard(d.set, target, true)
+	if err != nil {
 		return err
 	}
 	d.s.log.Info("webdav delete", "user", nameOf(d.user), "path", target.Virtual,
-		"folder", info.IsDir(), "method", d.r.Method, "address", clientAddress(d.set, d.r))
+		"folder", info.IsDir(), "trash", trashed, "method", d.r.Method, "address", clientAddress(d.set, d.r))
 	return nil
 }
 

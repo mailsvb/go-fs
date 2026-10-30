@@ -39,7 +39,7 @@
 <div id="banner" class="banner"{{if not .Error}} hidden{{end}}><span class="text">{{.Error}}</span><button type="button" class="close" title="Dismiss" aria-label="Dismiss"><svg class="ic"><use href="#i-close"/></svg></button></div>
 
 <main>
-<table id="listing" data-folder="{{.Folder}}" data-sort="{{.Sort}}" data-dir="{{.Dir}}" data-max-chunk-size="{{.MaxChunkSize}}"{{if .Remote}} data-remote="{{.Remote}}" data-query="{{.Query}}" data-path="{{.Path}}"{{end}}>
+<table id="listing" data-folder="{{.Folder}}" data-sort="{{.Sort}}" data-dir="{{.Dir}}" data-max-chunk-size="{{.MaxChunkSize}}"{{if .Rights.Trash}} data-trash="1"{{end}}{{if .Remote}} data-remote="{{.Remote}}" data-query="{{.Query}}" data-path="{{.Path}}"{{end}}>
   <thead>
     <tr>
       {{range .Columns}}

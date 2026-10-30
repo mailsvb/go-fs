@@ -35,6 +35,20 @@ baseFolderRegistry = "/var/lib/go-fs/registry"
 # finishing an upload is a fast rename rather than a slow or failing
 # cross-device copy. It is made with mode 0700 when it is not there.
 baseFolderTemp = "/var/lib/go-fs/temp"
+# Where a file or a folder deleted over the http or https server goes instead
+# of being removed: by the listing, by a webdav client, or by s3. It keeps the
+# path it had under baseFolderFiles, and an administrator restores it or
+# deletes it for good on the Trash page. Deleting the same path again replaces
+# what the trash held for it. ftp, sftp and tftp still delete for good. Empty
+# turns the trash off, and the http server deletes for good as well. It must
+# neither be nor hold nor lie inside baseFolderFiles, baseFolderRegistry,
+# baseFolderTemp or the basefolder of an account. Keep it on the same
+# filesystem as baseFolderFiles so a delete is a fast rename rather than a
+# copy. It is made with mode 0700 when it is not there.
+baseFolderTrash = "/var/lib/go-fs/trash"
+# Days something stays in the trash before it is deleted for good, checked
+# every hour. 0 keeps it until it is deleted on the Trash page.
+trashRetentionDays = 30
 
 # Watch this file and apply what changes in it without a restart. Accounts,
 # permissions and limits are swapped without disturbing anything in flight; a

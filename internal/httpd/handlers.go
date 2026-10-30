@@ -68,6 +68,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		allowed.Import = s.registrySession(set, r) != nil
 		allowed.Share = cred.user != nil
 		allowed.Send = maySend(cred, target.Virtual)
+		allowed.Trash = trashOn(set)
 		var send sendView
 		if allowed.Send {
 			send = sendViewOf(serversFor(set, cred.user))
@@ -768,7 +769,8 @@ type multipartFile interface {
 	io.Seeker
 }
 
-// handleDelete removes a file, or a folder when it is empty.
+// handleDelete removes a file, or a folder when it is empty: into the trash
+// while there is one.
 func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
 	if target.IsRoot() {
 		// removing the served folder would take every path with it
@@ -783,9 +785,10 @@ func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	trashed := false
 	switch {
 	case info.Mode().IsRegular():
-		if err := os.Remove(target.Path); err != nil {
+		if trashed, err = s.discard(set, target, false); err != nil {
 			s.log.Error("http delete failed", "file", target.Virtual, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
@@ -799,7 +802,7 @@ func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Requ
 			http.NotFound(w, r)
 			return
 		}
-		if err := os.Remove(target.Path); err != nil {
+		if trashed, err = s.discard(set, target, false); err != nil {
 			s.log.Error("http delete failed", "folder", target.Virtual, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
@@ -812,7 +815,7 @@ func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Requ
 	}
 
 	s.log.Info("http delete", "user", nameOf(user), "path", target.Virtual,
-		"folder", info.IsDir(), "bytes", info.Size(), "address", clientAddress(set, r))
+		"folder", info.IsDir(), "bytes", info.Size(), "trash", trashed, "address", clientAddress(set, r))
 	w.WriteHeader(http.StatusOK)
 }
 
