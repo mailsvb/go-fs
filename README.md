@@ -185,7 +185,7 @@ working file can be this short:
 
 ```toml
 [general]
-baseFolderFiles = "/srv/files"
+baseFolderFiles = "/var/lib/go-fs/files"
 
 [[users]]
 username = "john"
@@ -209,17 +209,44 @@ listens on `127.0.0.1` alone, and the ports are 8021 for FTP, 8990 for FTPS,
 listens on every interface.
 
 `general.baseFolderFiles` is the folder every server serves: FTP, SFTP, HTTP,
-S3, WebDAV and TFTP all see the same tree. It has to be an absolute path and it
-has to exist. `general.baseFolderRegistry` is the folder of the
-[container registry](#container-registry), which is off while it is empty.
-These are the only two folders: no server has a folder of its own, and only an
-account can be pointed elsewhere, see [Accounts](#accounts).
+S3, WebDAV and TFTP all see the same tree. `general.baseFolderRegistry` is the
+folder of the [container registry](#container-registry), which is off while it
+is empty. `general.baseFolderTemp` is where an upload to the HTTP server is
+staged until it is whole — a chunked upload, an S3 object, a WebDAV file or a
+fetch — and a `go-fs-uploads` folder under the OS's temp directory while it is
+empty; it must not overlap either of the other two or an account's folder,
+and belongs on the same filesystem as `general.baseFolderFiles` so finishing
+an upload is a rename. These are the only folders: no server has a folder of
+its own, and only an account can be pointed elsewhere, see
+[Accounts](#accounts).
 
-A file written for an older version names them `general.basefolder` and
-`http.registryBaseFolder`. It is still read, and go-fs renames both keys in
-it at the next start, keeping the comments and the file as it was beside it as
-`go-fs.toml.bak`. A `basefolder` in `[ftp]`, `[sftp]`, `[http]` or `[tftp]` is
-no longer read: it is reported at startup and removed by the same rename.
+The starter file keeps all three in one place:
+
+```toml
+[general]
+baseFolderFiles = "/var/lib/go-fs/files"
+baseFolderRegistry = "/var/lib/go-fs/registry"
+baseFolderTemp = "/var/lib/go-fs/temp"
+```
+
+Each has to be an absolute path. One that is not there is made when go-fs
+starts, reloads the file or saves it from the admin interface, with every
+folder above it, as `mkdir -p` would: it belongs to the user go-fs runs as,
+with mode `0750` for the files and the registry and `0700` for the temp
+folder, and `0755` for a folder made above them. A folder that is there
+already is left as it is. go-fs has to be allowed to write to the folder it
+makes them in, and `/var/lib` belongs to root: the rpm makes `/var/lib/go-fs`
+for the go-fs account it runs as, and the msi makes `C:\ProgramData\go-fs`.
+Run by hand as another account, make the folder once and hand it over,
+`sudo install -d -o <user> -g <group> -m 0750 /var/lib/go-fs`, or point the
+three keys at a folder that account owns.
+
+A file written for an older version names them `general.basefolder`,
+`http.registryBaseFolder` and `http.uploadStagingFolder`. It is still read,
+and go-fs renames the keys in it at the next start, keeping the comments and
+the file as it was beside it as `go-fs.toml.bak`. A `basefolder` in `[ftp]`,
+`[sftp]`, `[http]` or `[tftp]` is no longer read: it is reported at startup and
+removed by the same rename.
 
 `[[general.cleanup]]` keeps a folder from growing without bound: once an hour
 everything but the newest `keep` files in it is removed. Paths are relative to
@@ -246,6 +273,7 @@ What happens depends on what changed:
 | accounts, permissions, paths, limits, timeouts, the cleanup list | applied to the running server, **nothing is dropped** — a download in flight finishes |
 | a port, a TLS certificate, an SSH host key | that one server is restarted and its connections drop; the other four are untouched |
 | `general.baseFolderFiles` | every server is restarted |
+| `general.baseFolderTemp` | applied to the next upload, nothing is restarted |
 | a server switched on or off | it is started or stopped, the others untouched |
 
 A file that does not parse or does not validate is reported at error level and
@@ -823,7 +851,7 @@ a script is answered `423 Locked`.
   one request is refused, as RFC 4918 allows.
 - `maxUploadSize` and `readTimeout` hold for WebDAV uploads as they do for the
   page's.
-- An upload is written to `uploadStagingFolder` and moved to its name once it
+- An upload is written to `general.baseFolderTemp` and moved to its name once it
   has arrived whole, so a copy that breaks off leaves nothing behind.
 
 **Windows** sends a password to a WebDAV server only over TLS, and only when
@@ -972,7 +1000,7 @@ What is served:
   `Abort…`. The body may be signed, unsigned or `aws-chunked` with or without
   chunk signatures. `Content-MD5` and the `x-amz-checksum-*` of CRC32, CRC32C,
   CRC64NVME, SHA-1 and SHA-256 are verified, whether they come as a header or
-  as a trailer. An upload is staged in `http.uploadStagingFolder` and only
+  as a trailer. An upload is staged in `general.baseFolderTemp` and only
   moved into place once every hash matches; `maxUploadSize` applies.
   Unfinished multipart uploads are swept after 24 hours.
 - **Renaming.** S3 has no rename. Clients rename with `CopyObject` (or
@@ -1016,7 +1044,7 @@ registry keeps its images in; each account that should push sets
 
 ```toml
 [general]
-baseFolderRegistry = "/srv/registry"
+baseFolderRegistry = "/var/lib/go-fs/registry"
 
 [http]
 enabled = true
@@ -1043,7 +1071,7 @@ docker pull host:8443/team/app:1.0
 | Pushing, tagging, deleting | an account that sets `registry` |
 | Credentials | a token from `/v2/_token`, fetched with the account's username and password as `docker login` does, or HTTP Basic on every request |
 
-The folder has to exist, and it must be none of the folders the servers serve,
+The folder is made when it is not there, and it must be none of the folders the servers serve,
 nor hold one or lie inside one: go-fs refuses to start with it otherwise, and
 `-check` says why. Everything in it is managed by the registry, which addresses
 content by its digest alone, so a layer that several images, architectures or
@@ -1689,7 +1717,7 @@ where there is one, and by the last segment of the URL the redirects ended at
 otherwise; only the last segment of either is used, so the file always lands
 in the folder shown. A name that is taken is replaced only for an account that
 sets `allowUserFileOverwrite`, as for an upload. `maxUploadSize` applies, and
-the bytes are staged in `http.uploadStagingFolder` until the download is
+the bytes are staged in `general.baseFolderTemp` until the download is
 complete. At most eight fetches run at once, all accounts together, apart
 from the registry's pulls and pushes, of which at most four do. Sends over
 SFTP (see below) count towards the same eight.
@@ -1986,7 +2014,7 @@ folder only. On the server, the stored login decides what can be reached.
 An upload is written under a hidden name, `.<name>.go-fs-<id>.part`, and
 renamed into place once all of it is there, as a send is; to an Artifactory
 it goes straight to its name, which Artifactory keeps once all of it is
-there. A chunked upload (`maxChunkSize`) is staged in `uploadStagingFolder`
+there. A chunked upload (`maxChunkSize`) is staged in `general.baseFolderTemp`
 and goes to the server with its last chunk.
 
 All requests go to the root, with the server and the path in the query:

@@ -383,6 +383,25 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 			c.Users = []User{{Username: "john", FTP: true, Basefolder: own}}
 			c.General.BaseFolderRegistry = mkdir(t, own, "registry")
 		}, "overlaps users[0].basefolder"},
+		{"relative temp folder", func(c *Config) {
+			c.General.BaseFolderTemp = "temp"
+		}, "general.baseFolderTemp \"temp\" has to be an absolute path"},
+		{"temp folder inside the served folder", func(c *Config) {
+			c.General.BaseFolderTemp = filepath.Join(folder, "temp")
+		}, "general.baseFolderTemp"},
+		{"temp folder is the served folder", func(c *Config) {
+			c.General.BaseFolderTemp = folder
+		}, "overlaps general.baseFolderFiles"},
+		{"temp folder inside the registry", func(c *Config) {
+			registry := t.TempDir()
+			c.General.BaseFolderRegistry = registry
+			c.General.BaseFolderTemp = filepath.Join(registry, "temp")
+		}, "overlaps general.baseFolderRegistry"},
+		{"temp folder inside an account's folder", func(c *Config) {
+			own := t.TempDir()
+			c.Users = []User{{Username: "john", FTP: true, Basefolder: own}}
+			c.General.BaseFolderTemp = filepath.Join(own, "temp")
+		}, "overlaps users[0].basefolder"},
 		{"tftp block size", func(c *Config) { c.TFTP.MaxBlockSize = 4 }, "tftp.maxBlockSize"},
 		{"tftp maxTimeout below timeout", func(c *Config) { c.TFTP.Timeout = 30; c.TFTP.MaxTimeout = 10 }, "maxTimeout"},
 		{"unknown cipher", func(c *Config) { c.General.SSH.Ciphers = []string{"aes128-gmc"} },
@@ -497,9 +516,11 @@ func names(users []User) []string {
 }
 
 func TestTemplateRoundTrips(t *testing.T) {
-	folder := t.TempDir()
-	// the shipped template points at /srv, redirect it at a folder that exists
-	body := strings.ReplaceAll(string(Template()), "/srv/files", strings.ReplaceAll(folder, `\`, `\\`))
+	root := t.TempDir()
+	// the shipped template points at /var/lib/go-fs, redirect it at a folder whose
+	// files, registry and temp are not there yet, which loading makes
+	body := strings.ReplaceAll(string(Template()), "/var/lib/go-fs", filepath.ToSlash(root))
+	folder := filepath.Join(root, "files")
 
 	path := filepath.Join(t.TempDir(), "go-fs.toml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -518,7 +539,7 @@ func TestTemplateRoundTrips(t *testing.T) {
 	}
 
 	// every server serves general.baseFolderFiles
-	if cfg.General.BaseFolderFiles != folder {
+	if filepath.Clean(cfg.General.BaseFolderFiles) != folder {
 		t.Errorf("general.baseFolderFiles = %q, want %q", cfg.General.BaseFolderFiles, folder)
 	}
 	for name, got := range map[string]string{
@@ -527,8 +548,18 @@ func TestTemplateRoundTrips(t *testing.T) {
 		"http": cfg.HTTP.Basefolder,
 		"tftp": cfg.TFTP.Basefolder,
 	} {
-		if got != folder {
+		if filepath.Clean(got) != folder {
 			t.Errorf("%s serves %q, want general.baseFolderFiles %q", name, got, folder)
+		}
+	}
+
+	// the http server stages its uploads in general.baseFolderTemp
+	if filepath.Clean(cfg.HTTP.UploadStagingFolder) != filepath.Join(root, "temp") {
+		t.Errorf("http stages uploads in %q, want general.baseFolderTemp", cfg.HTTP.UploadStagingFolder)
+	}
+	for _, made := range []string{"files", "registry", "temp"} {
+		if info, err := os.Stat(filepath.Join(root, made)); err != nil || !info.IsDir() {
+			t.Errorf("loading the template did not make %s: %v", made, err)
 		}
 	}
 
@@ -676,22 +707,27 @@ func TestBaseFolderFilesHasToBeAbsolute(t *testing.T) {
 // reads general.basefolder and http.registryBaseFolder as the keys that
 // replaced them, and only Resolved hands the folders to the sections.
 func TestParseReadsTheOldFolderKeys(t *testing.T) {
-	files, registry := t.TempDir(), t.TempDir()
+	files, registry, temp := t.TempDir(), t.TempDir(), t.TempDir()
 	cfg, err := Parse([]byte("[general]\nbasefolder = " + strconv.Quote(files) +
-		"\n\n[http]\nregistryBaseFolder = " + strconv.Quote(registry) + "\n"))
+		"\n\n[http]\nregistryBaseFolder = " + strconv.Quote(registry) +
+		"\nuploadStagingFolder = " + strconv.Quote(temp) + "\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.General.BaseFolderFiles != files || cfg.General.BaseFolderRegistry != registry {
-		t.Errorf("read baseFolderFiles %q and baseFolderRegistry %q, want %q and %q",
-			cfg.General.BaseFolderFiles, cfg.General.BaseFolderRegistry, files, registry)
+	if cfg.General.BaseFolderFiles != files || cfg.General.BaseFolderRegistry != registry ||
+		cfg.General.BaseFolderTemp != temp {
+		t.Errorf("read baseFolderFiles %q, baseFolderRegistry %q and baseFolderTemp %q, want %q, %q and %q",
+			cfg.General.BaseFolderFiles, cfg.General.BaseFolderRegistry, cfg.General.BaseFolderTemp,
+			files, registry, temp)
 	}
-	if cfg.FTP.Basefolder != "" || cfg.HTTP.RegistryBaseFolder != "" {
+	if cfg.FTP.Basefolder != "" || cfg.HTTP.RegistryBaseFolder != "" || cfg.HTTP.UploadStagingFolder != "" {
 		t.Error("Parse handed the folders to the sections")
 	}
 	resolved := cfg.Resolved()
-	if resolved.FTP.Basefolder != files || resolved.HTTP.RegistryBaseFolder != registry {
-		t.Errorf("Resolved handed out %q and %q", resolved.FTP.Basefolder, resolved.HTTP.RegistryBaseFolder)
+	if resolved.FTP.Basefolder != files || resolved.HTTP.RegistryBaseFolder != registry ||
+		resolved.HTTP.UploadStagingFolder != temp {
+		t.Errorf("Resolved handed out %q, %q and %q", resolved.FTP.Basefolder,
+			resolved.HTTP.RegistryBaseFolder, resolved.HTTP.UploadStagingFolder)
 	}
 	// the copy is not shared with the original
 	if cfg.FTP.Basefolder != "" {
@@ -702,19 +738,23 @@ func TestParseReadsTheOldFolderKeys(t *testing.T) {
 // Where a file sets a folder under both names, the new one is read.
 func TestTheNewFolderKeyWins(t *testing.T) {
 	cfg, err := Parse([]byte("[general]\nbasefolder = \"/old\"\nbaseFolderFiles = \"/new\"\n" +
-		"baseFolderRegistry = \"/new-registry\"\n\n[http]\nregistryBaseFolder = \"/old-registry\"\n"))
+		"baseFolderRegistry = \"/new-registry\"\nbaseFolderTemp = \"/new-temp\"\n\n" +
+		"[http]\nregistryBaseFolder = \"/old-registry\"\nuploadStagingFolder = \"/old-temp\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.General.BaseFolderFiles != "/new" || cfg.General.BaseFolderRegistry != "/new-registry" {
-		t.Errorf("read %q and %q, want the new keys", cfg.General.BaseFolderFiles, cfg.General.BaseFolderRegistry)
+	if cfg.General.BaseFolderFiles != "/new" || cfg.General.BaseFolderRegistry != "/new-registry" ||
+		cfg.General.BaseFolderTemp != "/new-temp" {
+		t.Errorf("read %q, %q and %q, want the new keys", cfg.General.BaseFolderFiles,
+			cfg.General.BaseFolderRegistry, cfg.General.BaseFolderTemp)
 	}
 }
 
 // A file the admin interface writes names the folders by the new keys alone,
 // whatever the file it read named them by.
 func TestSaveWritesNoOldFolderKey(t *testing.T) {
-	cfg, err := Parse([]byte("[general]\nbasefolder = \"/files\"\n\n[http]\nregistryBaseFolder = \"/registry\"\n"))
+	cfg, err := Parse([]byte("[general]\nbasefolder = \"/files\"\n\n[http]\nregistryBaseFolder = \"/registry\"\n" +
+		"uploadStagingFolder = \"/temp\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -729,8 +769,10 @@ func TestSaveWritesNoOldFolderKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.General.BaseFolderFiles != "/files" || again.General.BaseFolderRegistry != "/registry" {
-		t.Errorf("read back %q and %q", again.General.BaseFolderFiles, again.General.BaseFolderRegistry)
+	if again.General.BaseFolderFiles != "/files" || again.General.BaseFolderRegistry != "/registry" ||
+		again.General.BaseFolderTemp != "/temp" {
+		t.Errorf("read back %q, %q and %q", again.General.BaseFolderFiles,
+			again.General.BaseFolderRegistry, again.General.BaseFolderTemp)
 	}
 }
 

@@ -72,6 +72,17 @@ type General struct {
 	// folder any server serves, since everything in it is managed by the
 	// registry alone.
 	BaseFolderRegistry string `toml:"baseFolderRegistry"`
+	// BaseFolderTemp holds the not-yet-finalized bytes of an upload to the
+	// http server: a chunked upload, an S3 object, a WebDAV file or a fetch.
+	// It must neither be nor hold nor lie inside a folder any server serves
+	// or the registry's: nothing in vfs or the directory listing filters
+	// partial files out, so a staging file inside the served tree would be
+	// visible and downloadable while still being written. Empty defaults to
+	// a "go-fs-uploads" folder under the OS temp directory, created as
+	// needed. It should stay on the same filesystem as BaseFolderFiles, so
+	// finishing an upload is a fast, atomic rename rather than a slow or
+	// outright-failing cross-device move.
+	BaseFolderTemp string `toml:"baseFolderTemp"`
 
 	// ReloadConfig watches the configuration file and applies what changes in
 	// it without a restart. A file that does not parse or does not validate is
@@ -816,15 +827,9 @@ type HTTP struct {
 	// a large file is still accepted, just never in one request. 0 disables
 	// chunked upload — a PUT carrying Content-Range is then refused.
 	MaxChunkSize int64 `toml:"maxChunkSize"`
-	// UploadStagingFolder holds the not-yet-finalized bytes of a chunked
-	// upload. It must not be inside Basefolder: nothing in vfs or the
-	// directory listing filters partial files out, so a staging file inside
-	// the served tree would be visible and downloadable while still being
-	// written. Empty defaults to a "go-fs-uploads" folder under the OS temp
-	// directory, created as needed. It should stay on the same filesystem as
-	// Basefolder, so finishing a chunked upload is a fast, atomic rename
-	// rather than a slow or outright-failing cross-device move.
-	UploadStagingFolder string `toml:"uploadStagingFolder"`
+	// UploadStagingFolder is general.baseFolderTemp, which Resolved hands the
+	// server.
+	UploadStagingFolder string `toml:"-"`
 	// SessionTokenLifetime is how long a browser that logged in with the
 	// login form stays logged in without being used, in seconds. Every
 	// request it makes in the second half of that window renews its token,
@@ -1031,19 +1036,23 @@ func Parse(data []byte) (Config, error) {
 	if cfg.General.BaseFolderRegistry == "" {
 		cfg.General.BaseFolderRegistry = old.HTTP.RegistryBaseFolder
 	}
+	if cfg.General.BaseFolderTemp == "" {
+		cfg.General.BaseFolderTemp = old.HTTP.UploadStagingFolder
+	}
 	return cfg, nil
 }
 
-// legacy are the keys a file written before baseFolderFiles and
-// baseFolderRegistry named the two folders by. Parse reads them where the new
-// key is not set, so that such a file loads as it did until Migrate has
-// renamed them.
+// legacy are the keys a file written before baseFolderFiles,
+// baseFolderRegistry and baseFolderTemp named the folders by. Parse reads them
+// where the new key is not set, so that such a file loads as it did until
+// Migrate has renamed them.
 type legacy struct {
 	General struct {
 		Basefolder string `toml:"basefolder"`
 	} `toml:"general"`
 	HTTP struct {
-		RegistryBaseFolder string `toml:"registryBaseFolder"`
+		RegistryBaseFolder  string `toml:"registryBaseFolder"`
+		UploadStagingFolder string `toml:"uploadStagingFolder"`
 	} `toml:"http"`
 }
 
@@ -1134,7 +1143,8 @@ func setsKey(section any, name string) bool {
 	return false
 }
 
-// Load reads path onto the defaults and validates the result.
+// Load reads path onto the defaults, makes the folders it names that are not
+// there yet and validates the result.
 func Load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1145,6 +1155,9 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("%s: %w", path, err)
 	}
 	cfg = cfg.Resolved()
+	if err := cfg.MakeFolders(); err != nil {
+		return cfg, fmt.Errorf("%s: %w", path, err)
+	}
 	if err := cfg.Validate(); err != nil {
 		return cfg, fmt.Errorf("%s: %w", path, err)
 	}
@@ -1152,9 +1165,9 @@ func Load(path string) (Config, error) {
 }
 
 // Resolved is a copy that hands general.baseFolderFiles to every server and
-// general.baseFolderRegistry to the http server, which is where they read
-// them from. Neither is a key of their sections, so nothing that is written
-// back to the file carries what this fills in.
+// general.baseFolderRegistry and general.baseFolderTemp to the http server,
+// which is where they read them from. None is a key of their sections, so
+// nothing that is written back to the file carries what this fills in.
 //
 // The copy is shallow, which is safe because only string fields are written.
 func (c Config) Resolved() Config {
@@ -1163,6 +1176,7 @@ func (c Config) Resolved() Config {
 	c.HTTP.Basefolder = c.General.BaseFolderFiles
 	c.TFTP.Basefolder = c.General.BaseFolderFiles
 	c.HTTP.RegistryBaseFolder = c.General.BaseFolderRegistry
+	c.HTTP.UploadStagingFolder = c.General.BaseFolderTemp
 	return c
 }
 
@@ -1252,6 +1266,9 @@ func (c Config) Validate() error {
 	if c.General.BaseFolderFiles != "" && !filepath.IsAbs(c.General.BaseFolderFiles) {
 		return fmt.Errorf("general.baseFolderFiles %q has to be an absolute path",
 			c.General.BaseFolderFiles)
+	}
+	if err := c.validateTemp(); err != nil {
+		return err
 	}
 	for i, entry := range c.General.Cleanup {
 		if entry.Path == "" {
@@ -1579,9 +1596,6 @@ func (c Config) validateHTTP() error {
 	if h.MaxUploadSize > 0 && h.MaxChunkSize > 0 && h.MaxChunkSize > h.MaxUploadSize {
 		return errors.New("http.maxChunkSize cannot be larger than http.maxUploadSize")
 	}
-	if h.UploadStagingFolder != "" && !filepath.IsAbs(h.UploadStagingFolder) {
-		return errors.New("http.uploadStagingFolder has to be an absolute path")
-	}
 	for i, pattern := range h.PathsRequireAuth {
 		if _, err := regexp.Compile(pattern); err != nil {
 			return fmt.Errorf("http.pathsRequireAuth[%d]: %w", i, err)
@@ -1627,13 +1641,57 @@ func (c Config) validateRegistry() error {
 	return nil
 }
 
-// comparablePath is a folder as it is on disk, with its links resolved where
-// it exists, so that two spellings of one folder compare equal.
-func comparablePath(folder string) string {
-	if resolved, err := filepath.EvalSymlinks(folder); err == nil {
-		folder = resolved
+// validateTemp checks general.baseFolderTemp. Nothing filters a partial upload
+// out of a listing, so a temp folder that overlapped a served folder would show
+// one while it is written, and one that overlapped the registry's would be
+// taken for its content. It need not exist: the http server makes it when it
+// first stages an upload.
+func (c Config) validateTemp() error {
+	folder := c.General.BaseFolderTemp
+	if folder == "" {
+		return nil
 	}
-	return filepath.Clean(folder)
+	if !filepath.IsAbs(folder) {
+		return fmt.Errorf("general.baseFolderTemp %q has to be an absolute path", folder)
+	}
+	others := []struct{ name, folder string }{
+		{"general.baseFolderFiles", c.General.BaseFolderFiles},
+		{"general.baseFolderRegistry", c.General.BaseFolderRegistry},
+	}
+	for i, user := range c.Users {
+		others = append(others, struct{ name, folder string }{
+			fmt.Sprintf("users[%d].basefolder", i), user.Basefolder})
+	}
+	temp := comparablePath(folder)
+	for _, other := range others {
+		if other.folder == "" {
+			continue
+		}
+		if overlaps(temp, comparablePath(other.folder)) {
+			return fmt.Errorf("general.baseFolderTemp %q overlaps %s %q; "+
+				"it has to be a folder of its own", folder, other.name, other.folder)
+		}
+	}
+	return nil
+}
+
+// comparablePath is a folder as it is on disk, with the links resolved in as
+// much of it as exists, so that two spellings of one folder compare equal even
+// before it has been made.
+func comparablePath(folder string) string {
+	folder = filepath.Clean(folder)
+	var missing []string
+	for at := folder; ; {
+		if resolved, err := filepath.EvalSymlinks(at); err == nil {
+			return filepath.Join(append([]string{resolved}, missing...)...)
+		}
+		parent := filepath.Dir(at)
+		if parent == at {
+			return folder
+		}
+		missing = append([]string{filepath.Base(at)}, missing...)
+		at = parent
+	}
 }
 
 // overlaps reports whether one folder is, holds or lies inside the other.

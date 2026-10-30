@@ -11,7 +11,8 @@
 
   Bin is the binary built with -X main.packaging=msi, and Config the template
   serving C:\ProgramData\go-fs\files, with its container registry in
-  C:\ProgramData\go-fs\registry; make msi-inputs builds both.
+  C:\ProgramData\go-fs\registry and its uploads staged in
+  C:\ProgramData\go-fs\temp; make msi-inputs builds both.
 
   The same file builds the msi of go-fs-light, given -d Product=go-fs-light
   and the light binary as Bin:
@@ -140,6 +141,7 @@
       <Directory Id="DATAFOLDER" Name="go-fs">
         <Directory Id="FILESFOLDER" Name="files" />
         <Directory Id="REGISTRYFOLDER" Name="registry" />
+        <Directory Id="TEMPFOLDER" Name="temp" />
         <Directory Id="LOGFOLDER" Name="logs" />
       </Directory>
     </StandardDirectory>
@@ -149,6 +151,7 @@
       <ComponentRef Id="DataFolder" />
       <ComponentRef Id="FilesFolder" />
       <ComponentRef Id="RegistryFolder" />
+      <ComponentRef Id="TempFolder" />
       <ComponentRef Id="LogFolder" />
       <ComponentRef Id="Configuration" />
       <ComponentRef Id="Firewall" />
@@ -203,6 +206,10 @@
     </Component>
     <!-- the folder of the container registry, which the configuration names -->
     <Component Id="RegistryFolder" Directory="REGISTRYFOLDER" Guid="0858F146-76D9-454B-B13F-F6E6C70BBAD5" Permanent="yes">
+      <CreateFolder />
+    </Component>
+    <!-- the folder uploads are staged in, which the configuration names -->
+    <Component Id="TempFolder" Directory="TEMPFOLDER" Guid="930AD851-0E42-4C0F-8172-515A552189D1" Permanent="yes">
       <CreateFolder />
     </Component>
     <Component Id="LogFolder" Directory="LOGFOLDER" Guid="81CCB142-4D8E-44FC-BADC-24D4BEAF8B85" Permanent="yes">

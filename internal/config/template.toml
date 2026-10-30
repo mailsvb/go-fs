@@ -1,9 +1,10 @@
 # go-fs configuration
 #
-# Every key is optional, an absent key keeps the default shown here. Paths have
-# to exist before the server starts. As it stands, this file serves only http,
-# on 127.0.0.1:8080, so nothing is reachable from another host until an
-# address below says so.
+# Every key is optional, an absent key keeps the default shown here. A folder
+# of [general] that is not there yet is made at the start, with every folder
+# above it, and belongs to the user go-fs runs as. As it stands, this file
+# serves only http, on 127.0.0.1:8080, so nothing is reachable from another
+# host until an address below says so.
 #
 # The admin interface shows the comment directly above a key as that key's
 # help; a comment above a run of keys covers every one of them. A paragraph
@@ -12,17 +13,28 @@
 # What every server shares.
 [general]
 # The folder every server serves: ftp, sftp, http, s3, webdav and tftp alike.
-# It has to be an absolute path and it has to exist.
-baseFolderFiles = "/srv/files"
+# It has to be an absolute path, and is made with mode 0750 when it is not
+# there.
+baseFolderFiles = "/var/lib/go-fs/files"
 # Serve an OCI container registry under /v2/ on both listeners of the http
 # server, which docker, podman and buildx push to and pull from, and keep its
 # blobs, manifests and tags in this folder. Empty turns the registry off, and
-# /v2 is then an ordinary path of the served folder. The folder has to exist,
-# and it must neither be nor hold nor lie inside baseFolderFiles or the
-# basefolder of an account: nothing but the registry may write to it. Pushing
-# and deleting take a [[users]] entry that sets registry = true. The rpm and
-# msi installers set it to the folder registry beside the served folder files.
-baseFolderRegistry = ""
+# /v2 is then an ordinary path of the served folder. The folder is made with
+# mode 0750 when it is not there, and it must neither be nor hold nor lie
+# inside baseFolderFiles or the basefolder of an account: nothing but the
+# registry may write to it. Pushing and deleting take a [[users]] entry that
+# sets registry = true.
+baseFolderRegistry = "/var/lib/go-fs/registry"
+# Where the not-yet-finalized bytes of an upload to the http server are kept
+# while it is in progress: a chunked upload, an s3 object, a webdav file or a
+# fetch. It must neither be nor hold nor lie inside baseFolderFiles,
+# baseFolderRegistry or the basefolder of an account: nothing filters a partial
+# upload out of a directory listing, so it would be visible and downloadable
+# while still being written. Empty uses a "go-fs-uploads" folder under the
+# OS's temp directory. Keep it on the same filesystem as baseFolderFiles so
+# finishing an upload is a fast rename rather than a slow or failing
+# cross-device copy. It is made with mode 0700 when it is not there.
+baseFolderTemp = "/var/lib/go-fs/temp"
 
 # Watch this file and apply what changes in it without a restart. Accounts,
 # permissions and limits are swapped without disturbing anything in flight; a
@@ -124,8 +136,7 @@ banner = []
 # printed here for everyone to read, and go-fs warns about it at every start:
 # change it, before any server listens on more than 127.0.0.1. It is not a
 # default, an account only exists while it is listed in this file. It may also
-# push to the container registry, which the rpm and msi installers turn on
-# (see general.baseFolderRegistry).
+# push to the container registry (see general.baseFolderRegistry).
 [[users]]
 username = "admin"
 password = "admin"
@@ -163,7 +174,7 @@ isAdmin = true
 # registry = true
 # own folder for this account on ftp and sftp, general.baseFolderFiles when
 # empty
-# basefolder = "/srv/files/john"
+# basefolder = "/var/lib/go-fs/files/john"
 # What this account may reach over http: regular expressions matched against
 # the request path after it has been normalized, so ".." cannot be used to
 # slip past one. An http account with no pattern can reach nothing. Over s3 the
@@ -561,14 +572,6 @@ maxUploadSize = 0
 # second rule and body-size limits were the motivating case. 0 turns off
 # chunked upload entirely: a PUT carrying a Content-Range header is refused.
 maxChunkSize = 52428800
-# Where the not-yet-finalized bytes of a chunked upload are kept while it is in
-# progress. Must not be inside general.baseFolderFiles: nothing here filters a
-# partial upload out of a directory listing, so it would be visible and
-# downloadable while still being written. Empty uses a "go-fs-uploads" folder
-# under the OS's temp directory. Keep it on the same filesystem as
-# general.baseFolderFiles so finishing an upload is a fast rename rather than
-# a slow or failing cross-device copy.
-uploadStagingFolder = ""
 # How long a browser that logged in with the login form stays logged in
 # without being used, in seconds. A browser in use has its login renewed, so
 # this is an idle timeout. The token cannot be withdrawn once it is signed, so

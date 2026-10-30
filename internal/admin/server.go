@@ -336,9 +336,15 @@ func (h *Handler) handleApply(w http.ResponseWriter, r *http.Request) {
 		cfg.Servers = append(cfg.Servers, current.AbsentServers()...)
 		cfg.Repositories = append(cfg.Repositories, current.AbsentRepositories()...)
 	}
-	// validated the way the file is validated when it is loaded, so that the
-	// page reports what -check would report and a file that cannot work is
-	// never written
+	// validated the way the file is validated when it is loaded, folders
+	// made included, so that the page reports what -check would report and a
+	// file that cannot work is never written
+	if err := cfg.MakeFolders(); err != nil {
+		h.log.Info("the admin interface rejected a configuration", "reason", "a folder cannot be made",
+			"error", err, "address", addressOf(r))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if err := cfg.Resolved().Validate(); err != nil {
 		// the page shows the same message; the record is for the operator
 		// who is told later that "the settings would not save"

@@ -161,6 +161,115 @@ baseFolderRegistry = "/old-registry"
 			},
 		},
 		{
+			name: "the staging folder goes below the registry",
+			file: `[general]
+basefolder = "/srv/files"
+reloadConfig = true
+
+[http]
+registryBaseFolder = "/srv/registry"
+uploadStagingFolder = "/srv/temp"
+maxChunkSize = 0
+`,
+			want: `[general]
+baseFolderFiles = "/srv/files"
+baseFolderRegistry = "/srv/registry"
+baseFolderTemp = "/srv/temp"
+reloadConfig = true
+
+[http]
+maxChunkSize = 0
+`,
+			changes: []string{
+				"general.basefolder renamed to general.baseFolderFiles",
+				"http.registryBaseFolder moved to general.baseFolderRegistry",
+				"http.uploadStagingFolder moved to general.baseFolderTemp",
+			},
+		},
+		{
+			name: "the staging folder goes below a registry already in general",
+			file: `[general]
+baseFolderFiles = "/srv/files"
+baseFolderRegistry = "/srv/registry"
+reloadConfig = true
+
+[http]
+uploadStagingFolder = "/srv/temp"
+`,
+			want: `[general]
+baseFolderFiles = "/srv/files"
+baseFolderRegistry = "/srv/registry"
+baseFolderTemp = "/srv/temp"
+reloadConfig = true
+
+[http]
+`,
+			changes: []string{"http.uploadStagingFolder moved to general.baseFolderTemp"},
+		},
+		{
+			name: "the staging folder goes to the top of a general without folders",
+			file: `[general]
+logLevel = "info"
+
+[http]
+uploadStagingFolder = "/srv/temp"
+`,
+			want: `[general]
+baseFolderTemp = "/srv/temp"
+logLevel = "info"
+
+[http]
+`,
+			changes: []string{"http.uploadStagingFolder moved to general.baseFolderTemp"},
+		},
+		{
+			name: "the registry and the staging folder go into a general of their own",
+			file: `[http]
+registryBaseFolder = "/srv/registry"
+uploadStagingFolder = "/srv/temp"
+`,
+			want: `[http]
+
+[general]
+baseFolderRegistry = "/srv/registry"
+baseFolderTemp = "/srv/temp"
+`,
+			changes: []string{
+				"http.registryBaseFolder moved to general.baseFolderRegistry",
+				"http.uploadStagingFolder moved to general.baseFolderTemp",
+			},
+		},
+		{
+			name: "an empty temp folder gives way",
+			file: `[general]
+baseFolderTemp = ""
+
+[http]
+uploadStagingFolder = "/old-temp"
+`,
+			want: `[general]
+baseFolderTemp = "/old-temp"
+
+[http]
+`,
+			changes: []string{"http.uploadStagingFolder moved into the empty general.baseFolderTemp"},
+		},
+		{
+			name: "a set temp folder wins",
+			file: `[general]
+baseFolderTemp = "/new-temp"
+
+[http]
+uploadStagingFolder = "/old-temp"
+`,
+			want: `[general]
+baseFolderTemp = "/new-temp"
+
+[http]
+`,
+			changes: []string{"http.uploadStagingFolder removed, general.baseFolderTemp is set"},
+		},
+		{
 			name: "line endings are kept",
 			file: "[general]\r\nbasefolder = \"/srv/files\"\r\n\r\n[http]\r\nregistryBaseFolder = \"\"\r\n",
 			want: "[general]\r\nbaseFolderFiles = \"/srv/files\"\r\nbaseFolderRegistry = \"\"\r\n\r\n[http]\r\n",
@@ -228,9 +337,11 @@ func TestMigrateKeepsTheConfiguration(t *testing.T) {
 	if strings.Contains(string(template), "\r\n") {
 		newline = "\r\n"
 	}
-	old := strings.Replace(string(template), `baseFolderFiles = "/srv/files"`, `basefolder = "/srv/files"`, 1)
-	old = strings.Replace(old, `baseFolderRegistry = ""`+newline, "", 1)
+	old := strings.Replace(string(template), `baseFolderFiles = "/var/lib/go-fs/files"`, `basefolder = "/srv/files"`, 1)
+	old = strings.Replace(old, `baseFolderRegistry = "/var/lib/go-fs/registry"`+newline, "", 1)
+	old = strings.Replace(old, `baseFolderTemp = "/var/lib/go-fs/temp"`+newline, "", 1)
 	old = strings.Replace(old, "registryAnonymousRead = true", `registryBaseFolder = "/srv/registry"`+newline+"registryAnonymousRead = true", 1)
+	old = strings.Replace(old, "maxChunkSize = 52428800", "maxChunkSize = 52428800"+newline+`uploadStagingFolder = "/srv/temp"`, 1)
 	old = strings.Replace(old, "enableAdminInterface = true", `basefolder = "/srv/http"`+newline+"enableAdminInterface = true", 1)
 	if old == string(template) || !setsOldKeys([]byte(old)) {
 		t.Fatal("the template no longer has the lines this test turns back into the old keys")
@@ -259,6 +370,9 @@ func TestMigrateKeepsTheConfiguration(t *testing.T) {
 	}
 	if after.General.BaseFolderRegistry != "/srv/registry" {
 		t.Errorf("baseFolderRegistry = %q", after.General.BaseFolderRegistry)
+	}
+	if after.General.BaseFolderTemp != "/srv/temp" {
+		t.Errorf("baseFolderTemp = %q", after.General.BaseFolderTemp)
 	}
 	if strings.Count(string(data), "\n#") != strings.Count(old, "\n#") {
 		t.Error("comments were lost")

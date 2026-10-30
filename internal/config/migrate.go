@@ -17,6 +17,7 @@ import (
 var movedKeys = []struct{ section, key string }{
 	{"general", "basefolder"},
 	{"http", "registryBaseFolder"},
+	{"http", "uploadStagingFolder"},
 }
 
 // droppedSections are the sections that named a folder of their own, which
@@ -26,8 +27,9 @@ var droppedSections = []string{"ftp", "sftp", "http", "tftp"}
 
 // Migrate brings the file at path to the keys this version names the folders
 // by: general.basefolder becomes general.baseFolderFiles,
-// http.registryBaseFolder becomes general.baseFolderRegistry, and the
-// basefolder of ftp, sftp, http and tftp is removed. It returns what it
+// http.registryBaseFolder becomes general.baseFolderRegistry,
+// http.uploadStagingFolder becomes general.baseFolderTemp, and the basefolder
+// of ftp, sftp, http and tftp is removed. It returns what it
 // changed, nothing for a file that has nothing to change.
 //
 // The file is edited as text, as EnsureSecrets does, so that its comments
@@ -109,7 +111,7 @@ func setsKeyFold(section any, name string) bool {
 
 // a key of the folders, with what is in front of it, and what follows its =
 var folderKeyLine = regexp.MustCompile(
-	`(?i)^(\s*)(basefolder|registryBaseFolder|baseFolderFiles|baseFolderRegistry)\s*=\s*(.*)$`)
+	`(?i)^(\s*)(basefolder|registryBaseFolder|uploadStagingFolder|baseFolderFiles|baseFolderRegistry|baseFolderTemp)\s*=\s*(.*)$`)
 
 // migrated is the file with the folder keys renamed, moved and removed, and
 // what was done, one entry each.
@@ -122,7 +124,7 @@ func migrated(data string) (string, []string) {
 
 	// where the header of [general] and the keys are, by the index of their
 	// line, -1 for one that is not there
-	general, files, oldFiles, registry, oldRegistry := -1, -1, -1, -1, -1
+	general, files, oldFiles, registry, oldRegistry, temp, oldTemp := -1, -1, -1, -1, -1, -1, -1
 	drop := map[int]bool{}
 	var changes []string
 
@@ -149,6 +151,10 @@ func migrated(data string) (string, []string) {
 			oldFiles = i
 		case section == "http" && strings.EqualFold(key, "registryBaseFolder"):
 			oldRegistry = i
+		case section == "general" && strings.EqualFold(key, "baseFolderTemp"):
+			temp = i
+		case section == "http" && strings.EqualFold(key, "uploadStagingFolder"):
+			oldTemp = i
 		case strings.EqualFold(key, "basefolder") && slices.Contains(droppedSections, section):
 			drop[i] = true
 			changes = append(changes, fmt.Sprintf("%s.%s = %s removed, every server serves general.baseFolderFiles",
@@ -176,31 +182,46 @@ func migrated(data string) (string, []string) {
 		}
 	}
 
-	// a registry key that is not there yet goes below the files' key, or at
-	// the top of [general], or into a [general] of its own at the end of the
-	// file
-	var appended string
-	if oldRegistry >= 0 {
-		drop[oldRegistry] = true
-		entry := "baseFolderRegistry = " + folderKeyLine.FindStringSubmatch(lines[oldRegistry])[3]
+	// an old key of [http] is moved to its key in [general]: one that is
+	// there and set wins, as it does in Parse, an empty one is given the old
+	// key's value, and one that is not there yet goes below anchor, the
+	// folder key before it, or at the top of [general], or into a [general]
+	// of its own at the end of the file. It returns the line the key is on.
+	var appended []string
+	move := func(old, current, anchor int, oldName, name string) int {
+		if old < 0 {
+			return current
+		}
+		drop[old] = true
+		entry := name + " = " + folderKeyLine.FindStringSubmatch(lines[old])[3]
+		from, to := "http."+oldName, "general."+name
 		switch {
-		case registry >= 0 && !holdsEmptyString(lines[registry]):
-			changes = append(changes, "http.registryBaseFolder removed, general.baseFolderRegistry is set")
-		case registry >= 0:
-			lines[registry] = folderKeyLine.FindStringSubmatch(lines[registry])[1] + entry
-			changes = append(changes, "http.registryBaseFolder moved into the empty general.baseFolderRegistry")
+		case current >= 0 && !holdsEmptyString(lines[current]):
+			changes = append(changes, from+" removed, "+to+" is set")
+		case current >= 0:
+			lines[current] = folderKeyLine.FindStringSubmatch(lines[current])[1] + entry
+			changes = append(changes, from+" moved into the empty "+to)
 		default:
 			switch {
-			case files >= 0:
-				lines[files] += newline + entry
+			case anchor >= 0:
+				lines[anchor] += newline + entry
+				current = anchor
 			case general >= 0:
 				lines[general] += newline + entry
+				current = general
 			default:
-				appended = newline + "[general]" + newline + entry + newline
+				appended = append(appended, entry)
 			}
-			changes = append(changes, "http.registryBaseFolder moved to general.baseFolderRegistry")
+			changes = append(changes, from+" moved to "+to)
 		}
+		return current
 	}
+	registry = move(oldRegistry, registry, files, "registryBaseFolder", "baseFolderRegistry")
+	anchor := registry
+	if anchor < 0 {
+		anchor = files
+	}
+	move(oldTemp, temp, anchor, "uploadStagingFolder", "baseFolderTemp")
 
 	kept := make([]string, 0, len(lines))
 	for i, line := range lines {
@@ -209,11 +230,11 @@ func migrated(data string) (string, []string) {
 		}
 	}
 	out := strings.Join(kept, newline)
-	if appended != "" {
+	if len(appended) > 0 {
 		if out != "" && !strings.HasSuffix(out, newline) {
 			out += newline
 		}
-		out += appended
+		out += newline + "[general]" + newline + strings.Join(appended, newline) + newline
 	}
 	return out, changes
 }

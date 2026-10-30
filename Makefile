@@ -58,15 +58,23 @@ endef
 # themselves land in DIST beside the release binaries.
 PKG  := build/pkg
 NFPM := go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
-# the baseFolderFiles line of the template, and what it says for each installer
-TEMPLATE_BASEFOLDER := baseFolderFiles = "/srv/files"
+# the baseFolderFiles line of the template, and what it says for each
+# installer. The template already names the folders the rpm makes, so the
+# Linux lines say what it says; they are rewritten all the same so that the
+# rpm does not depend on the template keeping them.
+TEMPLATE_BASEFOLDER := baseFolderFiles = "/var/lib/go-fs/files"
 LINUX_BASEFOLDER    := baseFolderFiles = "/var/lib/go-fs/files"
 WINDOWS_BASEFOLDER  := baseFolderFiles = "C:/ProgramData/go-fs/files"
 # the baseFolderRegistry line of the template, and what it says for each
 # installer: the folder registry beside the served folder
-TEMPLATE_REGISTRY := baseFolderRegistry = ""
+TEMPLATE_REGISTRY := baseFolderRegistry = "/var/lib/go-fs/registry"
 LINUX_REGISTRY    := baseFolderRegistry = "/var/lib/go-fs/registry"
 WINDOWS_REGISTRY  := baseFolderRegistry = "C:/ProgramData/go-fs/registry"
+# the baseFolderTemp line of the template, and what it says for each
+# installer: the folder temp beside the served folder
+TEMPLATE_TEMP := baseFolderTemp = "/var/lib/go-fs/temp"
+LINUX_TEMP    := baseFolderTemp = "/var/lib/go-fs/temp"
+WINDOWS_TEMP  := baseFolderTemp = "C:/ProgramData/go-fs/temp"
 
 .PHONY: all build test race cover fuzz vet fmt lint clean release sign checksums version \
 	packages rpm msi-inputs
@@ -162,16 +170,20 @@ packages: rpm msi-inputs
 	@$(MAKE) --no-print-directory checksums
 
 # installerconfig writes the template with its baseFolderFiles line replaced
-# by the first argument and its baseFolderRegistry line by the third, and fails
-# when the template no longer has those lines to replace.
+# by the first argument, its baseFolderRegistry line by the third and its
+# baseFolderTemp line by the fourth, and fails when the template no longer has
+# those lines to replace.
 define installerconfig
 	@mkdir -p $(dir $(2))
 	@grep -qxF '$(TEMPLATE_BASEFOLDER)' $(TEMPLATE) || \
 		(echo "$(TEMPLATE) has no line $(TEMPLATE_BASEFOLDER)"; exit 1)
 	@grep -qxF '$(TEMPLATE_REGISTRY)' $(TEMPLATE) || \
 		(echo "$(TEMPLATE) has no line $(TEMPLATE_REGISTRY)"; exit 1)
+	@grep -qxF '$(TEMPLATE_TEMP)' $(TEMPLATE) || \
+		(echo "$(TEMPLATE) has no line $(TEMPLATE_TEMP)"; exit 1)
 	@sed -e 's|^$(TEMPLATE_BASEFOLDER)$$|$(1)|' \
-		-e 's|^$(TEMPLATE_REGISTRY)$$|$(3)|' $(TEMPLATE) > $(2)
+		-e 's|^$(TEMPLATE_REGISTRY)$$|$(3)|' \
+		-e 's|^$(TEMPLATE_TEMP)$$|$(4)|' $(TEMPLATE) > $(2)
 	@echo "wrote $(2)"
 endef
 
@@ -187,7 +199,7 @@ RPM_LIGHT_SERVES := HTTP, HTTPS, an S3 compatible API and an OCI registry
 # SIGNING_KEY_FILE naming an armored PGP private key, and NFPM_RPM_PASSPHRASE
 # unlocking it, the rpms are signed, as the package repository needs them to be.
 rpm:
-	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml,$(LINUX_REGISTRY))
+	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml,$(LINUX_REGISTRY),$(LINUX_TEMP))
 	@mkdir -p $(DIST)
 	@for product in $(BINARY) $(LIGHT); do \
 		if [ "$$product" = "$(LIGHT)" ]; then \
@@ -208,7 +220,7 @@ rpm:
 
 # both msi install the same configuration, each its own product's binary
 msi-inputs:
-	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml,$(WINDOWS_REGISTRY))
+	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml,$(WINDOWS_REGISTRY),$(WINDOWS_TEMP))
 	@for product in $(BINARY) $(LIGHT); do \
 		for arch in amd64; do \
 			bin=$(PKG)/$${product}_windows_$$arch.exe; \
