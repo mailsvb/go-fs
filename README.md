@@ -98,6 +98,7 @@ the same page. A downloaded rpm of a release installs too, with
 | `/etc/go-fs/go-fs.toml` | the configuration, owned by the `go-fs` account, mode `0600` |
 | `/var/lib/go-fs/files` | the folder the configuration serves |
 | `/var/lib/go-fs/registry` | the folder of the container registry |
+| `/var/lib/go-fs/trash` | the trash, what is deleted over HTTP and WebDAV |
 | `/usr/lib/systemd/system/go-fs.service` | the unit, which runs go-fs as the `go-fs` account |
 
 The package creates the `go-fs` account, then enables and starts the service. An
@@ -129,6 +130,7 @@ msiexec /x go-fs-<version>-x64.msi /qn
 | `C:\ProgramData\go-fs\go-fs.toml` | the configuration |
 | `C:\ProgramData\go-fs\files` | the folder the configuration serves |
 | `C:\ProgramData\go-fs\registry` | the folder of the container registry |
+| `C:\ProgramData\go-fs\trash` | the trash, what is deleted over HTTP and WebDAV |
 | `C:\ProgramData\go-fs\logs\go-fs.log` | the log, rotated at 10 MiB, five old files kept |
 
 The service `go-fs` runs as LocalSystem. It starts with Windows and is restarted

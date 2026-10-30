@@ -75,6 +75,11 @@ WINDOWS_REGISTRY  := baseFolderRegistry = "C:/ProgramData/go-fs/registry"
 TEMPLATE_TEMP := baseFolderTemp = "/var/lib/go-fs/temp"
 LINUX_TEMP    := baseFolderTemp = "/var/lib/go-fs/temp"
 WINDOWS_TEMP  := baseFolderTemp = "C:/ProgramData/go-fs/temp"
+# the baseFolderTrash line of the template, and what it says for each
+# installer: the folder trash beside the served folder
+TEMPLATE_TRASH := baseFolderTrash = "/var/lib/go-fs/trash"
+LINUX_TRASH    := baseFolderTrash = "/var/lib/go-fs/trash"
+WINDOWS_TRASH  := baseFolderTrash = "C:/ProgramData/go-fs/trash"
 
 .PHONY: all build test race cover fuzz vet fmt lint clean release sign checksums version \
 	packages rpm msi-inputs
@@ -170,9 +175,9 @@ packages: rpm msi-inputs
 	@$(MAKE) --no-print-directory checksums
 
 # installerconfig writes the template with its baseFolderFiles line replaced
-# by the first argument, its baseFolderRegistry line by the third and its
-# baseFolderTemp line by the fourth, and fails when the template no longer has
-# those lines to replace.
+# by the first argument, its baseFolderRegistry line by the third, its
+# baseFolderTemp line by the fourth and its baseFolderTrash line by the fifth,
+# and fails when the template no longer has those lines to replace.
 define installerconfig
 	@mkdir -p $(dir $(2))
 	@grep -qxF '$(TEMPLATE_BASEFOLDER)' $(TEMPLATE) || \
@@ -181,9 +186,12 @@ define installerconfig
 		(echo "$(TEMPLATE) has no line $(TEMPLATE_REGISTRY)"; exit 1)
 	@grep -qxF '$(TEMPLATE_TEMP)' $(TEMPLATE) || \
 		(echo "$(TEMPLATE) has no line $(TEMPLATE_TEMP)"; exit 1)
+	@grep -qxF '$(TEMPLATE_TRASH)' $(TEMPLATE) || \
+		(echo "$(TEMPLATE) has no line $(TEMPLATE_TRASH)"; exit 1)
 	@sed -e 's|^$(TEMPLATE_BASEFOLDER)$$|$(1)|' \
 		-e 's|^$(TEMPLATE_REGISTRY)$$|$(3)|' \
-		-e 's|^$(TEMPLATE_TEMP)$$|$(4)|' $(TEMPLATE) > $(2)
+		-e 's|^$(TEMPLATE_TEMP)$$|$(4)|' \
+		-e 's|^$(TEMPLATE_TRASH)$$|$(5)|' $(TEMPLATE) > $(2)
 	@echo "wrote $(2)"
 endef
 
@@ -199,7 +207,7 @@ RPM_LIGHT_SERVES := HTTP, HTTPS, an S3 compatible API and an OCI registry
 # SIGNING_KEY_FILE naming an armored PGP private key, and NFPM_RPM_PASSPHRASE
 # unlocking it, the rpms are signed, as the package repository needs them to be.
 rpm:
-	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml,$(LINUX_REGISTRY),$(LINUX_TEMP))
+	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml,$(LINUX_REGISTRY),$(LINUX_TEMP),$(LINUX_TRASH))
 	@mkdir -p $(DIST)
 	@for product in $(BINARY) $(LIGHT); do \
 		if [ "$$product" = "$(LIGHT)" ]; then \
@@ -220,7 +228,7 @@ rpm:
 
 # both msi install the same configuration, each its own product's binary
 msi-inputs:
-	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml,$(WINDOWS_REGISTRY),$(WINDOWS_TEMP))
+	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml,$(WINDOWS_REGISTRY),$(WINDOWS_TEMP),$(WINDOWS_TRASH))
 	@for product in $(BINARY) $(LIGHT); do \
 		for arch in amd64; do \
 			bin=$(PKG)/$${product}_windows_$$arch.exe; \

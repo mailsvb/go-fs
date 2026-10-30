@@ -11,8 +11,9 @@
 
   Bin is the binary built with -X main.packaging=msi, and Config the template
   serving C:\ProgramData\go-fs\files, with its container registry in
-  C:\ProgramData\go-fs\registry and its uploads staged in
-  C:\ProgramData\go-fs\temp; make msi-inputs builds both.
+  C:\ProgramData\go-fs\registry, its uploads staged in
+  C:\ProgramData\go-fs\temp and what is deleted kept in
+  C:\ProgramData\go-fs\trash; make msi-inputs builds both.
 
   The same file builds the msi of go-fs-light, given -d Product=go-fs-light
   and the light binary as Bin:
@@ -142,6 +143,7 @@
         <Directory Id="FILESFOLDER" Name="files" />
         <Directory Id="REGISTRYFOLDER" Name="registry" />
         <Directory Id="TEMPFOLDER" Name="temp" />
+        <Directory Id="TRASHFOLDER" Name="trash" />
         <Directory Id="LOGFOLDER" Name="logs" />
       </Directory>
     </StandardDirectory>
@@ -152,6 +154,7 @@
       <ComponentRef Id="FilesFolder" />
       <ComponentRef Id="RegistryFolder" />
       <ComponentRef Id="TempFolder" />
+      <ComponentRef Id="TrashFolder" />
       <ComponentRef Id="LogFolder" />
       <ComponentRef Id="Configuration" />
       <ComponentRef Id="Firewall" />
@@ -210,6 +213,11 @@
     </Component>
     <!-- the folder uploads are staged in, which the configuration names -->
     <Component Id="TempFolder" Directory="TEMPFOLDER" Guid="930AD851-0E42-4C0F-8172-515A552189D1" Permanent="yes">
+      <CreateFolder />
+    </Component>
+    <!-- the folder what is deleted over http is kept in, which the
+         configuration names -->
+    <Component Id="TrashFolder" Directory="TRASHFOLDER" Guid="DF755D17-5833-4CA8-9E33-4C8B76396B3E" Permanent="yes">
       <CreateFolder />
     </Component>
     <Component Id="LogFolder" Directory="LOGFOLDER" Guid="81CCB142-4D8E-44FC-BADC-24D4BEAF8B85" Permanent="yes">

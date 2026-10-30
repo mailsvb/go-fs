@@ -85,6 +85,14 @@ contents:
       mode: 0700
       owner: go-fs
       group: go-fs
+  # the folder what is deleted over http is kept in, beside the served one so
+  # that a delete is a rename
+  - dst: /var/lib/go-fs/trash
+    type: dir
+    file_info:
+      mode: 0700
+      owner: go-fs
+      group: go-fs
 
   - src: LICENSE
     dst: /usr/share/licenses/${NAME}/LICENSE

@@ -146,6 +146,7 @@ jobs:
             test "$(stat -c %U:%a /etc/go-fs/go-fs.toml)" = go-fs:600
             test "$(stat -c %U /var/lib/go-fs/files)" = go-fs
             test "$(stat -c %U /var/lib/go-fs/registry)" = go-fs
+            test "$(stat -c %U:%a /var/lib/go-fs/trash)" = go-fs:700
             grep -qxF "baseFolderRegistry = \"/var/lib/go-fs/registry\"" /etc/go-fs/go-fs.toml
             runuser -u go-fs -- /usr/bin/go-fs -check -config /etc/go-fs/go-fs.toml
             setpriv --reuid go-fs --regid go-fs --init-groups \
@@ -226,6 +227,7 @@ jobs:
           Get-Content $log
           if (-not $up) { throw "go-fs does not answer on 127.0.0.1:8080" }
           if (-not (Test-Path "$env:ProgramData\go-fs\registry")) { throw "the install made no registry folder" }
+          if (-not (Test-Path "$env:ProgramData\go-fs\trash")) { throw "the install made no trash folder" }
           try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/v2/ | Out-Null }
           catch { if ($_.Exception.Response.StatusCode.value__ -ne 401) { throw "the registry does not answer on /v2/: $_" } }
           if (-not (Select-String -Quiet -Path $log -Pattern "installer=msi")) { throw "the log does not say msi" }
