@@ -16,6 +16,8 @@ import (
 // removes the uploads nobody finished, and the blobs no manifest refers to
 // any more. It runs with the rest of the hourly cleanup.
 func (s *Server) sweepRegistry() {
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
 	store := s.settings().registry
 	if store == nil {
 		return

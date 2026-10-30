@@ -46,6 +46,8 @@ func (s *Server) runCleanup(ctx context.Context) {
 // file exactly where handleChunkedPut wrote it, with nothing else to clean
 // it up.
 func (s *Server) sweepStaging() {
+	s.sweepMu.Lock()
+	defer s.sweepMu.Unlock()
 	set := s.settings()
 	folder := stagingFolder(set)
 	entries, err := os.ReadDir(folder)

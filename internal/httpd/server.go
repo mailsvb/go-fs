@@ -90,6 +90,11 @@ type Server struct {
 	// sweep — stops for a shutdown that was asked for directly rather than by
 	// cancelling the context Start was given.
 	done chan struct{}
+	// sweepMu keeps two sweeps of the same folder from interleaving: the one
+	// runCleanup starts right away may still be running when another is
+	// called directly, and a file one of them removes is reported before the
+	// other one looks.
+	sweepMu sync.Mutex
 
 	mu       sync.Mutex
 	shutdown bool
