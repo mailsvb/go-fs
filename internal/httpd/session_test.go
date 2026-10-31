@@ -82,6 +82,28 @@ func TestTheLoginPageReplacesTheBrowserPasswordBox(t *testing.T) {
 	}
 }
 
+// Cancel leaves for the root: the folder the login was reached from is the
+// one that refused, and would only send the browser back to the form.
+func TestTheLoginPageCancelsToTheRoot(t *testing.T) {
+	server := newServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{fullUser("john", "doe")}
+	})
+	server.write(t, "private/secret.txt", "secret")
+
+	res := browserGet(t, server, "/private/")
+	location := res.Header.Get("Location")
+	if !strings.Contains(location, "go-fs=login") {
+		t.Fatalf("location = %q, want the login marker", location)
+	}
+	body := bodyOf(t, browserGet(t, server, location))
+	if !strings.Contains(body, `href="/">Cancel`) {
+		t.Error("the login page does not cancel to the root")
+	}
+	if strings.Contains(body, `href="/private/">Cancel`) {
+		t.Error("the login page cancels back to the folder that refused")
+	}
+}
+
 // A program is challenged exactly as it always was.
 func TestANonBrowserStillGetsTheDigestChallenge(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {

@@ -235,9 +235,11 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request, target vfs.Ta
 		where = "Container registry"
 	}
 	page, err := renderLogin(loginData{
-		Path:    where,
-		Action:  loginURL(r.URL),
-		Cancel:  cleanURL(r.URL),
+		Path:   where,
+		Action: loginURL(r.URL),
+		// the page the login was reached from is most often the one that
+		// refused, and going back there would only bring this form back
+		Cancel:  "/",
 		Message: message,
 		Nonce:   nonce,
 		Style:   listingStyle,
