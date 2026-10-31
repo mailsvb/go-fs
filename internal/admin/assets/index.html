@@ -126,6 +126,99 @@
   </form>
 </dialog>
 
+<dialog id="sync-dialog" aria-labelledby="sync-title">
+  <form method="dialog">
+    <h2 id="sync-title">Add sync</h2>
+    <ol class="steps">
+      <li data-step="protocol">Protocol</li>
+      <li data-step="server">Server</li>
+      <li data-step="folders">Folders</li>
+      <li data-step="schedule">Schedule</li>
+    </ol>
+    <section data-step="protocol">
+      <p class="intro">A sync keeps a folder the servers serve and a folder of a stored server alike, on a schedule.
+        It is written to the file at once; nothing else on this page is.</p>
+      <div class="dialog-fields">
+        <label for="sync-name">name</label>
+        <input id="sync-name" name="name" type="text" required spellcheck="false" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" placeholder="letters, digits, dots, dashes, e.g. photos">
+        <label for="sync-protocol">protocol</label>
+        <select id="sync-protocol" name="protocol"></select>
+      </div>
+      <p class="hint">rsync compares the size and the modification time of every file and copies those that differ
+        whole, over SFTP.</p>
+    </section>
+    <section data-step="server" hidden>
+      <div class="dialog-fields">
+        <label for="sync-server">server</label>
+        <select id="sync-server" name="server"></select>
+      </div>
+      <p class="hint none" hidden>No stored server is one this protocol reaches. Add one on the SERVERS tab first.</p>
+    </section>
+    <section data-step="folders" hidden>
+      <div class="picker" data-side="remote">
+        <span class="label">remote folder</span>
+        <p class="crumbs"></p>
+        <ul class="folders"></ul>
+        <p class="note"></p>
+      </div>
+      <div class="picker" data-side="local">
+        <span class="label">local folder</span>
+        <p class="crumbs"></p>
+        <ul class="folders"></ul>
+        <p class="note"></p>
+      </div>
+      <div class="dialog-fields">
+        <span class="label">direction</span>
+        <div class="choices">
+          <label><input type="radio" name="direction" value="push"> local → remote</label>
+          <label><input type="radio" name="direction" value="pull"> remote → local</label>
+          <label><input type="radio" name="direction" value="both"> both ways, the newer file wins</label>
+        </div>
+        <label for="sync-delete">delete</label>
+        <input id="sync-delete" name="delete" type="checkbox">
+      </div>
+      <p class="hint delete-hint"></p>
+    </section>
+    <section data-step="schedule" hidden>
+      <div class="dialog-fields">
+        <span class="label">runs</span>
+        <div class="choices">
+          <label><input type="radio" name="when" value="every"> at an interval</label>
+          <label><input type="radio" name="when" value="at"> at a time of day</label>
+        </div>
+        <label for="sync-every" data-when="every">every</label>
+        <div class="inline" data-when="every">
+          <input id="sync-every" name="every" type="number" min="1" step="1" required>
+          <select name="unit" aria-label="unit"><option value="m">minutes</option><option value="h">hours</option></select>
+        </div>
+        <label for="sync-at" data-when="at">at</label>
+        <input id="sync-at" name="at" type="time" required data-when="at">
+        <span class="label" data-when="at">on</span>
+        <div class="days" data-when="at">
+          <label><input type="checkbox" name="days" value="mon"> Mon</label>
+          <label><input type="checkbox" name="days" value="tue"> Tue</label>
+          <label><input type="checkbox" name="days" value="wed"> Wed</label>
+          <label><input type="checkbox" name="days" value="thu"> Thu</label>
+          <label><input type="checkbox" name="days" value="fri"> Fri</label>
+          <label><input type="checkbox" name="days" value="sat"> Sat</label>
+          <label><input type="checkbox" name="days" value="sun"> Sun</label>
+        </div>
+        <label for="sync-enabled">enabled</label>
+        <input id="sync-enabled" name="enabled" type="checkbox">
+      </div>
+      <p class="hint">An interval counts from when go-fs starts, where the first run is. A time of day is in the time
+        zone of the host.</p>
+    </section>
+    <p class="progress" role="status" aria-live="polite" hidden></p>
+    <div class="row">
+      <button class="primary" type="button" value="next">Next</button>
+      <button class="primary" type="submit" value="save" hidden>Save</button>
+      <button class="plain" type="button" value="back" hidden>Back</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <footer id="footer" hidden>
   <span id="status" class="status"></span>
   <button id="apply" type="button">Apply</button>

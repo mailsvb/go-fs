@@ -1628,7 +1628,8 @@ loads, and says on startup that it is ignored.
 What is deleted over HTTP or HTTPS is not removed but moved to
 `general.baseFolderTrash`: **Delete** in the listing, a `DELETE`, a WebDAV
 client deleting a file or a folder or replacing one with `MOVE` or `COPY`, and
-S3's `DeleteObject` and `DeleteObjects`. It keeps the path it had, so
+S3's `DeleteObject` and `DeleteObjects`, and a file a
+[sync](#synchronising-folders) removes from the served folder. It keeps the path it had, so
 `/photos/2024/a.jpg` is `<trash>/photos/2024/a.jpg`, with its modification
 time. Deleting the same path again replaces what the trash held for it; a
 folder is merged into the one in the trash, its files replacing those of the
@@ -2066,6 +2067,74 @@ or in `Content-Range` chunks), `MKCOL` creates a folder, `MOVE` renames to the
 `path` of the `Destination` link on the same server, and `DELETE` removes a
 file or an empty folder. Each one is logged as `http remote …` with the
 account, the server and the path.
+
+### Synchronising folders
+
+A sync keeps a folder of `general.baseFolderFiles` and a folder of a
+[stored server](#stored-servers) alike, on a schedule. Syncs are added on the
+**SYNC** tab of the admin page, one dialog step at a time:
+
+1. the **protocol**, and a name for the sync;
+2. the stored **server** the protocol reaches;
+3. the **remote** and the **local folder**, both picked by browsing them, the
+   **direction** and whether to **delete**;
+4. when it **runs**: every so many minutes or hours, or at a time of day on
+   chosen days of the week.
+
+go-fs logs in to the server and looks the remote folder up before it writes
+the sync into the file. The tab shows how the last run went, when the next one
+is and which paths failed; **Run now** starts one at once, and **enabled**
+pauses a sync without removing it.
+
+The one protocol is **rsync**. It is done by go-fs rather than by the rsync
+program, so it needs nothing on the server but SFTP, works with the password
+login a stored server has and inside an [encrypted server](#encrypted-servers),
+and runs on every system go-fs does. Like rsync without its delta, it lists
+both folders, copies whole every file whose size or modification time
+differs, and gives the copy the modification time of the original, which is
+how the next run knows it is alike. SFTP carries whole seconds, so times
+within a second are the same. A copy is written under a hidden name and
+renamed into place, on either side. Links are left alone, and so is a path
+that is a file on one side and a folder on the other.
+
+The direction is one of:
+
+- **push**, from the local folder to the remote one;
+- **pull**, from the remote folder to the local one;
+- **both**: a file changed on one side since the last run is copied to the
+  other; of one changed on both, the newer wins, the local one when they are
+  as new, and the conflict is logged.
+
+With **delete**, one way, what the target has and the source does not is
+removed from the target. Both ways, a file removed on one side since the last
+run is removed on the other, unless it was changed there meanwhile; without
+delete, it is copied back. To tell a removed file from a new one, a sync both
+ways keeps what it had in sync at the end of each run in a folder
+`go-fs-sync`, beside the configuration file. Its first run, or the first after
+its folders or its server changed, removes nothing. What a sync removes from
+the local folder goes to [the trash](#the-trash) when there is one, and every
+removal is logged as `sync removed`. As a guard against a disk that is not
+mounted or a folder emptied by mistake, nothing is removed while one side is
+empty and the other is not; the run says so.
+
+An interval counts from when go-fs starts, and the first run is then. A time
+of day is in the time zone of the host; a time that a change to summer time
+skips runs an hour later. A run never overlaps the one before it; one that
+takes longer than the interval is followed by the next at once.
+
+```toml
+[[syncs]]
+name = "photos"
+enabled = true
+protocol = "rsync"
+server = "backup"
+remoteFolder = "photos"
+localFolder = "/photos"
+direction = "both"
+delete = true
+at = "02:30"
+days = ["mon", "wed", "fri"]
+```
 
 ## Logging and diagnostics
 

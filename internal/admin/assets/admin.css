@@ -402,7 +402,7 @@ footer {
   background: var(--ground);
 }
 .token-notice p { margin: 0 0 0.5rem; font-size: 0.85rem; }
-input.readonly { color: var(--faint); }
+input.readonly, textarea.readonly { color: var(--faint); }
 
 /* The tab that uploads a new go-fs binary, which the schema does not
    describe. */
@@ -480,8 +480,10 @@ dialog .progress.bad { color: var(--bad); }
 /* the button that acts comes first in the markup, so Enter picks it */
 dialog .row { display: flex; flex-direction: row-reverse; justify-content: flex-start; gap: 0.5rem; }
 dialog .row button:disabled { opacity: 0.5; cursor: default; }
+dialog .row button[hidden] { display: none; }
 .record .edit { margin-left: auto; }
 .record .edit + .remove { margin-left: 0; }
+.record .edit + .run, .record .run + .remove { margin-left: 0; }
 
 /* The dialog of a package repository, and what a repository's record shows
    of it besides its keys. */
@@ -504,3 +506,35 @@ dialog .key .buttons button.plain { padding: 0.2rem 0.6rem; font-size: 0.82rem; 
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8rem;
 }
+
+/* The dialog of a sync, a step at a time, with a browser of the folders on
+   each side. */
+dialog .steps { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin: 0; padding: 0; list-style: none; counter-reset: step; }
+dialog .steps li { color: var(--faint); font-size: 0.82rem; counter-increment: step; }
+dialog .steps li::before { content: counter(step) ". "; }
+dialog .steps li.current { color: var(--ink); font-weight: 600; }
+dialog .steps li.done { color: var(--accent); }
+dialog section { display: flex; flex-direction: column; gap: 0.6rem; }
+dialog section[hidden] { display: none; }
+dialog .hint { font-size: 0.82rem; }
+dialog .hint[hidden] { display: none; }
+dialog .choices, dialog .days { display: flex; flex-wrap: wrap; gap: 0.25rem 0.9rem; }
+dialog .choices label, dialog .days label { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--ink); font-size: 0.85rem; }
+dialog .inline { display: flex; gap: 0.4rem; align-items: center; }
+dialog .picker { display: flex; flex-direction: column; gap: 0.25rem; }
+dialog .picker .label { color: var(--faint); font-size: 0.85rem; }
+dialog .picker .crumbs { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; min-height: 1.3em; }
+dialog .picker .folders {
+  margin: 0;
+  padding: 0.2rem;
+  max-height: 9rem;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  list-style: none;
+}
+dialog .picker .folders:empty { display: none; }
+dialog .picker .folders button.plain { width: 100%; padding: 0.15rem 0.4rem; border: 0; text-align: left; font-size: 0.85rem; }
+dialog .picker .note { font-size: 0.8rem; }
+dialog .picker .note.bad { color: var(--bad); }
+.sync-view p.bad { color: var(--bad); }

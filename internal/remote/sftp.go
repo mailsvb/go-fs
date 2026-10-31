@@ -236,6 +236,8 @@ func (s *sftpFS) Rename(from, to string) error { return s.client.Rename(from, to
 func (s *sftpFS) Remove(p string) error        { return s.client.Remove(p) }
 func (s *sftpFS) RemoveDir(p string) error     { return s.client.RemoveDirectory(p) }
 
+func (s *sftpFS) Chtimes(p string, mtime time.Time) error { return s.client.Chtimes(p, mtime, mtime) }
+
 func (s *sftpFS) Close() error {
 	err := s.client.Close()
 	if closeErr := s.conn.Close(); err == nil {

@@ -14,27 +14,28 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/mailsvb/go-fs/internal/features"
+	"github.com/mailsvb/go-fs/internal/trash"
 )
 
 // trashServer is adminServer with a trash that keeps what is in it for 30
 // days, and the folder of that trash.
 func trashServer(t *testing.T, tune func(*httpConfig)) (*testServer, string) {
 	t.Helper()
-	trash := t.TempDir()
+	bin := t.TempDir()
 	server := adminServer(t, func(cfg *httpConfig) {
-		cfg.TrashFolder = trash
+		cfg.TrashFolder = bin
 		cfg.TrashRetentionDays = 30
 		if tune != nil {
 			tune(cfg)
 		}
 	})
-	return server, trash
+	return server, bin
 }
 
 // inTrash reads a file of the trash, and fails the test when it is not there.
-func inTrash(t *testing.T, trash, name string) string {
+func inTrash(t *testing.T, bin, name string) string {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join(trash, filepath.FromSlash(name)))
+	body, err := os.ReadFile(filepath.Join(bin, filepath.FromSlash(name)))
 	if err != nil {
 		t.Fatalf("the trash does not hold %s: %v", name, err)
 	}
@@ -48,9 +49,9 @@ func gone(at string) bool {
 }
 
 // trashIndexOf reads the index of the trash.
-func trashIndexOf(t *testing.T, trash string) trashIndex {
+func trashIndexOf(t *testing.T, bin string) trash.Index {
 	t.Helper()
-	return readTrashIndex(trash)
+	return trash.ReadIndex(bin)
 }
 
 // trashPost sends what the Trash page sends: a JSON body, with the session and
@@ -77,7 +78,7 @@ func trashPost(t *testing.T, server *testServer, path string, session *http.Cook
 // A file deleted over http goes to the trash, at the path it had and with the
 // date it had, and the index says when it was deleted.
 func TestDeleteMovesIntoTheTrash(t *testing.T) {
-	server, trash := trashServer(t, nil)
+	server, bin := trashServer(t, nil)
 	server.write(t, "a/b.txt", "content")
 	modified := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
 	touch(t, server, "a/b.txt", modified)
@@ -89,13 +90,13 @@ func TestDeleteMovesIntoTheTrash(t *testing.T) {
 	if !gone(filepath.Join(server.base, "a", "b.txt")) {
 		t.Error("the file is still in the served folder")
 	}
-	if got := inTrash(t, trash, "a/b.txt"); got != "content" {
+	if got := inTrash(t, bin, "a/b.txt"); got != "content" {
 		t.Errorf("the trash holds %q, want the file", got)
 	}
-	if info, err := os.Stat(filepath.Join(trash, "a", "b.txt")); err != nil || !info.ModTime().Equal(modified) {
+	if info, err := os.Stat(filepath.Join(bin, "a", "b.txt")); err != nil || !info.ModTime().Equal(modified) {
 		t.Errorf("the file in the trash was modified %v, want %v as before", info.ModTime(), modified)
 	}
-	if when := trashIndexOf(t, trash)["/a/b.txt"]; when.Before(before.Add(-time.Second)) {
+	if when := trashIndexOf(t, bin)["/a/b.txt"]; when.Before(before.Add(-time.Second)) {
 		t.Errorf("the index says the file was deleted %v, want now", when)
 	}
 	if record := server.logs.find("http delete"); record == nil || record["trash"] != true {
@@ -107,7 +108,7 @@ func TestDeleteMovesIntoTheTrash(t *testing.T) {
 	if res := basic(t, server, http.MethodDelete, "/empty/", "john", "doe", nil); res.StatusCode != http.StatusOK {
 		t.Fatalf("DELETE of a folder: status %d, want 200", res.StatusCode)
 	}
-	if info, err := os.Stat(filepath.Join(trash, "empty")); err != nil || !info.IsDir() {
+	if info, err := os.Stat(filepath.Join(bin, "empty")); err != nil || !info.IsDir() {
 		t.Error("the empty folder is not in the trash")
 	}
 }
@@ -131,12 +132,12 @@ func TestDeleteWithoutATrashIsForGood(t *testing.T) {
 // merged into the one the trash holds.
 func TestDeletingAgainReplacesWhatTheTrashHolds(t *testing.T) {
 	skipWithout(t, features.WebDAV)
-	server, trash := trashServer(t, func(cfg *httpConfig) { cfg.WebDAV = true })
+	server, bin := trashServer(t, func(cfg *httpConfig) { cfg.WebDAV = true })
 	server.write(t, "x.txt", "first")
 	basic(t, server, http.MethodDelete, "/x.txt", "john", "doe", nil)
 	server.write(t, "x.txt", "second")
 	basic(t, server, http.MethodDelete, "/x.txt", "john", "doe", nil)
-	if got := inTrash(t, trash, "x.txt"); got != "second" {
+	if got := inTrash(t, bin, "x.txt"); got != "second" {
 		t.Errorf("the trash holds %q, want the newer file", got)
 	}
 
@@ -150,11 +151,11 @@ func TestDeletingAgainReplacesWhatTheTrashHolds(t *testing.T) {
 		t.Fatalf("WebDAV DELETE: status %d, want 204", res.StatusCode)
 	}
 	for name, want := range map[string]string{"box/old.txt": "newer", "box/kept.txt": "kept", "box/new.txt": "new"} {
-		if got := inTrash(t, trash, name); got != want {
+		if got := inTrash(t, bin, name); got != want {
 			t.Errorf("the trash holds %q at %s, want %q", got, name, want)
 		}
 	}
-	index := trashIndexOf(t, trash)
+	index := trashIndexOf(t, bin)
 	if _, ok := index["/box/old.txt"]; ok {
 		t.Error("the replaced file kept the date of the older delete")
 	}
@@ -167,7 +168,7 @@ func TestDeletingAgainReplacesWhatTheTrashHolds(t *testing.T) {
 	basic(t, server, http.MethodDelete, "/clash", "john", "doe", nil)
 	server.write(t, "clash/inner.txt", "inner")
 	basic(t, server, http.MethodDelete, "/clash/inner.txt", "john", "doe", nil)
-	if got := inTrash(t, trash, "clash/inner.txt"); got != "inner" {
+	if got := inTrash(t, bin, "clash/inner.txt"); got != "inner" {
 		t.Errorf("the trash holds %q, want the file in the folder that replaced a file", got)
 	}
 }
@@ -176,7 +177,7 @@ func TestDeletingAgainReplacesWhatTheTrashHolds(t *testing.T) {
 // in it, and what a MOVE or a COPY replaces.
 func TestWebDAVDeletesIntoTheTrash(t *testing.T) {
 	skipWithout(t, features.WebDAV)
-	server, trash := trashServer(t, func(cfg *httpConfig) { cfg.WebDAV = true })
+	server, bin := trashServer(t, func(cfg *httpConfig) { cfg.WebDAV = true })
 	server.write(t, "box/a.txt", "a")
 	server.write(t, "box/sub/b.txt", "b")
 	if res := dav(t, server, http.MethodDelete, "/box/", "john", "doe", nil, ""); res.StatusCode != http.StatusNoContent {
@@ -185,7 +186,7 @@ func TestWebDAVDeletesIntoTheTrash(t *testing.T) {
 	if !gone(filepath.Join(server.base, "box")) {
 		t.Error("the folder is still in the served folder")
 	}
-	if inTrash(t, trash, "box/a.txt") != "a" || inTrash(t, trash, "box/sub/b.txt") != "b" {
+	if inTrash(t, bin, "box/a.txt") != "a" || inTrash(t, bin, "box/sub/b.txt") != "b" {
 		t.Error("the folder is not in the trash with what was in it")
 	}
 
@@ -199,15 +200,15 @@ func TestWebDAVDeletesIntoTheTrash(t *testing.T) {
 	if server.read(t, "to.txt") != "new" {
 		t.Error("the MOVE did not replace the file")
 	}
-	if got := inTrash(t, trash, "to.txt"); got != "old" {
+	if got := inTrash(t, bin, "to.txt"); got != "old" {
 		t.Errorf("the trash holds %q, want the file the MOVE replaced", got)
 	}
 }
 
 // S3 deletes into the trash as well.
 func TestS3DeletesIntoTheTrash(t *testing.T) {
-	trash := t.TempDir()
-	server := newS3Server(t, func(cfg *httpConfig) { cfg.TrashFolder = trash })
+	bin := t.TempDir()
+	server := newS3Server(t, func(cfg *httpConfig) { cfg.TrashFolder = bin })
 	client := server.s3Client("john", "doe")
 	put(t, client, "keep/k.txt", "kept")
 	put(t, client, "dir/k.txt", "object")
@@ -215,7 +216,7 @@ func TestS3DeletesIntoTheTrash(t *testing.T) {
 		Bucket: aws.String(bucket), Key: aws.String("dir/k.txt")}); err != nil {
 		t.Fatal(err)
 	}
-	if got := inTrash(t, trash, bucket+"/dir/k.txt"); got != "object" {
+	if got := inTrash(t, bin, bucket+"/dir/k.txt"); got != "object" {
 		t.Errorf("the trash holds %q, want the object", got)
 	}
 	if !gone(filepath.Join(server.base, bucket, "dir")) {
@@ -262,7 +263,7 @@ func TestTheTrashNeedsAnAdminSession(t *testing.T) {
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, `data-name="b.txt"`) {
 		t.Fatalf("root's session was answered %d without the deleted file:\n%s", res.StatusCode, body)
 	}
-	if strings.Contains(body, trashIndexName) {
+	if strings.Contains(body, trash.IndexName) {
 		t.Error("the page lists the index of the trash")
 	}
 	if !strings.Contains(res.Header.Get("Content-Security-Policy"), "nonce-") {
@@ -293,7 +294,7 @@ func TestTheTrashNeedsAnAdminSession(t *testing.T) {
 // in its place is kept unless the restore is told to overwrite it, and what
 // is kept stays in the trash.
 func TestTrashRestores(t *testing.T) {
-	server, trash := trashServer(t, nil)
+	server, bin := trashServer(t, nil)
 	server.write(t, "a/b.txt", "trashed b")
 	server.write(t, "a/c.txt", "trashed c")
 	basic(t, server, http.MethodDelete, "/a/b.txt", "john", "doe", nil)
@@ -312,7 +313,7 @@ func TestTrashRestores(t *testing.T) {
 	if server.read(t, "a/b.txt") != "live b" || server.read(t, "a/c.txt") != "trashed c" {
 		t.Error("the restore without overwrite did not keep the live file and restore the other")
 	}
-	if inTrash(t, trash, "a/b.txt") != "trashed b" || !gone(filepath.Join(trash, "a", "c.txt")) {
+	if inTrash(t, bin, "a/b.txt") != "trashed b" || !gone(filepath.Join(bin, "a", "c.txt")) {
 		t.Error("the trash does not hold just what was skipped")
 	}
 
@@ -323,10 +324,10 @@ func TestTrashRestores(t *testing.T) {
 	if server.read(t, "a/b.txt") != "trashed b" {
 		t.Error("the restore with overwrite did not replace the live file")
 	}
-	if !gone(filepath.Join(trash, "a")) {
+	if !gone(filepath.Join(bin, "a")) {
 		t.Error("the folder the restore left empty is still in the trash")
 	}
-	if index := trashIndexOf(t, trash); len(index) != 0 {
+	if index := trashIndexOf(t, bin); len(index) != 0 {
 		t.Errorf("the index still names %v", index)
 	}
 
@@ -347,7 +348,7 @@ func TestTrashRestores(t *testing.T) {
 	if res, _ := trashPost(t, server, "/?go-fs=trash-restore", root, `{"name":"nothing"}`, ""); res.StatusCode != http.StatusNotFound {
 		t.Errorf("restoring nothing was answered %d, want 404", res.StatusCode)
 	}
-	for _, name := range []string{"", "..", "a/b", trashIndexName} {
+	for _, name := range []string{"", "..", "a/b", trash.IndexName} {
 		body, _ := json.Marshal(trashRequest{Name: name})
 		if res, _ := trashPost(t, server, "/?go-fs=trash-restore", root, string(body), ""); res.StatusCode == http.StatusOK {
 			t.Errorf("restoring %q was answered 200", name)
@@ -357,7 +358,7 @@ func TestTrashRestores(t *testing.T) {
 
 // Deleting from the trash and emptying it are for good.
 func TestTrashDeletesAndEmpties(t *testing.T) {
-	server, trash := trashServer(t, nil)
+	server, bin := trashServer(t, nil)
 	server.write(t, "a/one.txt", "1")
 	server.write(t, "two.txt", "2")
 	server.write(t, "three.txt", "3")
@@ -369,10 +370,10 @@ func TestTrashDeletesAndEmpties(t *testing.T) {
 	if res, body := trashPost(t, server, "/a/?go-fs=trash-delete", root, `{"name":"one.txt"}`, ""); res.StatusCode != http.StatusOK {
 		t.Fatalf("delete: status %d: %s", res.StatusCode, body)
 	}
-	if !gone(filepath.Join(trash, "a")) {
+	if !gone(filepath.Join(bin, "a")) {
 		t.Error("the file and the folder it left empty are still in the trash")
 	}
-	if _, ok := trashIndexOf(t, trash)["/a/one.txt"]; ok {
+	if _, ok := trashIndexOf(t, bin)["/a/one.txt"]; ok {
 		t.Error("the index still names the deleted file")
 	}
 
@@ -380,7 +381,7 @@ func TestTrashDeletesAndEmpties(t *testing.T) {
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, `"items":2`) {
 		t.Fatalf("empty: status %d: %s", res.StatusCode, body)
 	}
-	if items, err := os.ReadDir(trash); err != nil || len(items) != 0 {
+	if items, err := os.ReadDir(bin); err != nil || len(items) != 0 {
 		t.Errorf("the trash still holds %v", items)
 	}
 	if page := bodyOf(t, withSession(t, server, http.MethodGet, "/?go-fs=trash", root)); !strings.Contains(page, "The trash is empty.") {
@@ -391,7 +392,7 @@ func TestTrashDeletesAndEmpties(t *testing.T) {
 // The hourly sweep deletes what has been in the trash longer than it keeps
 // things, and leaves the rest; a retention of 0 keeps everything.
 func TestTrashIsPurgedAfterTheRetention(t *testing.T) {
-	server, trash := trashServer(t, nil)
+	server, bin := trashServer(t, nil)
 	for _, name := range []string{"old.txt", "new.txt", "box/early.txt", "box/late.txt"} {
 		server.write(t, name, name)
 	}
@@ -399,41 +400,41 @@ func TestTrashIsPurgedAfterTheRetention(t *testing.T) {
 	basic(t, server, http.MethodDelete, "/new.txt", "john", "doe", nil)
 	basic(t, server, http.MethodDelete, "/box/early.txt", "john", "doe", nil)
 	basic(t, server, http.MethodDelete, "/box/late.txt", "john", "doe", nil)
-	if err := os.WriteFile(filepath.Join(trash, "manual.txt"), []byte("by hand"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "manual.txt"), []byte("by hand"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	long := time.Now().Add(-40 * 24 * time.Hour)
-	if err := os.Chtimes(filepath.Join(trash, "manual.txt"), long, long); err != nil {
+	if err := os.Chtimes(filepath.Join(bin, "manual.txt"), long, long); err != nil {
 		t.Fatal(err)
 	}
-	index := trashIndexOf(t, trash)
+	index := trashIndexOf(t, bin)
 	index["/old.txt"] = long
 	index["/box"] = long
 	delete(index, "/box/early.txt")
-	if err := writeTrashIndex(trash, index); err != nil {
+	if err := trash.WriteIndex(bin, index); err != nil {
 		t.Fatal(err)
 	}
 
 	// kept for ever, nothing goes
 	withRetention(server, 0)
 	server.purgeTrash()
-	if gone(filepath.Join(trash, "old.txt")) {
+	if gone(filepath.Join(bin, "old.txt")) {
 		t.Fatal("a retention of 0 purged the trash")
 	}
 
 	withRetention(server, 30)
 	server.purgeTrash()
 	for _, name := range []string{"old.txt", "manual.txt", "box/early.txt"} {
-		if !gone(filepath.Join(trash, filepath.FromSlash(name))) {
+		if !gone(filepath.Join(bin, filepath.FromSlash(name))) {
 			t.Errorf("%s outlived the retention", name)
 		}
 	}
 	for _, name := range []string{"new.txt", "box/late.txt"} {
-		if gone(filepath.Join(trash, filepath.FromSlash(name))) {
+		if gone(filepath.Join(bin, filepath.FromSlash(name))) {
 			t.Errorf("%s was purged before its time", name)
 		}
 	}
-	index = trashIndexOf(t, trash)
+	index = trashIndexOf(t, bin)
 	if _, ok := index["/old.txt"]; ok {
 		t.Error("the index still names what was purged")
 	}

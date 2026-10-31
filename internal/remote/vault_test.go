@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/cryptomator"
@@ -293,5 +294,42 @@ func TestVaultLoginWithoutVaults(t *testing.T) {
 	l.VaultPath, l.VaultPassword = "", ""
 	if _, err := l.Checked(false); err != nil {
 		t.Errorf("a login without a vault was refused: %v", err)
+	}
+}
+
+// A sync gives a file in a vault the time of its original, which Stat then
+// reports; a host that keeps no times says so.
+func TestVaultChtimes(t *testing.T) {
+	skipWithout(t, features.Cryptomator)
+	for name, host := range vaultHosts(t) {
+		t.Run(name, func(t *testing.T) {
+			if _, err := remote.CreateVault(context.Background(), host.login, sshConfig()); err != nil {
+				t.Fatal(err)
+			}
+			fsys := openTestVault(t, host.login)
+			vaultPut(t, fsys, "/a.txt", []byte("a"))
+			timer, ok := fsys.(remote.Chtimer)
+			if !ok {
+				t.Fatal("a vault cannot be given a time")
+			}
+			mod := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+			err := timer.Chtimes("/a.txt", mod)
+			if host.login.Type == config.ServerTypeArtifactory {
+				if !errors.Is(err, errors.ErrUnsupported) {
+					t.Errorf("a vault on a host that keeps no times answered %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := fsys.Stat("/a.txt")
+			if err != nil || !info.ModTime().Equal(mod) || info.Size() != 1 {
+				t.Errorf("the file is %v, %v", info, err)
+			}
+			if err := timer.Chtimes("/missing", mod); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("a missing file answered %v", err)
+			}
+		})
 	}
 }

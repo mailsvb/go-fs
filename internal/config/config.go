@@ -58,6 +58,9 @@ type Config struct {
 	// Repositories are the package repositories go-fs keeps in folders the
 	// http server serves.
 	Repositories []Repository `toml:"repositories" feature:"rpm,fdroid"`
+	// Syncs keep folders the servers serve and folders of stored servers
+	// alike, on a schedule.
+	Syncs []Sync `toml:"syncs" feature:"sftp-remote"`
 }
 
 // General holds what every server shares.
@@ -1317,6 +1320,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.validateRepositories(); err != nil {
+		return err
+	}
+	if err := c.validateSyncs(); err != nil {
 		return err
 	}
 	if c.ftpOn() {

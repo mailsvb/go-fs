@@ -168,10 +168,13 @@ func build() (Schema, []string) {
 			// the tab carries the description; the list under it is the tab
 			table.Help = ""
 			label := strings.ToUpper(key)
-			if key == "repositories" {
+			switch key {
+			case "repositories":
 				// the tab is the package repository, as the menus of
 				// other servers say
 				label = "REPOSITORY"
+			case "syncs":
+				label = "SYNC"
 			}
 			schema.Sections = append(schema.Sections, Section{
 				Key: key, Label: label, Help: help(key, ""),
@@ -271,6 +274,12 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 	if isRepository {
 		table.Create = KindRepository
 	}
+	// nor is a sync: its dialog logs in to the server and browses both
+	// folders, so only its name and its switches are typed in here
+	isSync := element == reflect.TypeOf(config.Sync{})
+	if isSync {
+		table.Create = KindSync
+	}
 	hasText := false
 	for i := range element.NumField() {
 		inner := element.Field(i)
@@ -311,6 +320,16 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 				// shown masked, and replaced in the dialog alone
 				field.ReadOnly = true
 				field.Upload = ""
+			}
+		}
+		if isSync {
+			switch inner.Name {
+			case "Name", "Enabled", "Delete":
+			case "Server", "LocalFolder", "Direction":
+				field.ReadOnly = true
+				field.Summary = true
+			default:
+				field.ReadOnly = true
 			}
 		}
 		if kind == kindText {

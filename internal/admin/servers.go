@@ -172,6 +172,8 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 		server.AllowDelete, server.AllowRename = was.AllowDelete, was.AllowRename
 		server.AllowedUsers = was.AllowedUsers
 		cfg.Servers[index] = server
+		// the syncs of the server follow it to its new name
+		cfg.RenameSyncServer(was.Name, name)
 	} else {
 		cfg.Servers = append(cfg.Servers, server)
 		index = len(cfg.Servers) - 1

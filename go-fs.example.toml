@@ -407,6 +407,51 @@ isAdmin = true
 # .webp in its folder, by its path in it.
 # icon = "/icon.png"
 
+# Syncs keep a folder the servers serve and a folder of a stored server
+# alike, on a schedule, one table per sync. They are added and edited in the
+# admin interface, on the SYNC tab, which browses both folders. Every removal a
+# sync makes is logged.
+# [[syncs]]
+# Names the sync, in the admin interface, in the log and in the file the last
+# run is remembered in: letters, digits, dots, dashes and underscores. Unique,
+# whatever its case.
+# name = "photos"
+# Run the sync on its schedule. A sync that is not enabled stays in the file
+# and does not run.
+# enabled = true
+# How the folders are compared and copied: rsync, which compares the size and
+# the modification time of every file and copies those that differ whole, over
+# SFTP, and gives the copy the modification time of the original. Nothing but
+# SFTP is needed on the server.
+# protocol = "rsync"
+# The stored server the remote folder is on, by its name; one of type sftp for
+# rsync.
+# server = "backup"
+# The folder on the server. A path without a slash in front is from where the
+# login starts; empty is that folder itself.
+# remoteFolder = "photos"
+# The folder in general.baseFolderFiles, as the file listing shows it. It has
+# to exist.
+# localFolder = "/photos"
+# Which way files go: push, from the local folder to the remote one; pull, from
+# the remote folder to the local one; or both, where a file changed on one side
+# is copied to the other, and of a file changed on both the newer wins.
+# direction = "both"
+# Remove what was removed on the other side. One way, what the source does not
+# have is removed from the target. Both ways, a file removed on one side since
+# the last run is removed on the other; without it, the file is copied back.
+# What is removed from the local folder goes to the trash when there is one.
+# Nothing is removed while one side is empty and the other is not. What a sync
+# both ways had in sync at its last run is kept in go-fs-sync, beside this file.
+# delete = false
+# Run at this interval, such as "15m" or "2h", from when go-fs starts, where
+# the first run is. Either this or at is set.
+# every = "1h"
+# Run at this time of day, in the time zone of the host, on each of days:
+# mon, tue, wed, thu, fri, sat and sun.
+# at = "02:30"
+# days = ["mon", "wed", "fri"]
+
 [ftp]
 # Serve the plain control port. The TLS listener has its own switch in [ftps];
 # everything else in this section applies to both of them.

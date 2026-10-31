@@ -665,4 +665,25 @@ func (v *vaultFS) RemoveDir(p string) error {
 	return v.failure(p, v.inner.RemoveDir(folder))
 }
 
+// Chtimes sets the time of the file the content is kept in, which is the
+// time Stat reports, where the host can set one.
+func (v *vaultFS) Chtimes(p string, mtime time.Time) error {
+	inner, ok := v.inner.(Chtimer)
+	if !ok {
+		return fmt.Errorf("%s: %w", p, errors.ErrUnsupported)
+	}
+	p = v.clean(p)
+	n, info, err := v.lookup(p)
+	if err != nil {
+		return err
+	}
+	if info.dir {
+		return fmt.Errorf("%s is a folder", p)
+	}
+	if err := inner.Chtimes(n.contents(), mtime); err != nil {
+		return v.failure(p, err)
+	}
+	return nil
+}
+
 func (v *vaultFS) Close() error { return v.inner.Close() }

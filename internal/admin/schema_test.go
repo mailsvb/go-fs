@@ -264,7 +264,8 @@ func TestTokenTable(t *testing.T) {
 			table = section.Tables[0]
 		}
 		for _, other := range section.Tables {
-			if other.Create != "" && section.Key != "tokens" && section.Key != "servers" && section.Key != "repositories" {
+			if other.Create != "" && section.Key != "tokens" && section.Key != "servers" && section.Key != "repositories" &&
+				section.Key != "syncs" {
 				t.Errorf("%s.%s is created by the server", section.Key, other.Key)
 			}
 		}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/features"
@@ -44,6 +45,13 @@ type FS interface {
 	RemoveDir(p string) error
 	// Close logs out.
 	Close() error
+}
+
+// Chtimer is a host that can set when a file was modified, which a sync
+// keeps alike on both sides to tell a changed file from one that is not.
+type Chtimer interface {
+	// Chtimes sets the modification time of a file.
+	Chtimes(p string, mtime time.Time) error
 }
 
 // Open logs in to a host, with a login Checked read, and unlocks its vault

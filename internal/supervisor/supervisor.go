@@ -25,6 +25,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/repository"
 	"github.com/mailsvb/go-fs/internal/service"
+	"github.com/mailsvb/go-fs/internal/syncer"
 )
 
 // env is what building a service is given: the configuration, the path of
@@ -58,6 +59,7 @@ const (
 	orderTFTP
 	orderCleanup
 	orderRepositories
+	orderSyncs
 )
 
 // services are the services the binary was built with, in their order: those
@@ -118,19 +120,31 @@ var builtIn = []entry{
 			return s.(*repository.Manager).Reload(e.cfg)
 		},
 	},
+	{
+		name:    syncs,
+		order:   orderSyncs,
+		enabled: func(e env) bool { return len(e.cfg.UsableSyncs()) > 0 },
+		create: func(e env, log *slog.Logger) (service.Server, error) {
+			return syncer.New(e.cfg, syncer.StateDir(e.path), log)
+		},
+		reload: func(s service.Server, e env) error {
+			return s.(*syncer.Manager).Reload(e.cfg)
+		},
+	},
 }
 
-// sweeper is the service that runs [[general.cleanup]], and repositories the
-// one that keeps [[repositories]]. They serve no client, so they alone do not
-// count as a server being enabled.
+// sweeper is the service that runs [[general.cleanup]], repositories the one
+// that keeps [[repositories]], and syncs the one that runs [[syncs]]. They
+// serve no client, so they alone do not count as a server being enabled.
 const (
 	sweeper      = "cleanup"
 	repositories = "repositories"
+	syncs        = "syncs"
 )
 
 // background reports whether a service is one of those.
 func background(name string) bool {
-	return name == sweeper || name == repositories
+	return name == sweeper || name == repositories || name == syncs
 }
 
 // Supervisor holds what is running.

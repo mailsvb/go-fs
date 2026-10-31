@@ -45,6 +45,13 @@ let repositoryViews = {};
 // the name each repository has in the file, keyed by its record, for the
 // same reason as storedServers
 const storedRepositories = new WeakMap();
+// the protocols a sync may use, and what the server says of each stored
+// sync, by name: how its runs went
+let syncProtocols = [];
+let syncViews = {};
+// the name each sync has in the file, keyed by its record, for the same
+// reason as storedServers
+const storedSyncs = new WeakMap();
 // what the update endpoint says about the running binary, or null where it
 // does not answer this session: switched off, or not an admin. It is the one
 // tab the schema does not describe, since it edits no key of the file
@@ -83,12 +90,17 @@ async function load() {
   vaults = state.vaults === true;
   repositoryTypes = state.repositoryTypes || [];
   repositoryViews = state.repositories || {};
+  syncProtocols = state.syncProtocols || [];
+  syncViews = state.syncs || {};
   schema.sections.forEach((section) => {
     if (section.direct && section.tables[0].create === "server") {
       (values[section.key] || []).forEach((record) => storedServers.set(record, record.name));
     }
     if (section.direct && section.tables[0].create === "repository") {
       (values[section.key] || []).forEach((record) => storedRepositories.set(record, record.name));
+    }
+    if (section.direct && section.tables[0].create === "sync") {
+      (values[section.key] || []).forEach((record) => storedSyncs.set(record, record.name));
     }
   });
 
@@ -106,6 +118,9 @@ async function load() {
 
   render();
   footer.hidden = false;
+  if (Object.values(syncViews).some((view) => view.status && view.status.running)) {
+    watchSyncs();
+  }
   if (update && release === null) {
     checkRelease(false);
   }
@@ -557,6 +572,22 @@ function tableBlock(holder, key, table, heading) {
         });
         summary.append(edit);
       }
+      if (table.create === "sync") {
+        // where a sync goes and when it runs is changed in the dialog
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "plain edit";
+        edit.textContent = "Edit…";
+        edit.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          syncDialog.open(record, () => draw());
+        });
+        summary.append(edit);
+        if (storedSyncs.has(record)) {
+          summary.append(runNowButton(storedSyncs.get(record)));
+        }
+      }
 
       const remove = document.createElement("button");
       remove.type = "button";
@@ -584,6 +615,9 @@ function tableBlock(holder, key, table, heading) {
       }
       if (table.create === "repository" && storedRepositories.has(record)) {
         card.append(repositoryView(record, repositoryViews[storedRepositories.get(record)]));
+      }
+      if (table.create === "sync" && storedSyncs.has(record)) {
+        card.append(syncView(storedSyncs.get(record)));
       }
       card.append(fieldGrid(table.fields, record, ""));
       // the line the record folds up to follows what is typed into it
@@ -625,6 +659,15 @@ function tableBlock(holder, key, table, heading) {
   if (table.create === "repository") {
     block.append(plainButton("Add repository…", () =>
       repositoryDialog.open(null, (record) => {
+        append(record);
+        list.lastElementChild.scrollIntoView({ block: "nearest" });
+      })));
+    return block;
+  }
+
+  if (table.create === "sync") {
+    block.append(plainButton("Add sync…", () =>
+      syncDialog.open(null, (record) => {
         append(record);
         list.lastElementChild.scrollIntoView({ block: "nearest" });
       })));
@@ -1232,6 +1275,449 @@ const repositoryDialog = (() => {
   return { open };
 })();
 
+// syncView shows how the runs of a stored sync go. It is filled in from
+// syncViews, and again by showSyncs whenever they are read anew.
+function syncView(name) {
+  const box = document.createElement("div");
+  box.className = "token-notice repository-view sync-view";
+  box.dataset.sync = name;
+  fillSyncView(box, syncViews[name]);
+  return box;
+}
+
+function fillSyncView(box, view) {
+  box.replaceChildren();
+  const status = view && view.status;
+  if (!status) {
+    box.append(paragraph("Not running: it is disabled, or it starts once go-fs has read the file again.", ""));
+    return;
+  }
+  if (status.running) {
+    box.append(paragraph("Running since " + when(status.started) + "…", ""));
+  } else if (status.finished && status.error && !status.uploaded && !status.downloaded && !status.deleted) {
+    box.append(paragraph("Last run " + when(status.finished) + " failed.", ""));
+  } else if (status.finished) {
+    const counts = [
+      count(status.uploaded, "file") + " uploaded",
+      count(status.downloaded, "file") + " downloaded",
+      count(status.deleted, "file or folder", "files or folders") + " removed",
+      bytes(status.bytes) + " copied",
+    ];
+    let text = "Last run " + when(status.finished) + ": " + counts.join(", ") + ".";
+    if (status.conflicts) {
+      text += " " + count(status.conflicts, "file") + " changed on both sides; the newer was kept.";
+    }
+    box.append(paragraph(text, ""));
+  } else {
+    box.append(paragraph("Not run yet.", ""));
+  }
+  if (status.next && !status.running) {
+    box.append(paragraph("Next run " + when(status.next) + ".", ""));
+  }
+  if (status.error) {
+    box.append(paragraph(status.error, "bad"));
+  }
+  const failures = Object.entries(status.failures || {});
+  if (failures.length > 0) {
+    box.append(paragraph(count(status.failed, "path") + " could not be synced"
+      + (status.failed > failures.length ? ", the first of them:" : ":"), "bad"));
+    const list = document.createElement("ul");
+    failures.forEach(([path, reason]) => {
+      const item = document.createElement("li");
+      item.textContent = path + ": " + reason;
+      list.append(item);
+    });
+    box.append(list);
+  }
+}
+
+function count(n, one, many) {
+  return n === 1 ? "1 " + one : n + " " + (many || one + "s");
+}
+
+function bytes(n) {
+  const units = ["bytes", "KiB", "MiB", "GiB", "TiB"];
+  let value = n || 0;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return (unit === 0 ? String(value) : value.toFixed(1)) + " " + units[unit];
+}
+
+// runNowButton runs a stored sync now, rather than at its next time.
+function runNowButton(name) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "plain run";
+  button.textContent = "Run now";
+  button.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    button.disabled = true;
+    try {
+      await post("?go-fs=admin-sync-run", { name });
+      say("The sync " + name + " runs now.", true);
+      watchSyncs(name);
+    } catch (error) {
+      say(String(error.message || error));
+    }
+    button.disabled = false;
+  });
+  return button;
+}
+
+// watchSyncs reads how the syncs are doing every few seconds, while one is
+// running, and while the one asked to run has not started yet, and shows it.
+// Only the statuses are read anew: what is typed into the page stays.
+let watching = false;
+async function watchSyncs(asked) {
+  if (watching) return;
+  watching = true;
+  const since = Date.now();
+  try {
+    for (let tries = 0; tries < 900; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const answer = await fetch("?go-fs=admin-config", { headers: { Accept: "application/json" } });
+      if (!answer.ok) return;
+      syncViews = (await answer.json()).syncs || {};
+      document.querySelectorAll(".sync-view").forEach((box) => fillSyncView(box, syncViews[box.dataset.sync]));
+      const views = Object.values(syncViews);
+      const running = views.some((view) => view.status && view.status.running);
+      const waiting = asked && Date.now() - since < 10000 && !(syncViews[asked] && syncViews[asked].status
+        && (syncViews[asked].status.running || Date.parse(syncViews[asked].status.finished) >= since - 1000));
+      if (!running && !waiting) return;
+    }
+  } finally {
+    watching = false;
+  }
+}
+
+// folderPicker browses the folders of one side of a sync, a stored server or
+// the served folder, and keeps the one that is open as the chosen one. ask
+// is handed a path and answers the folder there.
+function folderPicker(box, ask) {
+  const crumbs = box.querySelector(".crumbs");
+  const list = box.querySelector(".folders");
+  const note = box.querySelector(".note");
+  // value is the folder as it is stored: the one the picker was opened at
+  // until another is chosen, so that a folder kept as the file names it is
+  // not rewritten in the form the server answers it in
+  let value = "";
+  let start = "";
+  let ticket = 0;
+
+  const tell = (text, bad) => {
+    note.textContent = text;
+    note.classList.toggle("bad", bad === true);
+  };
+
+  const item = (text, path) => {
+    const entry = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "plain";
+    button.textContent = text;
+    button.addEventListener("click", () => go(path, true));
+    entry.append(button);
+    return entry;
+  };
+
+  async function go(path, chosen) {
+    const mine = ++ticket;
+    tell("Reading…");
+    try {
+      const folder = await ask(path);
+      if (mine !== ticket) return;
+      if (chosen) value = folder.path;
+      crumbs.textContent = folder.path;
+      list.replaceChildren();
+      if (folder.parent) list.append(item("‹ up", folder.parent));
+      folder.folders.forEach((name) =>
+        list.append(item(name + "/", (folder.path === "/" ? "" : folder.path) + "/" + name)));
+      tell(folder.truncated ? "Only the first folders are listed."
+        : folder.folders.length === 0 ? "No folders in it." : "");
+    } catch (error) {
+      if (mine !== ticket) return;
+      crumbs.textContent = path;
+      list.replaceChildren();
+      if (path !== start) list.append(item("‹ back to the start", start));
+      tell(String(error.message || error), true);
+    }
+  }
+
+  return {
+    open(at, from) {
+      value = at;
+      start = from;
+      list.replaceChildren();
+      crumbs.textContent = "";
+      go(at, false);
+    },
+    // reset forgets the folder, and an answer still on its way
+    reset() {
+      value = "";
+      ticket++;
+      list.replaceChildren();
+      crumbs.textContent = "";
+      tell("");
+    },
+    value: () => value,
+  };
+}
+
+// syncDialog adds and edits a sync, one step at a time: the protocol, the
+// stored server, the folders on both sides and the direction, and when it
+// runs. The server logs in and looks the remote folder up before it writes
+// the sync into the file, at once and with nothing else of the page.
+const syncDialog = (() => {
+  const dialog = document.getElementById("sync-dialog");
+  const form = dialog.querySelector("form");
+  const title = dialog.querySelector("#sync-title");
+  const progress = dialog.querySelector(".progress");
+  const steps = ["protocol", "server", "folders", "schedule"];
+  const next = form.querySelector("button[value='next']");
+  const back = form.querySelector("button[value='back']");
+  const save = form.querySelector("button[value='save']");
+  const noServer = dialog.querySelector("section[data-step='server'] .none");
+  const deleteHint = dialog.querySelector(".delete-hint");
+  const field = (name) => form.elements[name];
+  const remotePicker = folderPicker(dialog.querySelector(".picker[data-side='remote']"),
+    (path) => post("?go-fs=admin-sync-browse", { remote: true, server: field("server").value, path }));
+  const localPicker = folderPicker(dialog.querySelector(".picker[data-side='local']"),
+    (path) => post("?go-fs=admin-sync-browse", { remote: false, path }));
+
+  let record = null;
+  let done = null;
+  let step = 0;
+  let busy = false;
+  // browsed is the server the folders were opened for, so that going back
+  // and on again does not throw away a folder that was chosen
+  let browsed = null;
+
+  function tell(text, bad) {
+    progress.textContent = text;
+    progress.classList.toggle("bad", bad === true);
+    progress.hidden = text === "";
+  }
+
+  function working(on) {
+    busy = on;
+    Array.from(form.elements).forEach((element) => {
+      if (element.value !== "cancel") element.disabled = on;
+    });
+    if (!on) showWhen();
+  }
+
+  function show(at) {
+    step = at;
+    dialog.querySelectorAll("section[data-step]").forEach((section) => {
+      section.hidden = section.dataset.step !== steps[at];
+    });
+    dialog.querySelectorAll(".steps li").forEach((item, i) => {
+      item.classList.toggle("current", i === at);
+      item.classList.toggle("done", i < at);
+    });
+    back.hidden = at === 0;
+    next.hidden = at === steps.length - 1;
+    save.hidden = at !== steps.length - 1;
+    next.disabled = steps[at] === "server" && field("server").options.length === 0;
+    tell("");
+  }
+
+  // valid checks the fields of the step that is open, which is all the
+  // browser can be asked to: those of the other steps are not shown
+  function valid() {
+    const section = dialog.querySelector("section[data-step='" + steps[step] + "']");
+    const fields = Array.from(section.querySelectorAll("input, select")).filter((element) => !element.disabled);
+    return fields.every((element) => element.reportValidity());
+  }
+
+  // servers are the stored servers the protocol reaches, by the name the
+  // file has for them: a server stored by its own dialog a moment ago is
+  // offered at once, and one renamed on the page but not applied yet is
+  // offered by the name it has in the file
+  function servers() {
+    const protocol = syncProtocols.find((p) => p.id === field("protocol").value);
+    const section = schema.sections.find((s) => s.direct && s.tables[0].create === "server");
+    if (!protocol || !section) return [];
+    return (values[section.key] || [])
+      .filter((server) => storedServers.has(server) && protocol.serverTypes.includes(server.type))
+      .map((server) => storedServers.get(server));
+  }
+
+  function showServers() {
+    const names = servers();
+    const select = field("server");
+    const was = select.value || (record ? record.server : "");
+    select.replaceChildren(...names.map((name) => {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      return option;
+    }));
+    const match = names.find((name) => name.toLowerCase() === (was || "").toLowerCase());
+    if (match) select.value = match;
+    noServer.hidden = names.length > 0;
+  }
+
+  function showDelete() {
+    const direction = form.querySelector("input[name='direction']:checked");
+    deleteHint.textContent = {
+      push: "With delete, what the remote folder has and the local one does not is removed from it.",
+      pull: "With delete, what the local folder has and the remote one does not is removed from it, "
+        + "into the trash where there is one.",
+      both: "With delete, a file removed on one side since the last run is removed on the other, locally "
+        + "into the trash where there is one. Without it, the file is copied back.",
+    }[direction ? direction.value : ""] || "";
+  }
+
+  // showWhen shows the fields of the kind of schedule chosen; the others are
+  // switched off, so that they are neither checked nor sent
+  function showWhen() {
+    const chosen = form.querySelector("input[name='when']:checked");
+    form.querySelectorAll("[data-when]").forEach((element) => {
+      const on = chosen && element.dataset.when === chosen.value;
+      element.hidden = !on;
+      element.querySelectorAll("input, select").forEach((input) => (input.disabled = !on || busy));
+      if (element.matches("input, select")) element.disabled = !on || busy;
+    });
+  }
+
+  field("protocol").addEventListener("change", showServers);
+  form.querySelectorAll("input[name='direction']").forEach((radio) => radio.addEventListener("change", showDelete));
+  form.querySelectorAll("input[name='when']").forEach((radio) => radio.addEventListener("change", showWhen));
+
+  next.addEventListener("click", () => {
+    if (busy || !valid()) return;
+    if (steps[step] === "server") {
+      const server = field("server").value;
+      if (browsed !== server) {
+        browsed = server;
+        const same = record && record.server.toLowerCase() === server.toLowerCase();
+        remotePicker.open(same ? record.remoteFolder : "", "");
+        if (localPicker.value() === "") localPicker.open(record ? record.localFolder : "/", "/");
+      }
+    }
+    if (steps[step] === "folders" && !form.querySelector("input[name='direction']:checked")) {
+      tell("Choose which way the files go.", true);
+      return;
+    }
+    show(step + 1);
+  });
+  back.addEventListener("click", () => {
+    if (!busy) show(step - 1);
+  });
+
+  // every is kept as a duration go-fs reads, in minutes or in hours
+  function readEvery(every) {
+    const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:0s)?$/.exec(every || "");
+    const minutes = match ? Number(match[1] || 0) * 60 + Number(match[2] || 0) : 0;
+    if (minutes > 0 && minutes % 60 === 0) return { value: minutes / 60, unit: "h" };
+    return { value: minutes || 60, unit: "m" };
+  }
+
+  form.addEventListener("submit", async (event) => {
+    const pressed = event.submitter ? event.submitter.value : "";
+    if (pressed === "cancel") {
+      return;
+    }
+    event.preventDefault();
+    // Enter in a field of an earlier step goes on to the next one
+    if (step < steps.length - 1) {
+      next.click();
+      return;
+    }
+    if (busy || !valid()) return;
+    const at = form.querySelector("input[name='when']:checked").value === "at";
+    const days = Array.from(form.querySelectorAll("input[name='days']:checked")).map((box) => box.value);
+    if (at && days.length === 0) {
+      tell("Choose the days the sync runs on.", true);
+      return;
+    }
+    working(true);
+    tell("Logging in to the server and looking the folder up…");
+    try {
+      const result = await post("?go-fs=admin-sync-save", {
+        was: record ? storedSyncs.get(record) || "" : "",
+        sync: {
+          name: field("name").value.trim(),
+          enabled: field("enabled").checked,
+          protocol: field("protocol").value,
+          server: field("server").value,
+          remoteFolder: remotePicker.value(),
+          localFolder: localPicker.value(),
+          direction: form.querySelector("input[name='direction']:checked").value,
+          delete: field("delete").checked,
+          every: at ? "" : field("every").value + field("unit").value,
+          at: at ? field("at").value : "",
+          days: at ? days : [],
+        },
+      });
+      working(false);
+      const stored = record || {};
+      Object.assign(stored, result.record);
+      storedSyncs.set(stored, stored.name);
+      syncViews[stored.name] = result.view;
+      openRecords.add(stored);
+      dialog.close();
+      say("The sync " + stored.name + " was written to " + result.path
+        + (result.reload ? ", and runs from the next reload of the file." : "; it runs once go-fs is restarted."),
+        true);
+      done(stored);
+    } catch (error) {
+      working(false);
+      tell(String(error.message || error), true);
+    }
+  });
+
+  dialog.addEventListener("close", () => working(false));
+
+  function open(edited, then) {
+    record = edited;
+    done = then;
+    browsed = null;
+    remotePicker.reset();
+    localPicker.reset();
+    title.textContent = edited ? "Edit sync " + edited.name : "Add sync";
+    const from = edited || {};
+    const select = field("protocol");
+    select.replaceChildren(...syncProtocols.map((p) => {
+      const option = document.createElement("option");
+      option.value = p.id;
+      option.textContent = p.label;
+      return option;
+    }));
+    select.value = from.protocol || (syncProtocols[0] ? syncProtocols[0].id : "");
+    field("server").replaceChildren();
+    showServers();
+    field("name").value = from.name || "";
+    form.querySelectorAll("input[name='direction']").forEach((radio) => {
+      radio.checked = radio.value === (from.direction || "push");
+    });
+    field("delete").checked = from.delete === true;
+    const every = readEvery(from.every);
+    form.querySelectorAll("input[name='when']").forEach((radio) => {
+      radio.checked = radio.value === (from.at ? "at" : "every");
+    });
+    field("every").value = String(every.value);
+    field("unit").value = every.unit;
+    field("at").value = from.at || "02:00";
+    form.querySelectorAll("input[name='days']").forEach((box) => {
+      box.checked = edited ? (from.days || []).includes(box.value) : true;
+    });
+    field("enabled").checked = edited ? from.enabled === true : true;
+    showDelete();
+    working(false);
+    show(0);
+    dialog.showModal();
+    field("name").focus();
+  }
+
+  return { open };
+})();
+
 // tokenNotice shows a secret that was just created, a token or the recovery
 // key of a vault, the one time it is shown, with what text says of it.
 function tokenNotice(token, text) {
@@ -1324,6 +1810,10 @@ function editor(field, holder) {
     input.value = (holder[field.key] || []).join("\n");
     input.addEventListener("input", () =>
       set(input.value.split("\n").map((line) => line.trim()).filter((line) => line !== "")));
+    if (field.readOnly) {
+      input.readOnly = true;
+      input.classList.add("readonly");
+    }
     return { element: input, id };
   }
 

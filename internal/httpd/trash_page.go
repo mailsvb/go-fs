@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/trash"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -101,7 +102,7 @@ func (s *Server) handleTrash(set *settings, w http.ResponseWriter, r *http.Reque
 		return
 	}
 	folder := root.Resolve("/", r.URL.Path)
-	if !folder.Valid || isTrashIndex(folder.Virtual) {
+	if !folder.Valid || trash.IsIndex(folder.Virtual) {
 		http.NotFound(w, r)
 		return
 	}
@@ -186,20 +187,20 @@ func (s *Server) trashPage(set *settings, w http.ResponseWriter, r *http.Request
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	index := func() trashIndex {
-		s.trashMu.Lock()
-		defer s.trashMu.Unlock()
-		return readTrashIndex(set.cfg.TrashFolder)
+	index := func() trash.Index {
+		trash.Lock()
+		defer trash.Unlock()
+		return trash.ReadIndex(set.cfg.TrashFolder)
 	}()
 	order := parseSort(r.URL.Query())
 	kept := sessionParam + "=" + actionTrash
 	rows := make([]trashRow, 0, len(entries))
 	for _, item := range sortEntries(entries, order) {
 		virtual := path.Join(folder.Virtual, item.bare())
-		if folder.Virtual == "/" && (item.bare() == trashIndexName || strings.HasPrefix(item.bare(), trashIndexName+".")) {
+		if folder.Virtual == "/" && (item.bare() == trash.IndexName || strings.HasPrefix(item.bare(), trash.IndexName+".")) {
 			continue
 		}
-		deleted := index.deleted(virtual)
+		deleted := index.Deleted(virtual)
 		if deleted.IsZero() {
 			deleted = item.ModTime
 		}
@@ -317,7 +318,7 @@ func readTrashRequest(w http.ResponseWriter, r *http.Request, folder vfs.Target)
 		return asked, "", false
 	}
 	virtual := path.Join(folder.Virtual, asked.Name)
-	if isTrashIndex(virtual) {
+	if trash.IsIndex(virtual) {
 		http.NotFound(w, r)
 		return asked, "", false
 	}

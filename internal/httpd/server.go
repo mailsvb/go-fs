@@ -95,9 +95,6 @@ type Server struct {
 	// called directly, and a file one of them removes is reported before the
 	// other one looks.
 	sweepMu sync.Mutex
-	// trashMu serializes every change to the trash and its index; see
-	// trash.go.
-	trashMu sync.Mutex
 
 	mu       sync.Mutex
 	shutdown bool

@@ -53,13 +53,18 @@ const (
 	// ActionRepositorySave is the dialog that adds and edits a package
 	// repository; see repositories.go.
 	ActionRepositorySave = "admin-repository-save"
+	// ActionSyncSave, ActionSyncBrowse and ActionSyncRun are the dialog that
+	// adds and edits a sync, and its Run now; see syncs.go.
+	ActionSyncSave   = "admin-sync-save"
+	ActionSyncBrowse = "admin-sync-browse"
+	ActionSyncRun    = "admin-sync-run"
 )
 
 // IsAction reports whether a marker value is one of this interface's.
 func IsAction(value string) bool {
 	switch value {
 	case ActionPage, ActionConfig, ActionUpload, ActionGenerate, ActionServerHostKey, ActionServerSave,
-		ActionRepositorySave:
+		ActionRepositorySave, ActionSyncSave, ActionSyncBrowse, ActionSyncRun:
 		return true
 	}
 	return false
@@ -120,6 +125,10 @@ type state struct {
 	// Repositories what the page shows of each stored one, by name.
 	RepositoryTypes []config.RepositoryType   `json:"repositoryTypes"`
 	Repositories    map[string]repositoryView `json:"repositories"`
+	// SyncProtocols are what the dialog of a sync offers, and Syncs what the
+	// page shows of each stored one, by name.
+	SyncProtocols []config.SyncProtocol `json:"syncProtocols"`
+	Syncs         map[string]syncView   `json:"syncs"`
 }
 
 // ServeHTTP dispatches on the marker. The caller has already decided that the
@@ -151,6 +160,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleServerSave(w, r)
 	case action == ActionRepositorySave && post:
 		h.handleRepositorySave(w, r)
+	case action == ActionSyncSave && post:
+		h.handleSyncSave(w, r)
+	case action == ActionSyncBrowse && post:
+		h.handleSyncBrowse(w, r)
+	case action == ActionSyncRun && post:
+		h.handleSyncRun(w, r)
 	default:
 		switch action {
 		case ActionPage:
@@ -301,6 +316,9 @@ func (h *Handler) handleState(w http.ResponseWriter) {
 
 		RepositoryTypes: config.RepositoryTypes,
 		Repositories:    repositoryViews(cfg),
+
+		SyncProtocols: config.SyncProtocols,
+		Syncs:         syncViews(cfg),
 	}
 	if err := h.writable(); err != nil {
 		body.WriteError = err.Error()
