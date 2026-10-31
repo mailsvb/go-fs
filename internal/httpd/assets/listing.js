@@ -864,10 +864,21 @@
         (!menu || menu.hidden) && (!queue || queue.hidden);
     }
 
+    // pending is what the fetches that stored into this folder said, while
+    // the page waits to be quiet enough to reload
+    var pending = null;
+
+    function reloadWhenQuiet() {
+      if (quiet()) {
+        sayAfterReload(pending);
+        return;
+      }
+      window.setTimeout(reloadWhenQuiet, 500);
+    }
+
     // A transfer that ended is told about once and taken off the list. A
     // fetch that stored into this folder reloads the page to show the file,
-    // unless that would take something from the screen; a send changes
-    // nothing here.
+    // once that takes nothing from the screen; a send changes nothing here.
     function finish(ended) {
       if (ended.length === 0) {
         return;
@@ -883,11 +894,22 @@
           // it is forgotten within the hour anyway
         });
       })).then(function () {
-        if (mine && quiet()) {
-          sayAfterReload(messages);
+        if (!mine) {
+          say(messages, true);
           return;
         }
-        say(mine ? messages + " Reload the page to see it." : messages, true);
+        var waiting = pending !== null;
+        pending = waiting ? pending + " " + messages : messages;
+        if (waiting) {
+          say(pending + " The page reloads when you are done here.", true);
+          return;
+        }
+        if (quiet()) {
+          sayAfterReload(pending);
+          return;
+        }
+        say(pending + " The page reloads when you are done here.", true);
+        reloadWhenQuiet();
       });
     }
 
@@ -1043,6 +1065,64 @@
           timer = window.setTimeout(refresh, wait);
         }
       });
+    }
+
+    // heard is what the server told of a transfer of the account as it
+    // started or ended, or null when the stream opened, which may have been
+    // after something ended. An end is taken from what was told rather than
+    // from the list, since another tab may have taken it off that already.
+    function heard(job) {
+      if (job && job.state === "done" && !told[job.id]) {
+        told[job.id] = true;
+        finish([job]);
+      }
+      refresh();
+    }
+
+    // listen opens the stream the server tells of the transfers on, and
+    // hands each thing it hears to tell. A stream the server refused, as it
+    // does once the session ended, is tried again after a while.
+    function listen(tell) {
+      var source = new EventSource(folder + "?go-fs=events");
+      source.addEventListener("open", function () {
+        tell(null);
+      });
+      source.addEventListener("transfer", function (event) {
+        try {
+          tell(JSON.parse(event.data));
+        } catch (ignored) {
+          // not an event of this page
+        }
+      });
+      source.addEventListener("error", function () {
+        if (source.readyState === EventSource.CLOSED) {
+          window.setTimeout(function () {
+            listen(tell);
+          }, 30000);
+        }
+      });
+    }
+
+    // Each stream holds a connection, and a browser opens only a few to one
+    // server, so one tab holds the stream and hands what it hears to the
+    // others; when it closes, another takes it over.
+    if (window.EventSource) {
+      if (navigator.locks && window.BroadcastChannel) {
+        var channel = new BroadcastChannel("go-fs-transfers");
+        channel.addEventListener("message", function (event) {
+          heard(event.data);
+        });
+        navigator.locks.request("go-fs-transfers", function () {
+          listen(function (job) {
+            channel.postMessage(job);
+            heard(job);
+          });
+          // held for as long as the tab is open
+          return new Promise(function () {});
+        });
+      } else {
+        listen(heard);
+      }
     }
 
     button.addEventListener("click", function () {

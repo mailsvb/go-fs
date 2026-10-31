@@ -120,6 +120,9 @@ type Server struct {
 	// registryJobs are the pulls from and pushes to other registries the
 	// registry page started; see registry_jobs.go.
 	registryJobs registryJobs
+	// transferEvents are the listings that are told when a transfer of their
+	// account starts or ends; see events.go.
+	transferEvents transferEvents
 	// dav holds the locks of the WebDAV clients; see webdav.go.
 	dav davState
 }
@@ -605,6 +608,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// with the listing of its folders that the dialog chooses from
 	if action := remoteFetchAction(r); action != "" {
 		s.handleRemoteFetch(set, w, r, cred, action)
+		return
+	}
+	// and so does the stream that tells a listing about its transfers
+	if eventsAction(r) {
+		s.handleEvents(w, r, cred)
 		return
 	}
 	// and so does browsing a stored server

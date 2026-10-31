@@ -351,6 +351,14 @@ func (s *Server) startJob(kind, owner, what string, run func(ctx context.Context
 	// the shutdown waits for the job, which it stops first
 	s.wg.Add(1)
 	jobs.mu.Unlock()
+	// the listings of the account hear of a transfer of theirs as it starts
+	// and as it ends; see events.go
+	announce := func() {
+		if listingJob(kind) {
+			s.transferEvents.publish(owner, job.view())
+		}
+	}
+	announce()
 
 	go func() {
 		defer s.wg.Done()
@@ -373,6 +381,7 @@ func (s *Server) startJob(kind, owner, what string, run func(ctx context.Context
 		default:
 			job.end(jobFailed, err.Error())
 		}
+		announce()
 	}()
 	return job, nil
 }
