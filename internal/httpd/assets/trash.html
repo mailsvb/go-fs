@@ -19,9 +19,9 @@
   </nav>
   <div class="tools">
     <input id="filter" class="needs-js" type="search" placeholder="Filter&#8230;" aria-label="Filter this folder of the trash">
-    <button id="empty-trash" class="plain needs-js" type="button" title="Delete everything in the trash for good"><svg class="ic"><use href="#i-trash"/></svg>Empty trash</button>
-    {{template "session" .Session}}
+    <button id="empty-trash" class="plain needs-js" type="button" title="Delete everything in the trash for good" aria-label="Empty trash"><svg class="ic"><use href="#i-trash"/></svg><span class="label">Empty trash</span></button>
   </div>
+  {{template "session" .Session}}
 </header>
 
 <div id="banner" class="banner" hidden><span class="text"></span><button type="button" class="close" title="Dismiss" aria-label="Dismiss"><svg class="ic"><use href="#i-close"/></svg></button></div>

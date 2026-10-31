@@ -82,7 +82,7 @@ func TestRegistryListShowsEveryTagWithItsPlatforms(t *testing.T) {
 		`<span class="badge" title="linux/arm64">arm64</span>`,
 		`>tool<wbr>:latest<`,
 		`<span class="badge" title="linux/arm/v7">arm/v7</span>`,
-		`<summary class="plain"><svg class="ic"><use href="#i-box"/></svg>Registry<`,
+		`<summary class="plain" title="Registry" aria-label="Registry"><svg class="ic"><use href="#i-box"/></svg><span class="label">Registry<`,
 		`<a href="/"><svg class="ic"><use href="#i-folder"/></svg>Files</a>`,
 		`aria-label="Options for team/app:1.0"`,
 		`data-pull="docker pull 127.0.0.1:`,
@@ -185,7 +185,7 @@ func TestRegistryFolderView(t *testing.T) {
 		`>1 repository<`,
 		`href="/?go-fs=registry&amp;path=tool&amp;view=tree">tool<`,
 		`>1 tag<`,
-		`aria-current="page"><svg class="ic"><use href="#i-folder"/></svg>Folders`,
+		`aria-current="page" title="Folders" aria-label="Folders"><svg class="ic"><use href="#i-folder"/></svg><span class="label">Folders`,
 	} {
 		if !strings.Contains(top, want) {
 			t.Errorf("the top of the folder view lacks %s", want)

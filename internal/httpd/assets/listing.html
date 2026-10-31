@@ -23,17 +23,17 @@
     {{end}}
     <input id="filter" class="needs-js" type="search" placeholder="Filter&#8230;" aria-label="Filter this folder">
     {{if .Rights.Mkdir}}
-    <button id="new-folder" class="plain needs-js" type="button"><svg class="ic"><use href="#i-folder-plus"/></svg>New folder</button>
+    <button id="new-folder" class="plain needs-js" type="button" title="New folder" aria-label="New folder"><svg class="ic"><use href="#i-folder-plus"/></svg><span class="label">New folder</span></button>
     {{end}}
     {{if .Rights.Upload}}
-    <button id="upload" class="plain needs-js" type="button"><svg class="ic"><use href="#i-upload"/></svg>Upload or Drop file</button>
+    <button id="upload" class="plain needs-js" type="button" title="Upload" aria-label="Upload"><svg class="ic"><use href="#i-upload"/></svg><span class="label">Upload or Drop file</span></button>
     <input id="picker" type="file" multiple hidden>
     {{end}}
     {{if .Rights.Fetch}}
-    <button id="fetch" class="plain needs-js" type="button"><svg class="ic"><use href="#i-download"/></svg>Fetch</button>
+    <button id="fetch" class="plain needs-js" type="button" title="Fetch" aria-label="Fetch"><svg class="ic"><use href="#i-download"/></svg><span class="label">Fetch</span></button>
     {{end}}
-    {{template "session" .Session}}
   </div>
+  {{template "session" .Session}}
 </header>
 
 <div id="banner" class="banner"{{if not .Error}} hidden{{end}}><span class="text">{{.Error}}</span><button type="button" class="close" title="Dismiss" aria-label="Dismiss"><svg class="ic"><use href="#i-close"/></svg></button></div>

@@ -115,7 +115,7 @@ func TestRemotePageListsAFolderOfTheServer(t *testing.T) {
 		`href="/?go-fs=remote&amp;server=Backup&amp;path=` + url.QueryEscape(home+"Beta") + `"`,
 		// the menu is named after the server and leads back to the files
 		`<a href="/"><svg class="ic"><use href="#i-folder"/></svg>Files</a>`,
-		`#i-server"/></svg>Backup<svg`,
+		`#i-server"/></svg><span class="label">Backup</span><svg`,
 		`data-do="rename"`, `data-do="delete"`, `id="upload"`, `id="new-folder"`,
 	} {
 		if !strings.Contains(body, want) {

@@ -45,14 +45,26 @@
   })();
 
   // The headings of the table stick just below the header, so they need its
-  // height, which changes as the header wraps.
+  // height, which changes as the header wraps. On a phone the path is one line
+  // that scrolls, and it is scrolled to its end, to the folder the page is in.
   (function () {
     var header = document.querySelector("body > header");
-    if (!header || !window.ResizeObserver) {
+    if (!header) {
+      return;
+    }
+    var crumbs = header.querySelector(".crumbs");
+    function toEnd() {
+      if (crumbs) {
+        crumbs.scrollLeft = crumbs.scrollWidth;
+      }
+    }
+    toEnd();
+    if (!window.ResizeObserver) {
       return;
     }
     new ResizeObserver(function () {
       document.documentElement.style.setProperty("--header-height", header.getBoundingClientRect().height + "px");
+      toEnd();
     }).observe(header);
   })();
 

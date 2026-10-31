@@ -20,14 +20,14 @@
   <div class="tools">
     <input id="filter" class="needs-js" type="search" placeholder="Filter&#8230;" aria-label="Filter the registry">
     <nav class="views" aria-label="View">
-      <a class="plain" href="{{.List}}"{{if not .Tree}} aria-current="page"{{end}}><svg class="ic"><use href="#i-list"/></svg>List</a>
-      <a class="plain" href="{{.Folders}}"{{if .Tree}} aria-current="page"{{end}}><svg class="ic"><use href="#i-folder"/></svg>Folders</a>
+      <a class="plain" href="{{.List}}"{{if not .Tree}} aria-current="page"{{end}} title="List" aria-label="List"><svg class="ic"><use href="#i-list"/></svg><span class="label">List</span></a>
+      <a class="plain" href="{{.Folders}}"{{if .Tree}} aria-current="page"{{end}} title="Folders" aria-label="Folders"><svg class="ic"><use href="#i-folder"/></svg><span class="label">Folders</span></a>
     </nav>
-    {{if .Write}}<button id="pull-image" class="plain needs-js" type="button"><svg class="ic"><use href="#i-download"/></svg>Pull image</button>{{end}}
-    {{if .Write}}<button id="import-image" class="plain needs-js" type="button" title="Store the images of an archive docker save or a similar tool wrote"><svg class="ic"><use href="#i-upload"/></svg>Import</button>{{end}}
-    {{if .Write}}<button id="clean-up" class="plain needs-js" type="button" title="Remove the blobs no image refers to"><svg class="ic"><use href="#i-trash"/></svg>Clean up</button>{{end}}
-    {{template "session" .Session}}
+    {{if .Write}}<button id="pull-image" class="plain needs-js" type="button" title="Pull image" aria-label="Pull image"><svg class="ic"><use href="#i-download"/></svg><span class="label">Pull image</span></button>{{end}}
+    {{if .Write}}<button id="import-image" class="plain needs-js" type="button" title="Store the images of an archive docker save or a similar tool wrote" aria-label="Import"><svg class="ic"><use href="#i-upload"/></svg><span class="label">Import</span></button>{{end}}
+    {{if .Write}}<button id="clean-up" class="plain needs-js" type="button" title="Remove the blobs no image refers to" aria-label="Clean up"><svg class="ic"><use href="#i-trash"/></svg><span class="label">Clean up</span></button>{{end}}
   </div>
+  {{template "session" .Session}}
 </header>
 
 <div id="banner" class="banner" hidden><span class="text"></span><button type="button" class="close" title="Dismiss" aria-label="Dismiss"><svg class="ic"><use href="#i-close"/></svg></button></div>
