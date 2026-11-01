@@ -193,3 +193,40 @@ func TestRepositorySaveFDroid(t *testing.T) {
 		t.Errorf("an address not ending in /repo: %d %s", status, body)
 	}
 }
+
+func TestRepositorySaveJellyfin(t *testing.T) {
+	skipWithout(t, features.Jellyfin)
+	path := testConfig(t)
+	_, front := testServer(t, path)
+	status, body := postServer(t, front, ActionRepositorySave, repositorySaveBody{Repository: repositoryJSON{
+		Name: "music", Type: "jellyfin", Folder: "/music", Title: " Our music ", PollInterval: 60,
+	}})
+	if status != http.StatusOK {
+		t.Fatalf("save: %d %s", status, body)
+	}
+	var answer struct {
+		View repositoryView `json:"view"`
+	}
+	json.Unmarshal([]byte(body), &answer)
+	if answer.View.Key != "" {
+		t.Errorf("a library is described as signing with %q", answer.View.Key)
+	}
+	repo := loadRepositories(t, path).Repositories[0]
+	if repo.Type != "jellyfin" || repo.Title != "Our music" || repo.SigningKey != "" || repo.Keep != 0 {
+		t.Errorf("stored %+v", repo)
+	}
+
+	// a key posted for it is not kept, and keep is refused
+	status, body = postServer(t, front, ActionRepositorySave, repositorySaveBody{Was: "music", Repository: repositoryJSON{
+		Name: "music", Type: "jellyfin", Folder: "/music", SigningKey: "c29tZXRoaW5n",
+	}})
+	if status != http.StatusOK || loadRepositories(t, path).Repositories[0].SigningKey != "" {
+		t.Errorf("a key posted for a library: %d %s", status, body)
+	}
+	status, body = postServer(t, front, ActionRepositorySave, repositorySaveBody{Was: "music", Repository: repositoryJSON{
+		Name: "music", Type: "jellyfin", Folder: "/music", Keep: 2,
+	}})
+	if status != http.StatusBadRequest || !strings.Contains(body, "keep is 0") {
+		t.Errorf("keep for a library: %d %s", status, body)
+	}
+}

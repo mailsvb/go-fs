@@ -23,8 +23,9 @@ type Repository struct {
 	// the repository a client adds. Letters, digits, dots, dashes and
 	// underscores; unique, whatever its case.
 	Name string `toml:"name"`
-	// Type is the kind of repository: rpm, for zypper and dnf, or fdroid,
-	// for the F-Droid app on Android.
+	// Type is the kind of repository: rpm, for zypper and dnf, fdroid, for
+	// the F-Droid app on Android, or jellyfin, a music library Jellyfin
+	// clients browse and play.
 	Type string `toml:"type"`
 	// Folder is where the repository is, a folder of general.baseFolderFiles
 	// as the file listing shows it, such as /rpm/go-fs. It has to exist.
@@ -35,11 +36,13 @@ type Repository struct {
 	// metadata. For fdroid it is a certificate and its private key, PEM, one
 	// after the other, which sign the index; clients add the repository by
 	// the fingerprint of the certificate, so it is not to change. It is kept
-	// as it is, so keep this file private.
+	// as it is, so keep this file private. A jellyfin repository signs
+	// nothing and has none.
 	SigningKey string `toml:"signingKey"`
 	// Keep is how many versions of each package, by name and architecture,
 	// stay in the folder; older ones are removed. 0 keeps every version. An
-	// APK is a version of its package name, by its versionCode.
+	// APK is a version of its package name, by its versionCode. A jellyfin
+	// repository removes nothing, and keep is 0 for it.
 	Keep int `toml:"keep"`
 	// PollInterval is how often, in seconds, the folder is looked at for
 	// packages that were added, replaced or removed. 60 when not set.
@@ -50,9 +53,10 @@ type Repository struct {
 	// fdroid repository has to have one, ending in /repo, which is the
 	// address the client is given and the index names.
 	URL string `toml:"url,omitempty"`
-	// Title is the name the F-Droid app shows of an fdroid repository, the
+	// Title is the name the F-Droid app shows of an fdroid repository, or
+	// the name of the library Jellyfin clients show of a jellyfin one; the
 	// name when not set.
-	Title string `toml:"title,omitempty" feature:"fdroid"`
+	Title string `toml:"title,omitempty" feature:"fdroid,jellyfin"`
 	// Description is the text the F-Droid app shows of an fdroid
 	// repository.
 	Description string `toml:"description,omitempty" feature:"fdroid"`
@@ -101,12 +105,17 @@ const RepositoryTypeRPM = "rpm"
 // app on Android.
 const RepositoryTypeFDroid = "fdroid"
 
+// RepositoryTypeJellyfin is a music library, which Jellyfin clients browse
+// and play over the HTTP server.
+const RepositoryTypeJellyfin = "jellyfin"
+
 // allRepositoryTypes are the kinds a repository may be, whether the binary was
 // built with them or not. Another one is added here and given an
 // implementation in internal/repository.
 var allRepositoryTypes = []RepositoryType{
 	{ID: RepositoryTypeRPM, Label: "rpm (zypper, dnf)", feature: features.RPM},
 	{ID: RepositoryTypeFDroid, Label: "F-Droid (Android)", feature: features.FDroid},
+	{ID: RepositoryTypeJellyfin, Label: "Jellyfin (music)", feature: features.Jellyfin},
 }
 
 // RepositoryTypes are the kinds a repository may be in this binary: those of
@@ -147,13 +156,34 @@ func (c Config) UsableRepositories() []Repository {
 	return usable
 }
 
+// NeedsSigningKey reports whether a repository of type typ signs, and has to
+// have a signingKey: a jellyfin repository writes nothing a client checks.
+func NeedsSigningKey(typ string) bool {
+	return typ != RepositoryTypeJellyfin
+}
+
 // SigningKeyKind is the kind of key material a repository of type typ signs
-// with.
+// with, "" for one that signs nothing.
 func SigningKeyKind(typ string) string {
-	if typ == RepositoryTypeFDroid {
+	switch typ {
+	case RepositoryTypeFDroid:
 		return KindJARKey
+	case RepositoryTypeJellyfin:
+		return ""
 	}
 	return KindPGPKey
+}
+
+// JellyfinFolders are the folders of the jellyfin repositories the binary
+// keeps, which only an account reads.
+func (c Config) JellyfinFolders() []string {
+	var folders []string
+	for _, repo := range c.UsableRepositories() {
+		if repo.Type == RepositoryTypeJellyfin {
+			folders = append(folders, repo.Folder)
+		}
+	}
+	return folders
 }
 
 // RepositoryTypeOf looks a kind of repository up by its ID.
@@ -279,11 +309,17 @@ func (c Config) validateRepositories() error {
 		}
 		folders = append(folders, onDisk)
 
-		if strings.TrimSpace(repo.SigningKey) == "" {
+		switch {
+		case !NeedsSigningKey(repo.Type):
+			if strings.TrimSpace(repo.SigningKey) != "" {
+				return fmt.Errorf("%s: a %s repository signs nothing and has no signingKey", where, repo.Type)
+			}
+		case strings.TrimSpace(repo.SigningKey) == "":
 			return fmt.Errorf("%s has no signingKey", where)
-		}
-		if _, err := Decode(SigningKeyKind(repo.Type), repo.SigningKey); err != nil {
-			return fmt.Errorf("%s: signingKey %w", where, err)
+		default:
+			if _, err := Decode(SigningKeyKind(repo.Type), repo.SigningKey); err != nil {
+				return fmt.Errorf("%s: signingKey %w", where, err)
+			}
 		}
 		if repo.Keep < 0 {
 			return fmt.Errorf("%s: keep cannot be negative", where)
@@ -299,6 +335,9 @@ func (c Config) validateRepositories() error {
 		if err := repo.validateFDroid(); err != nil {
 			return fmt.Errorf("%s: %w", where, err)
 		}
+		if err := repo.validateJellyfin(); err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
 	}
 	return nil
 }
@@ -310,7 +349,10 @@ const maxTitle = 50
 // that a repository of another type sets none of it.
 func (r Repository) validateFDroid() error {
 	if r.Type != RepositoryTypeFDroid {
-		for key, value := range map[string]string{"title": r.Title, "description": r.Description, "icon": r.Icon} {
+		if r.Title != "" && r.Type != RepositoryTypeJellyfin {
+			return errors.New("title is for an fdroid or a jellyfin repository only")
+		}
+		for key, value := range map[string]string{"description": r.Description, "icon": r.Icon} {
 			if value != "" {
 				return fmt.Errorf("%s is for an fdroid repository only", key)
 			}
@@ -340,6 +382,21 @@ func (r Repository) validateFDroid() error {
 		if ext != ".png" && ext != ".jpg" && ext != ".webp" {
 			return fmt.Errorf("icon %q has to be a .png, .jpg or .webp image", r.Icon)
 		}
+	}
+	return nil
+}
+
+// validateJellyfin checks what is particular to a jellyfin repository: its
+// files are music, of which there are no versions to remove.
+func (r Repository) validateJellyfin() error {
+	if r.Type != RepositoryTypeJellyfin {
+		return nil
+	}
+	if r.Keep != 0 {
+		return errors.New("keep is 0 for a jellyfin repository, which removes nothing")
+	}
+	if len([]rune(r.Title)) > maxTitle {
+		return fmt.Errorf("title has to be at most %d characters", maxTitle)
 	}
 	return nil
 }

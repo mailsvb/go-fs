@@ -57,7 +57,7 @@ type Config struct {
 	Servers []Server `toml:"servers"`
 	// Repositories are the package repositories go-fs keeps in folders the
 	// http server serves.
-	Repositories []Repository `toml:"repositories" feature:"rpm,fdroid"`
+	Repositories []Repository `toml:"repositories" feature:"rpm,fdroid,jellyfin"`
 	// Syncs keep folders the servers serve and folders of stored servers
 	// alike, on a schedule.
 	Syncs []Sync `toml:"syncs" feature:"sftp-remote"`
@@ -848,6 +848,10 @@ type HTTP struct {
 	// general.trashRetentionDays, which Resolved hands the server.
 	TrashFolder        string `toml:"-"`
 	TrashRetentionDays int    `toml:"-"`
+	// JellyfinFolders are the folders of the jellyfin repositories, which
+	// Resolved hands the server: only an account reads them, and Jellyfin
+	// clients are answered while there is one.
+	JellyfinFolders []string `toml:"-"`
 	// SessionTokenLifetime is how long a browser that logged in with the
 	// login form stays logged in without being used, in seconds. Every
 	// request it makes in the second half of that window renews its token,
@@ -1199,6 +1203,7 @@ func (c Config) Resolved() Config {
 	c.HTTP.UploadStagingFolder = c.General.BaseFolderTemp
 	c.HTTP.TrashFolder = c.General.BaseFolderTrash
 	c.HTTP.TrashRetentionDays = c.General.TrashRetentionDays
+	c.HTTP.JellyfinFolders = c.JellyfinFolders()
 	return c
 }
 

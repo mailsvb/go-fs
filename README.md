@@ -1256,9 +1256,10 @@ swept as the hourly cleanup sweeps them.
 
 ### Package repository
 
-go-fs can host an rpm repository for zypper and dnf, or an
-[F-Droid repository](#f-droid-repository) for Android, in a folder it serves
-over HTTP, and keep it up to date by itself. Put an rpm into the folder over any of
+go-fs can host an rpm repository for zypper and dnf, an
+[F-Droid repository](#f-droid-repository) for Android, or a
+[music library for Jellyfin clients](#jellyfin-music-library), in a folder it
+serves over HTTP, and keep it up to date by itself. Put an rpm into the folder over any of
 the servers (an HTTP `PUT`, S3, FTP, SFTP, TFTP) or copy it there on disk. At
 the next look at the folder, go-fs:
 
@@ -1376,6 +1377,66 @@ fdroidserver's names (`name.txt`, `summary.txt`, `description.txt`) work too.
 The default language is `en-US`. A change to these files is picked up at the
 next look, as a new APK is. As for rpm, the folder has to be public for
 reading.
+
+#### Jellyfin music library
+
+With `type = "jellyfin"` the folder is a music library that
+[Jellyfin](https://jellyfin.org) clients such as Finamp, Symfonium, Feishin and
+the Jellyfin apps browse, play and download from, as they would from a
+Jellyfin server. go-fs is not a Jellyfin server: it answers the part of the
+API those clients need for music, and plays every file as it is. Nothing is
+transcoded, so a client gets the FLAC or Opus file itself and has to be able
+to play it.
+
+```toml
+[[repositories]]
+name = "music"
+type = "jellyfin"
+folder = "/music"
+title = "Our music"             # optional, the library's name in the clients; name when not set
+url = "https://files.example.com"   # optional, the address the admin page tells clients to add
+```
+
+It differs from the package repositories in these ways:
+
+- **Nothing is removed or signed.** There is no `signingKey`, and `keep` is 0.
+  The audio files are `.mp3`, `.flac`, `.m4a`, `.aac`, `.ogg`, `.oga`,
+  `.opus` and `.wav`, in any folder below the library's.
+- **The index is kept in memory**, not written into the folder. It is built
+  at start and again whenever a file or a cover changes. Albums, artists and
+  genres come from the tags: ID3, Vorbis comments, MP4. A file without tags is
+  named after itself, its album after its folder, and its artist after the
+  folder above. Tracks with an album artist tag are grouped by album artist
+  and album. Tracks without one are grouped by album within one folder, so a
+  compilation stays one album, by Various Artists.
+- **Covers** are `cover`, `folder`, `front` or `album` `.jpg`, `.jpeg`,
+  `.png` or `.webp` beside the tracks. Otherwise the picture embedded in a
+  track is used. Images are sent at their own size.
+- **The API is answered at the root of the HTTP server.** In the client, add
+  `https://files.example.com`, the server rather than the folder. Requests
+  that come from a Jellyfin client are recognized by the `MediaBrowser`
+  Authorization header or the token they carry, so a browser still reaches
+  the files. Only the few paths a client asks before it has logged in are
+  always the API: `/System/Info/Public`, `/System/Ping`, `/Users/Public`,
+  `/Branding/…` and `/QuickConnect/Enabled`. go-fs logs a warning when the
+  served folder has a `System`, `Users`, `Branding` or `QuickConnect` folder
+  those paths would hide.
+- **Clients log in with the accounts of go-fs** that set `http`. A client is
+  given a token that lasts a year and stops working when the account's
+  password changes. An account sees the tracks it may read, by its `paths` and
+  `allowUserFileRetrieve`, and the albums, artists and genres of those. A
+  library it can read nothing of is not shown to it.
+- **The folder needs an account.** It is protected as if it were in
+  `pathsRequireAuth`, over HTTP and WebDAV. TFTP knows no accounts and serves
+  it like any other folder, so keep TFTP off, or its folder elsewhere, where
+  the music is private.
+- Play counts, favorites, playlists and resume positions are not kept. A
+  client that sets them is told it worked, and the change is gone with the next
+  answer.
+
+The record of a library on the REPOSITORY tab shows how many tracks and
+albums it has, and the address clients add. A binary built with the tag
+`no_jellyfin`, and go-fs-light, have no music library.
 
 ### Updating over HTTP
 

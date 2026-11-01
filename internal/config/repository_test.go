@@ -145,7 +145,14 @@ func TestFDroidRepositories(t *testing.T) {
 		{"an icon out of the folder", func(r *Repository) { r.Icon = "/../icon.png" }, "leaves the served folder"},
 		{"an icon that is no image", func(r *Repository) { r.Icon = "/icon.svg" }, ".png, .jpg or .webp"},
 		{"title on rpm", func(r *Repository) { r.Type = RepositoryTypeRPM; r.SigningKey = testSigningKey(t) },
-			"for an fdroid repository only"},
+			"for an fdroid or a jellyfin repository only"},
+		{"description on rpm", func(r *Repository) {
+			r.Type = RepositoryTypeRPM
+			r.SigningKey = testSigningKey(t)
+			r.Title = ""
+			r.Icon = ""
+			r.Description = "x"
+		}, "description is for an fdroid repository only"},
 	}
 	for _, c := range cases {
 		cfg := servingConfig(folder)
@@ -162,6 +169,53 @@ func TestFDroidRepositories(t *testing.T) {
 	}
 	if got := (Repository{Name: "android"}).DisplayName(); got != "android" {
 		t.Errorf("display name without a title %q", got)
+	}
+}
+
+func TestJellyfinRepositories(t *testing.T) {
+	skipWithout(t, features.Jellyfin, features.RPM)
+	folder := t.TempDir()
+	mkdir(t, folder, "music")
+	mkdir(t, folder, "other")
+	good := Repository{Name: "music", Type: RepositoryTypeJellyfin, Folder: "/music", Title: "Our music"}
+	valid := servingConfig(folder)
+	valid.Repositories = []Repository{good}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("a valid jellyfin repository is refused: %v", err)
+	}
+	if got := valid.Resolved().HTTP.JellyfinFolders; len(got) != 1 || got[0] != "/music" {
+		t.Errorf("the folders the http server protects = %q", got)
+	}
+	rpm := Repository{Name: "rpm", Type: RepositoryTypeRPM, Folder: "/other", SigningKey: testSigningKey(t)}
+	valid.Repositories = append(valid.Repositories, rpm)
+	if got := valid.JellyfinFolders(); len(got) != 1 || got[0] != "/music" {
+		t.Errorf("the folders of the jellyfin repositories = %q", got)
+	}
+
+	cases := []struct {
+		name   string
+		change func(*Repository)
+		want   string
+	}{
+		{"a signing key", func(r *Repository) { r.SigningKey = testSigningKey(t) }, "has no signingKey"},
+		{"keep", func(r *Repository) { r.Keep = 3 }, "keep is 0"},
+		{"a long title", func(r *Repository) { r.Title = strings.Repeat("x", 51) }, "at most 50"},
+		{"an icon", func(r *Repository) { r.Icon = "/icon.png" }, "icon is for an fdroid repository only"},
+		{"a description", func(r *Repository) { r.Description = "x" }, "description is for an fdroid"},
+		{"bad url", func(r *Repository) { r.URL = "ftp://x" }, "https:// or http://"},
+	}
+	for _, c := range cases {
+		cfg := servingConfig(folder)
+		repo := good
+		c.change(&repo)
+		cfg.Repositories = []Repository{repo}
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: got %v, want %q", c.name, err, c.want)
+		}
+	}
+	if NeedsSigningKey(RepositoryTypeJellyfin) || SigningKeyKind(RepositoryTypeJellyfin) != "" {
+		t.Error("a jellyfin repository asks for a signing key")
 	}
 }
 

@@ -149,8 +149,11 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 
 // Status is what the admin interface shows of a repository.
 type Status struct {
-	// Packages is how many packages the metadata lists.
+	// Packages is how many packages the metadata lists, the tracks of a
+	// jellyfin repository.
 	Packages int `json:"packages"`
+	// Albums is how many albums the library of a jellyfin repository has.
+	Albums int `json:"albums,omitempty"`
 	// Built is when the metadata was last written, zero when it never was.
 	Built time.Time `json:"built,omitzero"`
 	// Checked is when the folder was last looked at.

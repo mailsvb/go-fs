@@ -35,6 +35,17 @@ type kind interface {
 	written() bool
 }
 
+// retirer is a kind that has to know when its repository stops, because what
+// it keeps is somewhere other than the folder.
+type retirer interface {
+	retire()
+}
+
+// reporter is a kind that adds to the status after it wrote the metadata.
+type reporter interface {
+	report(status *Status)
+}
+
 // release is a version of a package, as the runner prunes them.
 type release interface {
 	// group is the same for the versions of one package.

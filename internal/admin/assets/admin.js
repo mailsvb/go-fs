@@ -1016,10 +1016,18 @@ function repositoryView(record, view) {
   if (!status) {
     box.append(paragraph("Not running yet: it starts once go-fs has read the file again.", ""));
   } else {
-    const packages = status.packages === 1 ? "1 package" : status.packages + " packages";
-    let text = status.built
-      ? packages + ", metadata written " + when(status.built) + "."
-      : "No metadata written yet.";
+    const count = (n, one, many) => n === 1 ? "1 " + one : n + " " + many;
+    let text;
+    if (record.type === "jellyfin") {
+      text = status.built
+        ? count(status.packages, "track", "tracks") + " on " + count(status.albums || 0, "album", "albums")
+          + ", library built " + when(status.built) + "."
+        : "The library is not built yet.";
+    } else {
+      text = status.built
+        ? count(status.packages, "package", "packages") + ", metadata written " + when(status.built) + "."
+        : "No metadata written yet.";
+    }
     if (status.checked) text += " Folder last looked at " + when(status.checked) + ".";
     box.append(paragraph(text, ""));
     if (status.error) {
@@ -1067,6 +1075,7 @@ function fdroidLinks(record, view) {
 // address and the fingerprint of its key.
 function clientCommands(record, view) {
   if (record.type === "fdroid") return fdroidLinks(record, view);
+  if (record.type === "jellyfin") return jellyfinServer(record);
   const out = [];
   if (record.type !== "rpm") return out;
   const pre = (text) => {
@@ -1089,6 +1098,15 @@ function clientCommands(record, view) {
     pre("sudo dnf config-manager addrepo --id=" + record.name + " --set=baseurl=" + base
       + " --set=gpgcheck=1 --set=repo_gpgcheck=1 --set=gpgkey=" + base + "/repodata/repomd.xml.key"));
   return out;
+}
+
+// jellyfinServer is what a Jellyfin client is given: the address of the
+// server, at whose root the library is, and an account of go-fs.
+function jellyfinServer(record) {
+  const pre = document.createElement("pre");
+  pre.textContent = record.url || location.origin;
+  return [paragraph("In a Jellyfin client, such as Finamp, Symfonium or Feishin, add this server and log in with "
+    + "an account that sets http and may read the folder:", ""), pre];
 }
 
 function when(timestamp) {
@@ -1148,11 +1166,18 @@ const repositoryDialog = (() => {
   function showType() {
     const type = field("type").value;
     form.querySelectorAll("[data-type]").forEach((element) => {
-      element.hidden = element.dataset.type !== type;
+      element.hidden = !element.dataset.type.split(" ").includes(type);
     });
-    field("url").placeholder = type === "fdroid"
-      ? "https://files.example.com/android/repo, ending in /repo; required"
-      : "https://files.example.com/rpm/go-fs, for the .repo file";
+    form.querySelectorAll("[data-not-type]").forEach((element) => {
+      element.hidden = element.dataset.notType.split(" ").includes(type);
+    });
+    field("url").placeholder = {
+      fdroid: "https://files.example.com/android/repo, ending in /repo; required",
+      jellyfin: "https://files.example.com, what clients are given; this page's when empty",
+    }[type] || "https://files.example.com/rpm/go-fs, for the .repo file";
+    field("title").placeholder = type === "jellyfin"
+      ? "the name clients show of the library; the name when empty"
+      : "the name the F-Droid app shows; the name when empty";
     field("url").required = type === "fdroid";
     if (key !== "") return;
     const view = record ? repositoryViews[storedRepositories.get(record)] : null;
@@ -1216,11 +1241,11 @@ const repositoryDialog = (() => {
           name: field("name").value.trim(),
           type: field("type").value,
           folder: field("folder").value.trim(),
-          signingKey: key,
-          keep: Number(field("keep").value) || 0,
+          signingKey: type === "jellyfin" ? "" : key,
+          keep: type === "jellyfin" ? 0 : Number(field("keep").value) || 0,
           pollInterval: Number(field("pollInterval").value) || 0,
           url: field("url").value.trim(),
-          title: type === "fdroid" ? field("title").value.trim() : "",
+          title: type === "fdroid" || type === "jellyfin" ? field("title").value.trim() : "",
           description: type === "fdroid" ? field("description").value.trim() : "",
           icon: type === "fdroid" ? field("icon").value.trim() : "",
         },

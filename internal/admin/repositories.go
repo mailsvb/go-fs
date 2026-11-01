@@ -125,11 +125,16 @@ func (h *Handler) handleRepositorySave(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
-	// the key stays the one stored unless another was made or uploaded
-	if repo.SigningKey == "" && index >= 0 {
+	switch {
+	case !config.NeedsSigningKey(repo.Type):
+		// a repository that signs nothing keeps no key, not even the one of
+		// the kind it was before
+		repo.SigningKey = ""
+	case repo.SigningKey == "" && index >= 0:
+		// the key stays the one stored unless another was made or uploaded
 		repo.SigningKey = cfg.Repositories[index].SigningKey
 	}
-	if repo.SigningKey == "" {
+	if repo.SigningKey == "" && config.NeedsSigningKey(repo.Type) {
 		http.Error(w, "generate or upload the key the repository signs with", http.StatusBadRequest)
 		return
 	}

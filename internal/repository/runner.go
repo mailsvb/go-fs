@@ -103,6 +103,9 @@ func (r *runner) stop() {
 	if r.launched {
 		<-r.done
 	}
+	if k, ok := r.kind.(retirer); ok {
+		k.retire()
+	}
 }
 
 func (r *runner) stopped() bool {
@@ -183,6 +186,9 @@ func (r *runner) update(now time.Time) error {
 	r.listed = listing
 	r.status.Packages = len(entries)
 	r.status.Built = now
+	if k, ok := r.kind.(reporter); ok {
+		k.report(&r.status)
+	}
 	r.log.Info("repository metadata written", "packages", len(entries))
 	return nil
 }

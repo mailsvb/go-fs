@@ -27,10 +27,14 @@ var contentTypes = map[string]contentType{
 	".ico":  {"image/x-icon", "Image"},
 
 	// Audio
-	".mp3": {"audio/mpeg", "Audio"},
-	".wav": {"audio/wav", "Audio"},
-	".ogg": {"audio/ogg", "Audio"},
-	".m4a": {"audio/mp4", "Audio"},
+	".mp3":  {"audio/mpeg", "Audio"},
+	".wav":  {"audio/wav", "Audio"},
+	".ogg":  {"audio/ogg", "Audio"},
+	".m4a":  {"audio/mp4", "Audio"},
+	".flac": {"audio/flac", "Audio"},
+	".opus": {"audio/ogg", "Audio"},
+	".oga":  {"audio/ogg", "Audio"},
+	".aac":  {"audio/aac", "Audio"},
 
 	// Video
 	".mp4":  {"video/mp4", "Video"},

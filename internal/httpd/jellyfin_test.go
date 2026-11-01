@@ -1,0 +1,408 @@
+//go:build !light && !no_jellyfin
+
+package httpd
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mailsvb/go-fs/internal/audio"
+	"github.com/mailsvb/go-fs/internal/audio/audiotest"
+	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/jellyfin"
+)
+
+// newJellyfinServer serves a library in /music of two albums: one of a band,
+// with a cover beside it, and one of someone else, whose track carries its
+// picture. john reads everything; anna reads the band only.
+func newJellyfinServer(t *testing.T, tune func(*httpConfig)) (*testServer, *jellyfin.Library) {
+	t.Helper()
+	anna := readOnlyUser("anna", "secret")
+	anna.Paths = []string{"^/music/Band/.*"}
+	server := newServer(t, func(cfg *httpConfig) {
+		publicServer(cfg)
+		cfg.JellyfinFolders = []string{"/music"}
+		cfg.Users = append(cfg.Users, anna)
+		if tune != nil {
+			tune(cfg)
+		}
+	})
+	files := map[string][]byte{
+		"Band/First/01 One.mp3": audiotest.MP3(audiotest.Tags{Title: "One", Artist: "The Band",
+			AlbumArtist: "The Band", Album: "First", Track: 1, Year: 2001, Genre: "Rock"}, 200, true),
+		"Band/First/02 Two.mp3": audiotest.MP3(audiotest.Tags{Title: "Two", Artist: "The Band",
+			AlbumArtist: "The Band", Album: "First", Track: 2, Year: 2001, Genre: "Rock"}, 100, true),
+		"Band/First/cover.png": audiotest.PNG,
+		"Other/Solo/song.flac": audiotest.FLAC(audiotest.Tags{Title: "Solo song", Artist: "Someone",
+			Album: "Solo", Genre: "Jazz", Picture: audiotest.PNG}, 30),
+	}
+	var sources []jellyfin.Source
+	var hrefs []string
+	for href, content := range files {
+		path := server.write(t, "music/"+href, string(content))
+		if !strings.HasSuffix(href, ".png") {
+			track, err := audio.Read(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sources = append(sources, jellyfin.Source{Href: href, Size: int64(len(content)),
+				ModTime: time.Now(), Track: track})
+			hrefs = append(hrefs, href)
+		}
+	}
+	onDisk := filepath.Join(server.base, "music")
+	library := jellyfin.Build("music", "Our music", "/music", onDisk, sources,
+		jellyfin.Covers(onDisk, jellyfin.Folders(hrefs)), time.Now())
+	jellyfin.Publish(library)
+	t.Cleanup(func() { jellyfin.Retire("music") })
+	return server, library
+}
+
+const jellyfinHeader = `MediaBrowser Client="Test", Device="Desk", DeviceId="d1", Version="1.0"`
+
+// jf sends a request as a Jellyfin client does, with its token when it has
+// one.
+func jf(t *testing.T, server *testServer, method, path, token string, body io.Reader) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, server.url(path), body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := jellyfinHeader
+	if token != "" {
+		header += `, Token="` + token + `"`
+	}
+	req.Header.Set("Authorization", header)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return do(t, req)
+}
+
+func jfLogin(t *testing.T, server *testServer, name, password string) *http.Response {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"Username": name, "Pw": password})
+	return jf(t, server, http.MethodPost, "/Users/AuthenticateByName", "", bytes.NewReader(body))
+}
+
+func jfToken(t *testing.T, server *testServer, name, password string) string {
+	t.Helper()
+	res := jfLogin(t, server, name, password)
+	var answer struct {
+		AccessToken string
+		ServerId    string
+		User        struct{ Name, Id string }
+	}
+	decode(t, res, &answer)
+	if answer.AccessToken == "" || answer.User.Name != name || answer.ServerId == "" || answer.User.Id == "" {
+		t.Fatalf("login answered %+v", answer)
+	}
+	return answer.AccessToken
+}
+
+func decode(t *testing.T, res *http.Response, v any) {
+	t.Helper()
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("%s: status %d: %s", res.Request.URL.Path, res.StatusCode, body)
+	}
+	if err := json.NewDecoder(res.Body).Decode(v); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type jfItems struct {
+	Items []struct {
+		Name, Id, Type, AlbumId string
+		ImageTags               map[string]string
+		MediaSources            []jellyfin.MediaSource
+	}
+	TotalRecordCount int
+}
+
+func (items jfItems) names() []string {
+	var out []string
+	for _, item := range items.Items {
+		out = append(out, item.Name)
+	}
+	return out
+}
+
+func jfList(t *testing.T, server *testServer, path, token string) jfItems {
+	t.Helper()
+	var items jfItems
+	decode(t, jf(t, server, http.MethodGet, path, token, nil), &items)
+	return items
+}
+
+func TestJellyfinIsToldApart(t *testing.T) {
+	server, _ := newJellyfinServer(t, nil)
+	server.write(t, "Items/readme.txt", "a folder of files")
+
+	// a browser finds the folder, a Jellyfin client the API
+	if res, body := get(t, server, "/Items/readme.txt"); res.StatusCode != http.StatusOK || body != "a folder of files" {
+		t.Errorf("a browser got %d %q", res.StatusCode, body)
+	}
+	if res := jf(t, server, http.MethodGet, "/Items", "", nil); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a client without a token got %d", res.StatusCode)
+	}
+
+	var info struct{ ProductName, Version, Id, ServerName string }
+	res, _ := get(t, server, "/System/Info/Public")
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("the public info answered %d %s", res.StatusCode, res.Header.Get("Content-Type"))
+	}
+	res, _ = get(t, server, "/system/info/public")
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("the API is not answered whatever its case: %d", res.StatusCode)
+	}
+	decode(t, jf(t, server, http.MethodGet, "/System/Info/Public", "", nil), &info)
+	if info.ProductName != "Jellyfin Server" || info.Version == "" || len(info.Id) != 32 {
+		t.Errorf("public info %+v", info)
+	}
+
+	req, _ := http.NewRequest(http.MethodOptions, server.url("/Users/AuthenticateByName"), nil)
+	req.Header.Set("Origin", "https://app.example.com")
+	req.Header.Set("Access-Control-Request-Headers", "content-type,x-emby-authorization")
+	if res := do(t, req); res.StatusCode != http.StatusNoContent || res.Header.Get("Access-Control-Allow-Origin") != "*" {
+		t.Errorf("a preflight got %d %q", res.StatusCode, res.Header.Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestJellyfinIsOffWithoutALibrary(t *testing.T) {
+	server := newServer(t, publicServer)
+	server.write(t, "System/Info/Public", "a file")
+	if res, body := get(t, server, "/System/Info/Public"); res.StatusCode != http.StatusOK || body != "a file" {
+		t.Errorf("without a jellyfin repository the path got %d %q", res.StatusCode, body)
+	}
+}
+
+func TestJellyfinTheFolderNeedsAnAccount(t *testing.T) {
+	server, _ := newJellyfinServer(t, nil)
+	server.write(t, "public.txt", "public")
+	if res, _ := get(t, server, "/music/Band/First/01%20One.mp3"); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a track was read without an account: %d", res.StatusCode)
+	}
+	if res, _ := get(t, server, "/music"); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("the folder was listed without an account: %d", res.StatusCode)
+	}
+	if res, _ := get(t, server, "/musical/x"); res.StatusCode == http.StatusUnauthorized {
+		t.Error("a folder whose name begins like the library's is protected")
+	}
+	if res := basic(t, server, http.MethodGet, "/music/Band/First/01%20One.mp3", "john", "doe", nil); res.StatusCode != http.StatusOK {
+		t.Errorf("an account got %d", res.StatusCode)
+	}
+	if res, _ := get(t, server, "/public.txt"); res.StatusCode != http.StatusOK {
+		t.Errorf("a public file got %d", res.StatusCode)
+	}
+}
+
+func TestJellyfinLogin(t *testing.T) {
+	server, _ := newJellyfinServer(t, func(cfg *httpConfig) {
+		cfg.LoginAttempts = 2
+		cfg.LoginLockout = 60
+	})
+	token := jfToken(t, server, "john", "doe")
+	var me struct{ Name string }
+	decode(t, jf(t, server, http.MethodGet, "/Users/Me", token, nil), &me)
+	if me.Name != "john" {
+		t.Errorf("me is %q", me.Name)
+	}
+	// the token is also taken from the query, as a player is given a URL
+	req, _ := http.NewRequest(http.MethodGet, server.url("/System/Info?api_key="+token), nil)
+	if res := do(t, req); res.StatusCode != http.StatusOK {
+		t.Errorf("a token in the query got %d", res.StatusCode)
+	}
+	req, _ = http.NewRequest(http.MethodGet, server.url("/System/Info"), nil)
+	req.Header.Set("X-Emby-Token", token)
+	if res := do(t, req); res.StatusCode != http.StatusOK {
+		t.Errorf("a token in X-Emby-Token got %d", res.StatusCode)
+	}
+
+	// a token of another audience is no Jellyfin token
+	john := accountNamed(server.settings().accounts, "john")
+	registry, _, err := server.tokens.mintRegistry(john, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := jf(t, server, http.MethodGet, "/System/Info", registry, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a registry token got %d", res.StatusCode)
+	}
+
+	if res := jfLogin(t, server, "john", "wrong"); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a wrong password got %d", res.StatusCode)
+	}
+	if record := server.logs.find("http login refused"); record == nil || record["method"] != "jellyfin" {
+		t.Errorf("the refusal is recorded as %v", record)
+	}
+	jfLogin(t, server, "john", "wrong")
+	if res := jfLogin(t, server, "john", "doe"); res.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("a locked address got %d", res.StatusCode)
+	}
+
+	// a new password signs the clients out
+	set := server.settings()
+	user := fullUser("john", "changed")
+	if err := server.Reload(set.cfg, set.https, set.ssh, []config.User{user}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if res := jf(t, server, http.MethodGet, "/System/Info", token, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a token of the old password got %d", res.StatusCode)
+	}
+}
+
+func TestJellyfinBrowses(t *testing.T) {
+	server, library := newJellyfinServer(t, nil)
+	token := jfToken(t, server, "john", "doe")
+
+	views := jfList(t, server, "/UserViews", token)
+	if len(views.Items) != 1 || views.Items[0].Name != "Our music" || views.Items[0].Id != library.ID {
+		t.Fatalf("views %+v", views)
+	}
+	albums := jfList(t, server, "/Users/x/Items?ParentId="+library.ID+"&IncludeItemTypes=MusicAlbum&Recursive=true&SortBy=SortName", token)
+	if got := albums.names(); !slices.Equal(got, []string{"First", "Solo"}) || albums.TotalRecordCount != 2 {
+		t.Errorf("albums %q of %d", got, albums.TotalRecordCount)
+	}
+	first := albums.Items[0]
+	if first.ImageTags["Primary"] == "" {
+		t.Error("the album has no cover")
+	}
+	tracks := jfList(t, server, "/Items?ParentId="+first.Id, token)
+	if got := tracks.names(); !slices.Equal(got, []string{"One", "Two"}) {
+		t.Errorf("tracks %q", got)
+	}
+	if ms := tracks.Items[0].MediaSources; len(ms) != 1 || ms[0].Container != "mp3" || !ms[0].SupportsDirectPlay {
+		t.Errorf("media sources %+v", ms)
+	}
+	page := jfList(t, server, "/Items?IncludeItemTypes=Audio&Recursive=true&StartIndex=1&Limit=1&SortBy=Album,SortName", token)
+	if got := page.names(); !slices.Equal(got, []string{"Two"}) || page.TotalRecordCount != 3 {
+		t.Errorf("page %q of %d", got, page.TotalRecordCount)
+	}
+	artists := jfList(t, server, "/Artists/AlbumArtists?ParentId="+library.ID, token)
+	if got := artists.names(); !slices.Equal(got, []string{"The Band", "Someone"}) {
+		t.Errorf("album artists %q", got)
+	}
+	genres := jfList(t, server, "/MusicGenres", token)
+	if got := genres.names(); !slices.Equal(got, []string{"Jazz", "Rock"}) {
+		t.Errorf("genres %q", got)
+	}
+	var latest []struct{ Name string }
+	decode(t, jf(t, server, http.MethodGet, "/Items/Latest?Limit=1", token, nil), &latest)
+	if len(latest) != 1 {
+		t.Errorf("latest %+v", latest)
+	}
+	var hints struct {
+		SearchHints []struct{ Name, Type string }
+	}
+	decode(t, jf(t, server, http.MethodGet, "/Search/Hints?SearchTerm=solo", token, nil), &hints)
+	if len(hints.SearchHints) != 2 {
+		t.Errorf("hints %+v", hints)
+	}
+	var item struct{ Name, Type string }
+	// a client may send an id as a GUID
+	id := first.Id
+	guid := strings.ToUpper(id[:8] + "-" + id[8:12] + "-" + id[12:16] + "-" + id[16:20] + "-" + id[20:])
+	decode(t, jf(t, server, http.MethodGet, "/Users/x/Items/"+guid, token, nil), &item)
+	if item.Name != "First" || item.Type != "MusicAlbum" {
+		t.Errorf("item %+v", item)
+	}
+	if res := jf(t, server, http.MethodGet, "/Items/0123456789abcdef0123456789abcdef", token, nil); res.StatusCode != http.StatusNotFound {
+		t.Errorf("an unknown item got %d", res.StatusCode)
+	}
+
+	for _, id := range []string{first.Id, albums.Items[1].Id} {
+		res := jf(t, server, http.MethodGet, "/Items/"+id+"/Images/Primary?maxWidth=300", token, nil)
+		body, _ := io.ReadAll(res.Body)
+		if res.StatusCode != http.StatusOK || !bytes.Equal(body, audiotest.PNG) || res.Header.Get("Content-Type") != "image/png" {
+			t.Errorf("the cover of %s: %d %s, %d bytes", id, res.StatusCode, res.Header.Get("Content-Type"), len(body))
+		}
+	}
+	if res := jf(t, server, http.MethodGet, "/Items/"+first.Id+"/Images/Backdrop", token, nil); res.StatusCode != http.StatusNotFound {
+		t.Errorf("a backdrop got %d", res.StatusCode)
+	}
+
+	for _, path := range []string{"/Sessions/Playing", "/Sessions/Playing/Progress", "/Sessions/Capabilities/Full"} {
+		if res := jf(t, server, http.MethodPost, path, token, strings.NewReader("{}")); res.StatusCode != http.StatusNoContent {
+			t.Errorf("%s got %d", path, res.StatusCode)
+		}
+	}
+	var data jellyfin.UserData
+	decode(t, jf(t, server, http.MethodPost, "/Users/x/FavoriteItems/"+first.Id, token, nil), &data)
+	if !data.IsFavorite || data.ItemID != first.Id {
+		t.Errorf("favorite %+v", data)
+	}
+	if res := jf(t, server, http.MethodGet, "/Nothing/Here", token, nil); res.StatusCode != http.StatusNotFound {
+		t.Errorf("an unknown endpoint got %d", res.StatusCode)
+	}
+}
+
+func TestJellyfinShowsWhatTheAccountMayRead(t *testing.T) {
+	server, library := newJellyfinServer(t, nil)
+	token := jfToken(t, server, "anna", "secret")
+	albums := jfList(t, server, "/Items?IncludeItemTypes=MusicAlbum&Recursive=true", token)
+	if got := albums.names(); !slices.Equal(got, []string{"First"}) {
+		t.Errorf("anna sees %q", got)
+	}
+	solo := library.Albums[1]
+	if solo.Name != "Solo" {
+		t.Fatalf("album %q", solo.Name)
+	}
+	for _, path := range []string{"/Items/" + solo.ID, "/Audio/" + solo.Tracks[0].ID + "/stream",
+		"/Items/" + solo.ID + "/Images/Primary"} {
+		if res := jf(t, server, http.MethodGet, path, token, nil); res.StatusCode != http.StatusNotFound {
+			t.Errorf("anna got %d for %s", res.StatusCode, path)
+		}
+	}
+}
+
+func TestJellyfinStreams(t *testing.T) {
+	server, library := newJellyfinServer(t, nil)
+	token := jfToken(t, server, "john", "doe")
+	track := library.Albums[0].Tracks[0]
+	content, err := os.ReadFile(track.OnDisk())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, server.url("/Audio/"+track.ID+"/stream.mp3?static=true&api_key="+token), nil)
+	req.Header.Set("Range", "bytes=100-199")
+	res := do(t, req)
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusPartialContent || !bytes.Equal(body, content[100:200]) ||
+		res.Header.Get("Content-Type") != "audio/mpeg" || res.Header.Get("Content-Disposition") != "" {
+		t.Errorf("a range of the stream: %d %s, %d bytes", res.StatusCode, res.Header.Get("Content-Type"), len(body))
+	}
+
+	res = jf(t, server, http.MethodGet, "/Items/"+track.ID+"/Download", token, nil)
+	body, _ = io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK || !bytes.Equal(body, content) ||
+		!strings.Contains(res.Header.Get("Content-Disposition"), "01 One.mp3") {
+		t.Errorf("the download: %d %q, %d bytes", res.StatusCode, res.Header.Get("Content-Disposition"), len(body))
+	}
+	record := server.logs.find("http download")
+	if record == nil || record["via"] != "jellyfin" || record["user"] != "john" || record["file"] != "/music/Band/First/01 One.mp3" {
+		t.Errorf("the download is recorded as %v", record)
+	}
+
+	var info struct {
+		MediaSources  []jellyfin.MediaSource
+		PlaySessionId string
+	}
+	decode(t, jf(t, server, http.MethodPost, "/Items/"+track.ID+"/PlaybackInfo", token, strings.NewReader("{}")), &info)
+	if len(info.MediaSources) != 1 || info.MediaSources[0].SupportsTranscoding || info.MediaSources[0].Size != int64(len(content)) ||
+		info.MediaSources[0].RunTimeTicks == 0 || info.PlaySessionId == "" {
+		t.Errorf("playback info %+v", info)
+	}
+	album := library.Albums[0]
+	if res := jf(t, server, http.MethodGet, "/Audio/"+album.ID+"/stream", token, nil); res.StatusCode != http.StatusNotFound {
+		t.Errorf("an album was streamed: %d", res.StatusCode)
+	}
+}

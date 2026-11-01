@@ -148,7 +148,12 @@ type settings struct {
 	registryAccounts []*account
 	// registry is the store under general.baseFolderRegistry, nil when the
 	// registry is off.
-	registry       *registryStore
+	registry *registryStore
+	// jellyfin says that there is a jellyfin repository, while which the
+	// server answers Jellyfin clients.
+	jellyfin bool
+	// protectedPaths are http.pathsRequireAuth compiled, and the folders of
+	// the jellyfin repositories.
 	protectedPaths []*regexp.Regexp
 	// proxies are http.trustedProxies compiled, the addresses whose
 	// X-Forwarded-For and X-Forwarded-Proto are believed.
@@ -215,6 +220,16 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 		}
 		protected = append(protected, compiled)
 	}
+	// a music library is read by its listeners, who log in to it from their
+	// clients, and nobody else: its folder is protected as pathsRequireAuth
+	// protects one
+	for _, folder := range cfg.JellyfinFolders {
+		compiled, err := compilePattern("^"+regexp.QuoteMeta(folder)+"(/|$)", fold)
+		if err != nil {
+			return nil, err
+		}
+		protected = append(protected, compiled)
+	}
 	proxies := make([]netip.Prefix, 0, len(cfg.TrustedProxies))
 	for i, entry := range cfg.TrustedProxies {
 		prefix, err := config.ParseProxy(entry)
@@ -225,7 +240,7 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 	}
 	return &settings{cfg: cfg, https: https, accounts: accounts, tokens: bearers,
 		s3accounts: s3accounts, registryAccounts: registryAccounts, registry: store,
-		protectedPaths: protected, proxies: proxies, ssh: sshCfg, servers: servers}, nil
+		jellyfin: len(cfg.JellyfinFolders) > 0, protectedPaths: protected, proxies: proxies, ssh: sshCfg, servers: servers}, nil
 }
 
 // Reload swaps the accounts, the tokens, the paths and the limits that are read
@@ -251,6 +266,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, 
 		return err
 	}
 	s.warnAboutTheRegistry(next)
+	s.warnAboutJellyfin(next)
 	// the token lifetime needs nothing done to it: it is read from the
 	// snapshot when a token is minted, so a reload changes what is issued from
 	// here on and leaves a live token with the expiry it was signed with. The
@@ -381,6 +397,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.warnAboutTheAdminInterface(set)
 	s.warnAboutTheRegistry(set)
+	s.warnAboutJellyfin(set)
 
 	go func() {
 		<-ctx.Done()
@@ -518,6 +535,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// so it is not resolved the way a path of the file tree is
 	if isS3Request(r) {
 		s.handleS3(set, w, r)
+		return
+	}
+
+	// a Jellyfin client says so in every request it sends with its token, and
+	// in the few it sends before it has one; its paths name items of the
+	// music libraries rather than files
+	if set.jellyfin && isJellyfinRequest(r) {
+		s.serveJellyfin(set, w, r)
 		return
 	}
 

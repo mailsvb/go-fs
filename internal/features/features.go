@@ -32,6 +32,8 @@ const (
 	RPM = "rpm"
 	// FDroid is the F-Droid package repository.
 	FDroid = "fdroid"
+	// Jellyfin is the music library Jellyfin clients browse and play.
+	Jellyfin = "jellyfin"
 	// Cryptomator is keeping the files of a stored server in a vault of
 	// Cryptomator.
 	Cryptomator = "cryptomator"
@@ -82,6 +84,6 @@ func List() []string {
 
 // All is every optional part there is, whether built or not.
 func All() []string {
-	all := []string{TFTP, FTP, SFTP, SFTPRemote, SMB, RPM, FDroid, Cryptomator, WebDAV}
+	all := []string{TFTP, FTP, SFTP, SFTPRemote, SMB, RPM, FDroid, Jellyfin, Cryptomator, WebDAV}
 	return slices.Sorted(slices.Values(all))
 }
