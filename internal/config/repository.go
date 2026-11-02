@@ -186,6 +186,23 @@ func (c Config) JellyfinFolders() []string {
 	return folders
 }
 
+// JellyfinServer is what Jellyfin clients are told of the server: its name,
+// the names the jellyfin repositories show, and the address to reach it at,
+// the first url one of them sets, "" for none.
+func (c Config) JellyfinServer() (name, address string) {
+	var names []string
+	for _, repo := range c.UsableRepositories() {
+		if repo.Type != RepositoryTypeJellyfin {
+			continue
+		}
+		names = append(names, repo.DisplayName())
+		if address == "" {
+			address = repo.URL
+		}
+	}
+	return strings.Join(names, ", "), address
+}
+
 // RepositoryTypeOf looks a kind of repository up by its ID.
 func RepositoryTypeOf(id string) (RepositoryType, bool) {
 	for _, t := range RepositoryTypes {

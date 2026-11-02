@@ -822,6 +822,10 @@ type HTTP struct {
 	// PUT, DELETE and MOVE. A request with a Depth or an If header gets it
 	// whatever it names.
 	WebDAVClients []string `toml:"webdavClients" feature:"webdav"`
+	// JellyfinDiscovery answers the Jellyfin clients that look for a server
+	// on the local network, by a broadcast to UDP port 7359, with the address
+	// of this one, while there is a jellyfin repository.
+	JellyfinDiscovery bool `toml:"jellyfinDiscovery" feature:"jellyfin"`
 
 	MaxConnections int `toml:"maxConnections"`
 	// ReadTimeout, WriteTimeout and IdleTimeout are seconds, 0 disables one.
@@ -853,6 +857,12 @@ type HTTP struct {
 	// Resolved hands the server: only an account reads them, and Jellyfin
 	// clients are answered while there is one.
 	JellyfinFolders []string `toml:"-"`
+	// JellyfinName is the name Jellyfin clients are told the server has, the
+	// names of the jellyfin repositories, and JellyfinURL the address they
+	// are told to reach it at, the first url one of them sets; Resolved
+	// hands both to the server.
+	JellyfinName string `toml:"-"`
+	JellyfinURL  string `toml:"-"`
 	// SessionTokenLifetime is how long a browser that logged in with the
 	// login form stays logged in without being used, in seconds. Every
 	// request it makes in the second half of that window renews its token,
@@ -1206,6 +1216,7 @@ func (c Config) Resolved() Config {
 	c.HTTP.TrashFolder = c.General.BaseFolderTrash
 	c.HTTP.TrashRetentionDays = c.General.TrashRetentionDays
 	c.HTTP.JellyfinFolders = c.JellyfinFolders()
+	c.HTTP.JellyfinName, c.HTTP.JellyfinURL = c.JellyfinServer()
 	return c
 }
 

@@ -625,6 +625,14 @@ webdav = false
 # that carries a Depth or an If header.
 webdavClients = ["Microsoft-WebDAV-MiniRedir", "WebDAVFS", "WebDAVLib", "Microsoft Office", "davfs2", "gvfs", "Cyberduck", "Mountain Duck", "rclone", "WinSCP"]
 
+# Answer Jellyfin clients such as Finamp that look for a server on the local
+# network, by a broadcast to UDP port 7359, while there is a jellyfin
+# repository. The answer is the url of the repository, or else this server's
+# address on the network the question came from. It listens on every
+# interface, since a broadcast reaches no other socket, unless address is
+# 127.0.0.1, where no other host is answered.
+jellyfinDiscovery = false
+
 # maximum simultaneous connections
 maxConnections = 100
 # Seconds, 0 disables one. writeTimeout is off by default because it would cap

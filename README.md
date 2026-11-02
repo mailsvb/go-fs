@@ -563,6 +563,7 @@ data connection owes nothing on the control one.
 | `http.trustedProxies` | `[]` | a forwarded address, and a forwarded `https`, is believed only from a proxy listed here |
 | `users[].ftp`, `users[].sftp`, `users[].http`, `users[].s3` | `false` | an account logs in only to the servers it switches on |
 | `http.enableS3` | `true` | the S3 API is there wherever the HTTP server is, and serves only the accounts that set `s3` |
+| `http.jellyfinDiscovery` | `false` | answering broadcasts opens a UDP port on every interface, so being found on the network is switched on deliberately |
 | `http.webdav` | `false` | a WebDAV client deletes folders recursively and moves across them, so mounting the folder as a drive is switched on deliberately |
 | `users[].allowUser*` | `false` | an account is granted only the rights its table lists |
 | `http.enabled` | `true` | the one server that is on, so the admin interface can be reached to set up the rest |
@@ -1448,6 +1449,18 @@ It differs from the package repositories in these ways:
   `/Branding/…` and `/QuickConnect/Enabled`. go-fs logs a warning when the
   served folder has a `System`, `Users`, `Branding` or `QuickConnect` folder
   those paths would hide.
+- **Clients show the server by the libraries' names** and the version of
+  go-fs, such as `Our music · go-fs 1.2.0`. The version it reports as a
+  Jellyfin server stays one of Jellyfin, because clients refuse a server they
+  take to be too old.
+- **Clients on the local network can find the server** with
+  `http.jellyfinDiscovery = true`. Finamp and the Jellyfin apps ask for
+  servers by a broadcast to UDP port 7359, and go-fs answers with the `url`
+  of the library, or else its own address on the network the question came
+  from. To receive a broadcast it listens on every interface, unless
+  `http.address` is `127.0.0.1`, where no other host finds it. A Jellyfin
+  server on the same host holds that port already; go-fs then logs a warning
+  and serves on without it.
 - **Clients log in with the accounts of go-fs** that set `http`. A client is
   given a token that lasts a year and stops working when the account's
   password changes, or when the client logs out with it. An account sees the tracks it may read, by its `paths` and

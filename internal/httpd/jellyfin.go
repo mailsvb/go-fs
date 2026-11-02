@@ -132,6 +132,9 @@ type jellyfinState struct {
 	listeners   *jellyfin.Listeners
 	preferences *store.Bucket
 	revoked     *store.Bucket
+	// discovery answers the clients that look for a server; see
+	// jellyfin_discovery.go.
+	discovery *jellyfinDiscovery
 }
 
 func newJellyfinState(st *store.Store, logger *slog.Logger) jellyfinState {
@@ -139,6 +142,7 @@ func newJellyfinState(st *store.Store, logger *slog.Logger) jellyfinState {
 		listeners:   jellyfin.NewListeners(st, logger),
 		preferences: st.Bucket(jellyfinPreferences),
 		revoked:     st.Bucket(jellyfinRevoked),
+		discovery:   &jellyfinDiscovery{port: jellyfinDiscoveryPort},
 	}
 }
 
@@ -468,11 +472,24 @@ func (j *jellyfinRequest) data() func(jellyfin.Item) jellyfin.Record {
 	return j.s.jellyfin.listeners.Data(j.user.name)
 }
 
-func (j *jellyfinRequest) serverName() string {
-	if name, err := os.Hostname(); err == nil && name != "" {
-		return name
+// jellyfinServerName is the name clients show of the server: the names of
+// its libraries, or the host's where there are none, and the version of go-fs.
+// The version the server says it is stays one of Jellyfin, which clients
+// check, so this is where go-fs says its own.
+func (s *Server) jellyfinServerName(set *settings) string {
+	name := set.cfg.JellyfinName
+	if name == "" {
+		name, _ = os.Hostname()
 	}
-	return "go-fs"
+	if name == "" {
+		name = "go-fs"
+	}
+	if s.updater != nil {
+		if version := s.updater.Current().Version; version != "" {
+			name += " · go-fs " + version
+		}
+	}
+	return name
 }
 
 func (j *jellyfinRequest) publicInfo() map[string]any {
@@ -482,7 +499,7 @@ func (j *jellyfinRequest) publicInfo() map[string]any {
 	}
 	return map[string]any{
 		"LocalAddress":           scheme + "://" + j.r.Host,
-		"ServerName":             j.serverName(),
+		"ServerName":             j.s.jellyfinServerName(j.set),
 		"Version":                jellyfinVersion,
 		"ProductName":            "Jellyfin Server",
 		"OperatingSystem":        "",
@@ -564,6 +581,9 @@ func (j *jellyfinRequest) session() map[string]any {
 		"SupportedCommands":     []string{},
 		"SupportsMediaControl":  false,
 		"SupportsRemoteControl": false,
+		"HasCustomDeviceName":   false,
+		"PlayState": map[string]any{"CanSeek": false, "IsPaused": false, "IsMuted": false,
+			"RepeatMode": "RepeatNone", "PlaybackOrder": "Default"},
 		"Capabilities": map[string]any{"PlayableMediaTypes": []string{"Audio"}, "SupportedCommands": []string{},
 			"SupportsMediaControl": false},
 	}

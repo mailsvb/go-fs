@@ -191,6 +191,13 @@ func TestJellyfinRepositories(t *testing.T) {
 	if got := valid.JellyfinFolders(); len(got) != 1 || got[0] != "/music" {
 		t.Errorf("the folders of the jellyfin repositories = %q", got)
 	}
+	// clients are told the names of the libraries and the first url one sets
+	more := Repository{Name: "talks", Type: RepositoryTypeJellyfin, Folder: "/talks", URL: "https://files.example.com"}
+	valid.Repositories = append(valid.Repositories, more)
+	resolved := valid.Resolved().HTTP
+	if resolved.JellyfinName != "Our music, talks" || resolved.JellyfinURL != "https://files.example.com" {
+		t.Errorf("the server is %q at %q", resolved.JellyfinName, resolved.JellyfinURL)
+	}
 
 	cases := []struct {
 		name   string

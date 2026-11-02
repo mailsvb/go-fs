@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -179,6 +181,111 @@ func TestJellyfinIsToldApart(t *testing.T) {
 	}
 }
 
+// TestJellyfinServerName checks the name clients show of the server is that
+// of its libraries and the version of go-fs, while the version it says it is
+// stays one of Jellyfin, which clients check.
+func TestJellyfinServerName(t *testing.T) {
+	server, _ := newJellyfinServer(t, func(cfg *httpConfig) { cfg.JellyfinName = "Our music" })
+	var info struct{ Version, ServerName string }
+	decode(t, jf(t, server, http.MethodGet, "/System/Info/Public", "", nil), &info)
+	if info.ServerName != "Our music" || info.Version != jellyfinVersion {
+		t.Errorf("without an updater the server is %+v", info)
+	}
+	server.SetUpdater(newStubUpdater())
+	decode(t, jf(t, server, http.MethodGet, "/System/Info/Public", "", nil), &info)
+	if info.ServerName != "Our music · go-fs 1.0.0" || info.Version != jellyfinVersion {
+		t.Errorf("with an updater the server is %+v", info)
+	}
+}
+
+// reloadJellyfin reloads the server with its settings as tune changes them.
+func reloadJellyfin(t *testing.T, server *testServer, tune func(*config.HTTP)) {
+	t.Helper()
+	set := server.settings()
+	cfg := set.cfg
+	tune(&cfg)
+	if err := server.Reload(cfg, set.https, set.ssh, []config.User{fullUser("john", "doe")}, nil, nil); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+}
+
+// askForJellyfin broadcasts, as a client does, to the server's discovery
+// socket, and returns the answer, nil for none.
+func askForJellyfin(t *testing.T, server *testServer, question string) map[string]any {
+	t.Helper()
+	conn, err := net.Dial("udp", server.discoveryAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.Write([]byte(question)); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return nil
+	}
+	var answer map[string]any
+	if err := json.Unmarshal(buf[:n], &answer); err != nil {
+		t.Fatalf("the answer %q is no JSON: %v", buf[:n], err)
+	}
+	return answer
+}
+
+func TestJellyfinDiscovery(t *testing.T) {
+	server, _ := newJellyfinServer(t, func(cfg *httpConfig) { cfg.JellyfinName = "Our music" })
+	server.SetUpdater(newStubUpdater())
+	if server.discoveryAddr() != nil {
+		t.Fatal("the discovery socket is open while jellyfinDiscovery is off")
+	}
+	// any port, since a Jellyfin server on the host may hold 7359
+	server.jellyfin.discovery.mu.Lock()
+	server.jellyfin.discovery.port = 0
+	server.jellyfin.discovery.mu.Unlock()
+	reloadJellyfin(t, server, func(cfg *config.HTTP) { cfg.JellyfinDiscovery = true })
+	if server.discoveryAddr() == nil {
+		t.Fatal("the discovery socket is not open after jellyfinDiscovery was switched on")
+	}
+
+	var info struct{ Id, ServerName string }
+	decode(t, jf(t, server, http.MethodGet, "/System/Info/Public", "", nil), &info)
+	answer := askForJellyfin(t, server, "Who is JellyfinServer?")
+	want := map[string]any{"Address": "http://" + server.Addr().String(), "Id": info.Id,
+		"Name": info.ServerName, "EndpointAddress": nil}
+	if !reflect.DeepEqual(answer, want) {
+		t.Errorf("the answer is %v, want %v", answer, want)
+	}
+	if answer := askForJellyfin(t, server, "who is EmbyServer?"); answer != nil {
+		t.Errorf("another question was answered with %v", answer)
+	}
+
+	// the url of a library is the address it is reached at
+	reloadJellyfin(t, server, func(cfg *config.HTTP) { cfg.JellyfinURL = "https://music.example.com" })
+	if answer := askForJellyfin(t, server, "who is JellyfinServer?"); answer["Address"] != "https://music.example.com" {
+		t.Errorf("with a url the answer is %v", answer)
+	}
+
+	reloadJellyfin(t, server, func(cfg *config.HTTP) { cfg.JellyfinDiscovery = false })
+	if server.discoveryAddr() != nil {
+		t.Error("the discovery socket stays open after jellyfinDiscovery was switched off")
+	}
+}
+
+// TestJellyfinDiscoveryOnEveryInterface checks a server bound to every
+// interface answers with the address of the one the client is reached
+// through.
+func TestJellyfinDiscoveryOnEveryInterface(t *testing.T) {
+	server, _ := newJellyfinServer(t, nil)
+	set := *server.settings()
+	set.cfg.Address = ""
+	client := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}
+	if got, want := server.discoveryAddress(&set, client), "http://"+server.Addr().String(); got != want {
+		t.Errorf("the address is %q, want %q", got, want)
+	}
+}
+
 func TestJellyfinIsOffWithoutALibrary(t *testing.T) {
 	server := newServer(t, publicServer)
 	server.write(t, "System/Info/Public", "a file")
@@ -258,6 +365,44 @@ func TestJellyfinLogin(t *testing.T) {
 	}
 	if res := jf(t, server, http.MethodGet, "/System/Info", token, nil); res.StatusCode != http.StatusUnauthorized {
 		t.Errorf("a token of the old password got %d", res.StatusCode)
+	}
+}
+
+// TestJellyfinLoginAnswersWhatClientsRequire checks the answer to a login has
+// every flag a client such as Finamp reads as a bool that must be there: one
+// that is missing fails its login.
+func TestJellyfinLoginAnswersWhatClientsRequire(t *testing.T) {
+	server, _ := newJellyfinServer(t, nil)
+	var answer map[string]any
+	decode(t, jfLogin(t, server, "john", "doe"), &answer)
+	required := map[string][]string{
+		"User": {"HasPassword", "HasConfiguredPassword", "HasConfiguredEasyPassword"},
+		"User.Configuration": {"PlayDefaultAudioTrack", "DisplayMissingEpisodes", "DisplayCollectionsView",
+			"EnableLocalPassword", "HidePlayedInLatest", "RememberAudioSelections", "RememberSubtitleSelections",
+			"EnableNextEpisodeAutoPlay"},
+		"User.Policy": {"IsAdministrator", "IsHidden", "IsDisabled", "EnableUserPreferenceAccess",
+			"EnableRemoteControlOfOtherUsers", "EnableSharedDeviceControl", "EnableRemoteAccess",
+			"EnableLiveTvManagement", "EnableLiveTvAccess", "EnableMediaPlayback", "EnableAudioPlaybackTranscoding",
+			"EnableVideoPlaybackTranscoding", "EnablePlaybackRemuxing", "EnableContentDeletion",
+			"EnableContentDownloading", "EnableSyncTranscoding", "EnableMediaConversion", "EnableAllDevices",
+			"EnableAllChannels", "EnableAllFolders", "EnablePublicSharing"},
+		"SessionInfo":           {"SupportsRemoteControl", "IsActive", "SupportsMediaControl", "HasCustomDeviceName"},
+		"SessionInfo.PlayState": {"CanSeek", "IsPaused", "IsMuted"},
+	}
+	for path, flags := range required {
+		object := answer
+		for _, key := range strings.Split(path, ".") {
+			object, _ = object[key].(map[string]any)
+		}
+		if object == nil {
+			t.Errorf("the login answers no %s", path)
+			continue
+		}
+		for _, flag := range flags {
+			if _, ok := object[flag].(bool); !ok {
+				t.Errorf("%s.%s is %v, not a bool", path, flag, object[flag])
+			}
+		}
 	}
 }
 

@@ -279,6 +279,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, 
 	// login lock is the same: its two settings are read at every failure, and
 	// an address that is locked stays locked for as long as it was told
 	s.snapshot.Store(next)
+	s.discoverJellyfin(next)
 	return nil
 }
 
@@ -419,6 +420,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.warnAboutTheAdminInterface(set)
 	s.warnAboutTheRegistry(set)
 	s.warnAboutJellyfin(set)
+	s.discoverJellyfin(set)
 
 	go func() {
 		<-ctx.Done()
@@ -516,6 +518,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	_ = s.server.Close()
 	s.closeListeners()
+	s.stopJellyfinDiscovery()
 	s.wg.Wait()
 	return nil
 }

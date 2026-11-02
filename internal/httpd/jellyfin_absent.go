@@ -19,6 +19,10 @@ func (s *Server) serveJellyfin(*settings, http.ResponseWriter, *http.Request) {}
 
 func (s *Server) warnAboutJellyfin(*settings) {}
 
+func (s *Server) discoverJellyfin(*settings) {}
+
+func (s *Server) stopJellyfinDiscovery() {}
+
 type jellyfinState struct{}
 
 func newJellyfinState(*store.Store, *slog.Logger) jellyfinState { return jellyfinState{} }
