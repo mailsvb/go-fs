@@ -29,6 +29,7 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/service"
+	"github.com/mailsvb/go-fs/internal/store"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -95,13 +96,13 @@ func (s *Server) Reload(cfg config.SFTP, sshCfg config.SSH, accounts []config.Us
 // per user base folder, has to exist; every authorized key has to parse, so
 // that a typo in one is reported at startup rather than silently never
 // matching.
-func New(cfg config.SFTP, sshCfg config.SSH, accounts []config.User, logger *slog.Logger) (*Server, error) {
+func New(cfg config.SFTP, sshCfg config.SSH, accounts []config.User, keys *store.Bucket, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
 		return nil, fmt.Errorf("general.baseFolderFiles: %w", err)
 	}
 
-	signer, err := hostKey(cfg, logger)
+	signer, err := hostKey(cfg, keys, logger)
 	if err != nil {
 		return nil, err
 	}

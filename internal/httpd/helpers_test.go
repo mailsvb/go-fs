@@ -163,7 +163,7 @@ func newServerWith(t *testing.T, tune func(*httpConfig), tuneTLS func(*config.HT
 	}
 
 	logs := &logStore{}
-	server, err := New(cfg.HTTP, https, cfg.SSH, cfg.Users, cfg.Tokens, cfg.Servers, cfg.ConfigPath, slog.New(&recorder{store: logs}))
+	server, err := New(cfg.HTTP, https, cfg.SSH, cfg.Users, cfg.Tokens, cfg.Servers, cfg.ConfigPath, nil, slog.New(&recorder{store: logs}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

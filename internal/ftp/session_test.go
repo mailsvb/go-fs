@@ -279,14 +279,14 @@ func TestShutdownDropsConnections(t *testing.T) {
 func TestNewRejectsMissingFolders(t *testing.T) {
 	cfg := config.Default().FTP
 	cfg.Basefolder = filepath.Join(t.TempDir(), "nope")
-	if _, err := New(cfg, config.FTPS{}, nil, discardLogger()); err == nil {
+	if _, err := New(cfg, config.FTPS{}, nil, nil, discardLogger()); err == nil {
 		t.Error("a missing base folder has to be refused")
 	}
 
 	cfg = config.Default().FTP
 	cfg.Basefolder = t.TempDir()
 	users := []config.User{{Username: "john", FTP: true, Basefolder: filepath.Join(t.TempDir(), "nope")}}
-	if _, err := New(cfg, config.FTPS{}, users, discardLogger()); err == nil {
+	if _, err := New(cfg, config.FTPS{}, users, nil, discardLogger()); err == nil {
 		t.Error("a missing user base folder has to be refused")
 	}
 }

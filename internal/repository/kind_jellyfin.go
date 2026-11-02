@@ -3,6 +3,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -83,6 +84,14 @@ func (k *jellyfinKind) admit(r release, href string) (entry, error) {
 	}
 	return jellyfinEntry{jellyfin.Source{Href: href, Size: info.Size(), ModTime: info.ModTime(),
 		Track: r.(*jellyfinRelease).track}}, nil
+}
+
+func (k *jellyfinKind) decode(raw []byte) (entry, error) {
+	var e jellyfinEntry
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 // inputs are the covers beside the tracks, so that one that is added or

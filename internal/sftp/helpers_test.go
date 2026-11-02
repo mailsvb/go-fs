@@ -132,7 +132,7 @@ func newServer(t testing.TB, tune func(*sftpConfig)) *testServer {
 	}
 
 	logs := &logStore{}
-	server, err := New(cfg.SFTP, cfg.SSH, cfg.Users, slog.New(&recorder{store: logs}))
+	server, err := New(cfg.SFTP, cfg.SSH, cfg.Users, nil, slog.New(&recorder{store: logs}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

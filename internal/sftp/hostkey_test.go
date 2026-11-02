@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // A configured host key is the one clients see, and it is the same after a
@@ -54,6 +55,44 @@ func TestGeneratedHostKeyChangesAndWarns(t *testing.T) {
 
 	if fingerprintOf(t, first) == fingerprintOf(t, second) {
 		t.Error("two servers without a configured key must not share one")
+	}
+}
+
+// A generated key is kept in the persistent data file, so that a restart
+// serves the same one; a kept one that cannot be read is replaced.
+func TestGeneratedHostKeyIsKept(t *testing.T) {
+	st, err := store.Open(t.TempDir()+"/go-fs.db", discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	keys := st.Bucket("keys")
+
+	first, err := hostKey(config.SFTP{}, keys, discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := hostKey(config.SFTP{}, keys, discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ssh.FingerprintSHA256(first.PublicKey()) != ssh.FingerprintSHA256(second.PublicKey()) {
+		t.Error("a restart generated another host key rather than the one kept")
+	}
+
+	if err := keys.Put(hostKeyRecord, "not a key"); err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := hostKey(config.SFTP{}, keys, discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := hostKey(config.SFTP{}, keys, discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ssh.FingerprintSHA256(replaced.PublicKey()) != ssh.FingerprintSHA256(again.PublicKey()) {
+		t.Error("the key that replaced one that could not be read was not kept")
 	}
 }
 

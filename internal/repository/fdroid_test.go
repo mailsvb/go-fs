@@ -3,6 +3,7 @@
 package repository
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -36,7 +37,7 @@ func newFDroidRunner(t *testing.T, keep int) (*runner, string) {
 	r, err := newRunner(config.Repository{
 		Name: "android", Type: config.RepositoryTypeFDroid, Folder: "/android/repo",
 		SigningKey: key, Keep: keep, URL: "https://files.example.com/android/repo", Title: "Test apps",
-	}, base, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, base, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,4 +198,40 @@ func TestFDroidSkipsWhatIsNotAWholeSignedAPK(t *testing.T) {
 	if _, ok := indexed(t, folder)["org.example.app"]; !ok {
 		t.Error("the APK is not listed once it is whole")
 	}
+}
+
+// A restart takes the APKs read from the cache, icons and all.
+func TestFDroidRestartReadsNoAPKAgain(t *testing.T) {
+	r, folder := newFDroidRunner(t, 0)
+	withCache(t, r)
+	putAPK(t, folder, "one.apk", fdroidtest.APK{Package: "org.example.one", VersionCode: 1})
+	if err := r.update(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	disguise(t, filepath.Join(folder, "one.apk"))
+	before := r.known["one.apk"].entry.(apkEntry)
+
+	again := restart(t, r)
+	got, ok := again.known["one.apk"].entry.(apkEntry)
+	if !ok {
+		t.Fatal("after a restart the apk is not known")
+	}
+	if want, _ := json.Marshal(before); !bytes.Equal(mustJSON(t, got), want) {
+		t.Errorf("after a restart the apk is %+v, want %+v", got.APK, before.APK)
+	}
+	if err := again.update(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := indexed(t, folder); len(got["org.example.one"]) != 1 || len(again.skipped) != 0 {
+		t.Errorf("after a restart indexed %v, skipped %v", got, again.skipped)
+	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

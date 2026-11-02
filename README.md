@@ -176,6 +176,17 @@ owner only, and held open for as long as go-fs runs: a second go-fs pointed at
 the same file refuses to start. An uninstall keeps it, as it keeps the
 configuration; back the two up together.
 
+Besides share links and playback progress, the file keeps:
+
+* the SFTP host key and the self-signed HTTPS and FTPS certificates go-fs
+  generates when none is configured, and the keys it signs digest nonces with,
+  so that clients see the same identity after a restart; that makes the file
+  as secret as the configuration;
+* the time and outcome of each sync's last run, so that a restart neither
+  forgets them nor runs a sync again before it is due;
+* what each repository read of its packages, so that a restart reads only the
+  files that changed meanwhile and writes no metadata when nothing did.
+
 `SIGINT` and `SIGTERM` shut the servers down, dropping open connections and
 aborting running transfers. Stopping the Windows service does the same.
 
@@ -597,9 +608,9 @@ configures the same server, which serves the folders, accounts and limits of
 nothing on the plaintext port.
 
 With `cert` and `key` empty the server generates a self-signed certificate at
-startup and says so. That certificate changes on every restart and proves no
-identity; it is there so the TLS interface works out of the box for a test, not
-for production.
+the first start, keeps it in the persistent data file and says so. That
+certificate proves no identity; it is there so the TLS interface works out of
+the box for a test, not for production.
 
 ## SFTP
 

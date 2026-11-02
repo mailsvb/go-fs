@@ -154,15 +154,15 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	web, err := httpd.New(cfg.HTTP, cfg.HTTPS, cfg.General.SSH, cfg.HTTPServerUsers(), cfg.Tokens, cfg.Servers, "", log)
+	web, err := httpd.New(cfg.HTTP, cfg.HTTPS, cfg.General.SSH, cfg.HTTPServerUsers(), cfg.Tokens, cfg.Servers, "", nil, log)
 	if err != nil {
 		t.Fatalf("httpd.New: %v", err)
 	}
-	files, err := ftp.New(cfg.FTP, cfg.FTPS, cfg.FTPUsers(), log)
+	files, err := ftp.New(cfg.FTP, cfg.FTPS, cfg.FTPUsers(), nil, log)
 	if err != nil {
 		t.Fatalf("ftp.New: %v", err)
 	}
-	secure, err := sftpd.New(cfg.SFTP, cfg.General.SSH, cfg.SFTPUsers(), log)
+	secure, err := sftpd.New(cfg.SFTP, cfg.General.SSH, cfg.SFTPUsers(), nil, log)
 	if err != nil {
 		t.Fatalf("sftp.New: %v", err)
 	}

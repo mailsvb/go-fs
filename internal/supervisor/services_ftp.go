@@ -16,7 +16,7 @@ func init() {
 		order:   orderFTP,
 		enabled: func(e env) bool { return e.cfg.FTP.Enabled || e.cfg.FTPS.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return ftp.New(e.cfg.FTP, e.cfg.FTPS, e.cfg.FTPUsers(), log)
+			return ftp.New(e.cfg.FTP, e.cfg.FTPS, e.cfg.FTPUsers(), e.store.Bucket(keys), log)
 		},
 		reload: func(s service.Server, e env) error {
 			return s.(*ftp.Server).Reload(e.cfg.FTP, e.cfg.FTPS, e.cfg.FTPUsers())

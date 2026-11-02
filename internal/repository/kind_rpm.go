@@ -4,6 +4,7 @@ package repository
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -116,6 +117,14 @@ func (k *rpmKind) admit(r release, href string) (entry, error) {
 		return nil, err
 	}
 	return rpmEntry{e}, nil
+}
+
+func (k *rpmKind) decode(raw []byte) (entry, error) {
+	var e rpmEntry
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 func (k *rpmKind) inputs([]entry) string { return "" }

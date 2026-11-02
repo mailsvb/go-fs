@@ -14,9 +14,11 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // Build decodes the configured key pair, or generates one. cert and key are the
@@ -26,9 +28,12 @@ import (
 //
 // The Node implementation shipped a fixed certificate whose private key is
 // published with the package, which means it offers no confidentiality at all.
-// Generating a certificate at startup keeps the server usable without any setup
-// while making it obvious that it proves no identity.
-func Build(cert, key, certName, keyName string, logger *slog.Logger) (*tls.Config, error) {
+// Generating a certificate keeps the server usable without any setup while
+// making it obvious that it proves no identity. A generated one is kept in
+// kept, under "tls." and the section of certName, so that a client that was
+// told to trust it is not asked again after a restart; with kept nil it lasts
+// this run only.
+func Build(cert, key, certName, keyName string, kept *store.Bucket, logger *slog.Logger) (*tls.Config, error) {
 	if cert != "" && key != "" {
 		certificate, err := Pair(cert, key)
 		if err != nil {
@@ -41,21 +46,61 @@ func Build(cert, key, certName, keyName string, logger *slog.Logger) (*tls.Confi
 		}, nil
 	}
 
-	certPEM, keyPEM, err := SelfSignedPEM()
+	certificate, err := selfSigned(kept, "tls."+strings.TrimSuffix(certName, ".cert"), time.Now(), logger)
 	if err != nil {
 		return nil, fmt.Errorf("cannot generate a certificate for %s: %w", certName, err)
 	}
-	certificate, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("cannot generate a certificate for %s: %w", certName, err)
+	if kept == nil {
+		logger.Warn(fmt.Sprintf("no %s and %s configured, generated a temporary "+
+			"self-signed certificate; it changes on every restart and proves no identity",
+			certName, keyName))
+	} else {
+		logger.Warn(fmt.Sprintf("no %s and %s configured, serving a self-signed "+
+			"certificate kept in the persistent data file; it proves no identity",
+			certName, keyName), "notAfter", certificate.Leaf.NotAfter.Format(time.RFC3339))
 	}
-	logger.Warn(fmt.Sprintf("no %s and %s configured, generated a temporary "+
-		"self-signed certificate; it changes on every restart and proves no identity",
-		certName, keyName))
 	return &tls.Config{
 		Certificates: []tls.Certificate{certificate},
 		MinVersion:   tls.VersionTLS12,
 	}, nil
+}
+
+// keptPair is a generated certificate and its key as kept, in PEM.
+type keptPair struct {
+	Cert []byte `json:"cert"`
+	Key  []byte `json:"key"`
+}
+
+// selfSigned is the certificate kept at name in kept, or, when there is none,
+// it cannot be read or it runs out within expiryWarning, a new one, which is
+// kept in its place. Where it cannot be kept it is used for this run, and
+// the log says so.
+func selfSigned(kept *store.Bucket, name string, now time.Time, logger *slog.Logger) (tls.Certificate, error) {
+	var pair keptPair
+	found, err := kept.Get(name, &pair)
+	if err != nil {
+		logger.Warn("cannot read the kept certificate, so a new one is generated", "key", name, "error", err)
+	}
+	if found && err == nil {
+		certificate, err := tls.X509KeyPair(pair.Cert, pair.Key)
+		if err == nil && certificate.Leaf != nil && certificate.Leaf.NotAfter.Sub(now) >= expiryWarning {
+			return certificate, nil
+		}
+	}
+
+	certPEM, keyPEM, err := SelfSignedPEM()
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	certificate, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	if err := kept.Put(name, keptPair{Cert: certPEM, Key: keyPEM}); err != nil {
+		logger.Warn("cannot keep the generated certificate, so it changes on every restart",
+			"key", name, "error", err)
+	}
+	return certificate, nil
 }
 
 // expiryWarning is how long before a certificate runs out the log starts

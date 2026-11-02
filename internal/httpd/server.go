@@ -31,6 +31,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/service"
+	"github.com/mailsvb/go-fs/internal/store"
 	"github.com/mailsvb/go-fs/internal/tlsconf"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -70,6 +71,9 @@ type Server struct {
 	// empty, which it only is when the file could not be given one; see
 	// shareSecret in share.go.
 	shareFallback []byte
+	// keys keeps what the server generates for itself, the keys above and
+	// the certificate of https, across a restart; nil keeps nothing.
+	keys *store.Bucket
 	// logins counts the wrong passwords each client address has sent, and
 	// locks the ones that sent too many.
 	logins *loginTracker
@@ -279,8 +283,10 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, 
 // New prepares a server. sshCfg is [general.ssh], which sending a file to
 // another host goes by. bearers are the bearer tokens, which only this server
 // reads. servers are the hosts a send may name. configPath is the file the
-// admin interface edits; empty leaves the interface out.
-func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.User, bearers []config.Token, servers []config.Server, configPath string, logger *slog.Logger) (*Server, error) {
+// admin interface edits; empty leaves the interface out. keys is where the
+// keys and the certificate the server generates for itself are kept, so that
+// they stay the same across a restart; nil keeps them for this run only.
+func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.User, bearers []config.Token, servers []config.Server, configPath string, keys *store.Bucket, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
 		return nil, fmt.Errorf("general.baseFolderFiles: %w", err)
@@ -291,16 +297,25 @@ func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.
 		return nil, err
 	}
 
-	nonceKey := make([]byte, 32)
-	if _, err := rand.Read(nonceKey); err != nil {
+	// kept, so that a digest client is not refused the nonce it was handed
+	// before a restart
+	nonceKey, _, err := keptKey(keys, "http.digestNonce", 32, logger)
+	if err != nil {
 		return nil, err
 	}
+	// kept only when it is used, which it is while there is no configured
+	// secret
 	shareFallback := make([]byte, 64)
-	if _, err := rand.Read(shareFallback); err != nil {
+	if cfg.ShareLinkSecret == "" {
+		shareFallback, _, err = keptKey(keys, "http.shareLink", 64, logger)
+	} else {
+		_, err = rand.Read(shareFallback)
+	}
+	if err != nil {
 		return nil, err
 	}
 
-	tokens, err := newSigner(cfg.SessionTokenSecret, logger)
+	tokens, err := newSigner(cfg.SessionTokenSecret, keys, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -311,6 +326,7 @@ func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.
 		tokens:        tokens,
 		nonceKey:      nonceKey,
 		shareFallback: shareFallback,
+		keys:          keys,
 		logins:        newLoginTracker(),
 		done:          make(chan struct{}),
 		dav:           newDAVState(),
@@ -375,7 +391,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	if set.https.Enabled {
-		tlsConfig, err := tlsconf.Build(set.https.Cert, set.https.Key, "https.cert", "https.key", s.log)
+		tlsConfig, err := tlsconf.Build(set.https.Cert, set.https.Key, "https.cert", "https.key", s.keys, s.log)
 		if err != nil {
 			s.closeListeners()
 			return err

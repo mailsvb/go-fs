@@ -54,7 +54,7 @@ func newTestRunner(t *testing.T, keep int) (*runner, string) {
 	r, err := newRunner(config.Repository{
 		Name: "test", Type: config.RepositoryTypeRPM, Folder: "/rpm",
 		SigningKey: signingKey(t), Keep: keep, URL: "https://files.example.com/rpm",
-	}, base, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, base, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestManagerReportsAndReloads(t *testing.T) {
 			Name: "one", Type: config.RepositoryTypeRPM, Folder: "/one", SigningKey: signingKey(t),
 		}},
 	}
-	m, err := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	m, err := New(cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,5 +260,68 @@ func waitFor(t *testing.T, done func() bool) {
 			t.Fatal("timed out")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A restart takes the packages read and what the metadata lists from the
+// cache, so that it reads no package again and writes no metadata again.
+func TestRestartReadsNothingAgain(t *testing.T) {
+	r, folder := newTestRunner(t, 0)
+	withCache(t, r)
+	path := put(t, folder, "hello-1.0-1.x86_64.rpm")
+	if err := r.update(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repomd := filepath.Join(folder, "repodata", "repomd.xml")
+	written, err := os.Stat(repomd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disguise(t, path)
+
+	again := restart(t, r)
+	if err := again.update(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(again.skipped) != 0 || !slices.Equal(listed(t, folder), []string{"hello-1.0-1.x86_64.rpm"}) {
+		t.Errorf("after a restart the package was read again: skipped %v", again.skipped)
+	}
+	if info, _ := os.Stat(repomd); !info.ModTime().Equal(written.ModTime()) {
+		t.Error("after a restart the metadata was written again with nothing changed")
+	}
+	if again.status.Packages != 1 || again.status.Built.IsZero() {
+		t.Errorf("after a restart the status is %+v", again.status)
+	}
+
+	// another configuration writes the metadata again, from the packages
+	// kept
+	again.repo.URL = "https://other.example.com/rpm"
+	changed := restart(t, again)
+	if err := changed.update(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(changed.skipped) != 0 {
+		t.Errorf("another configuration read the package again: skipped %v", changed.skipped)
+	}
+	definition, _ := os.ReadFile(filepath.Join(folder, "test.repo"))
+	if !strings.Contains(string(definition), "baseurl=https://other.example.com/rpm\n") {
+		t.Errorf("another configuration did not write the metadata again:\n%s", definition)
+	}
+
+	// a cache of another version is dropped, and the package read again
+	meta := changed.meta()
+	meta.Version = cacheVersion + 1
+	if err := changed.cache.Put(metaKey, meta); err != nil {
+		t.Fatal(err)
+	}
+	dropped := restart(t, changed)
+	if len(dropped.known) != 0 {
+		t.Errorf("a cache of another version was taken: %d packages", len(dropped.known))
+	}
+	if err := dropped.update(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := dropped.skipped["hello-1.0-1.x86_64.rpm"]; !ok {
+		t.Error("with the cache dropped, the package was not read again")
 	}
 }

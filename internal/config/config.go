@@ -195,7 +195,8 @@ type FTPS struct {
 	Enabled bool `toml:"enabled"`
 	Port    int  `toml:"port"`
 	// Cert and Key are PEM file paths. When both are empty a self-signed
-	// certificate is generated at startup.
+	// certificate is generated at the first start and kept in the persistent
+	// data file.
 	Cert string `toml:"cert"`
 	Key  string `toml:"key"`
 }
@@ -752,8 +753,8 @@ type SFTP struct {
 
 	// HostKey is the SSH host key itself rather than a path to it, base64 of
 	// its PEM encoding, so that the whole configuration stays in one file.
-	// When it is empty a key is generated at startup, which every client will
-	// report as a changed host key after a restart.
+	// When it is empty a key is generated at the first start and kept in the
+	// persistent data file, so that it only changes when that file is lost.
 	HostKey string `toml:"hostkey"`
 
 	MaxConnections int `toml:"maxConnections"`
@@ -922,7 +923,8 @@ type HTTPS struct {
 	Enabled bool `toml:"enabled"`
 	Port    int  `toml:"port"`
 	// Cert and Key are PEM file paths. When both are empty a self-signed
-	// certificate is generated at startup.
+	// certificate is generated at the first start and kept in the persistent
+	// data file.
 	Cert string `toml:"cert"`
 	Key  string `toml:"key"`
 }

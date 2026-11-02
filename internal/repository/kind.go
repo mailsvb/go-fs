@@ -25,6 +25,8 @@ type kind interface {
 	// admit makes a package that stays in the repository ready to be
 	// listed, the one at href that open read.
 	admit(r release, href string) (entry, error)
+	// decode reads an entry back from the JSON the cache keeps it as.
+	decode(raw []byte) (entry, error)
 	// inputs identifies what else the metadata is made of than the
 	// packages, "" when nothing.
 	inputs(entries []entry) string

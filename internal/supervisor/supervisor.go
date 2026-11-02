@@ -89,7 +89,7 @@ var builtIn = []entry{
 		order:   orderHTTP,
 		enabled: func(e env) bool { return e.cfg.HTTP.Enabled || e.cfg.HTTPS.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			server, err := httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.cfg.UsableServers(), e.path, log)
+			server, err := httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.cfg.UsableServers(), e.path, e.store.Bucket(keys), log)
 			if err != nil {
 				return nil, err
 			}
@@ -118,7 +118,7 @@ var builtIn = []entry{
 		order:   orderRepositories,
 		enabled: func(e env) bool { return len(e.cfg.UsableRepositories()) > 0 },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return repository.New(e.cfg, log)
+			return repository.New(e.cfg, e.store, log)
 		},
 		reload: func(s service.Server, e env) error {
 			return s.(*repository.Manager).Reload(e.cfg)
@@ -129,7 +129,7 @@ var builtIn = []entry{
 		order:   orderSyncs,
 		enabled: func(e env) bool { return len(e.cfg.UsableSyncs()) > 0 },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return syncer.New(e.cfg, syncer.StateDir(e.path), log)
+			return syncer.New(e.cfg, syncer.StateDir(e.path), e.store.Bucket("syncs"), log)
 		},
 		reload: func(s service.Server, e env) error {
 			return s.(*syncer.Manager).Reload(e.cfg)
@@ -145,6 +145,11 @@ const (
 	repositories = "repositories"
 	syncs        = "syncs"
 )
+
+// keys is the bucket of the persistent data file the keys and certificates
+// the servers generate for themselves are kept in, when none is configured,
+// so that they stay the same across a restart.
+const keys = "keys"
 
 // background reports whether a service is one of those.
 func background(name string) bool {

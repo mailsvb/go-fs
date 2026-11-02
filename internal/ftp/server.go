@@ -17,6 +17,7 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/service"
+	"github.com/mailsvb/go-fs/internal/store"
 	"github.com/mailsvb/go-fs/internal/tlsconf"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -113,7 +114,7 @@ func checkUserFolders(users []config.User) error {
 	return nil
 }
 
-func New(cfg config.FTP, ftps config.FTPS, users []config.User, logger *slog.Logger) (*Server, error) {
+func New(cfg config.FTP, ftps config.FTPS, users []config.User, keys *store.Bucket, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
 		return nil, fmt.Errorf("general.baseFolderFiles: %w", err)
@@ -130,7 +131,7 @@ func New(cfg config.FTP, ftps config.FTPS, users []config.User, logger *slog.Log
 	server.snapshot.Store(&settings{cfg: cfg, ftps: ftps, users: users})
 	warnNarrowPassiveRange(cfg, logger)
 	if ftps.Enabled {
-		server.tls, err = tlsconf.Build(ftps.Cert, ftps.Key, "ftps.cert", "ftps.key", logger)
+		server.tls, err = tlsconf.Build(ftps.Cert, ftps.Key, "ftps.cert", "ftps.key", keys, logger)
 		if err != nil {
 			return nil, err
 		}

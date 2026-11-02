@@ -31,6 +31,7 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/remote"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // protocols are how a run of a sync is done, by the protocol it names.
@@ -53,6 +54,10 @@ func StateDir(path string) string {
 type Manager struct {
 	log      *slog.Logger
 	stateDir string
+	// kept is where the status of each sync's last run is kept, by its
+	// name, so that a restart neither forgets it nor runs a sync again
+	// before it is due.
+	kept *store.Bucket
 
 	mu      sync.Mutex
 	running map[string]*runner
@@ -62,15 +67,34 @@ type Manager struct {
 }
 
 // New builds a manager for the enabled syncs of cfg, which keeps their
-// snapshots in stateDir.
-func New(cfg config.Config, stateDir string, logger *slog.Logger) (*Manager, error) {
-	m := &Manager{log: logger, stateDir: stateDir}
-	m.running = build(cfg, stateDir, logger)
+// snapshots in stateDir and the status of their last runs in kept.
+func New(cfg config.Config, stateDir string, kept *store.Bucket, logger *slog.Logger) (*Manager, error) {
+	m := &Manager{log: logger, stateDir: stateDir, kept: kept}
+	m.prune(cfg)
+	m.running = build(cfg, stateDir, kept, logger)
 	return m, nil
 }
 
+// prune removes the kept status of every sync cfg no longer has. One that is
+// disabled keeps it, for when it is enabled again.
+func (m *Manager) prune(cfg config.Config) {
+	configured := map[string]bool{}
+	for _, s := range cfg.Syncs {
+		configured[s.Name] = true
+	}
+	err := m.kept.Scan("", func(name string, _ func(any) error) error {
+		if configured[name] {
+			return nil
+		}
+		return m.kept.Delete(name)
+	})
+	if err != nil {
+		m.log.Warn("cannot remove the kept status of the syncs taken out", "error", err)
+	}
+}
+
 // build makes a runner for every sync of cfg the binary runs, by name.
-func build(cfg config.Config, stateDir string, logger *slog.Logger) map[string]*runner {
+func build(cfg config.Config, stateDir string, kept *store.Bucket, logger *slog.Logger) map[string]*runner {
 	syncs := cfg.UsableSyncs()
 	out := make(map[string]*runner, len(syncs))
 	for _, s := range syncs {
@@ -81,7 +105,7 @@ func build(cfg config.Config, stateDir string, logger *slog.Logger) map[string]*
 			trash:    cfg.General.BaseFolderTrash,
 			stateDir: stateDir,
 		}
-		out[s.Name] = newRunner(j, logger)
+		out[s.Name] = newRunner(j, kept, logger)
 	}
 	return out
 }
@@ -113,7 +137,8 @@ func (m *Manager) launch(r *runner) {
 // and started again; one taken out or disabled stops, and its status with
 // it.
 func (m *Manager) Reload(cfg config.Config) error {
-	wanted := build(cfg, m.stateDir, m.log)
+	m.prune(cfg)
+	wanted := build(cfg, m.stateDir, m.kept, m.log)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	next := make(map[string]*runner, len(wanted))

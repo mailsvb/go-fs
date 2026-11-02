@@ -83,7 +83,7 @@ func TestNewRejectsAnAccountWithoutCredentials(t *testing.T) {
 	cfg := config.Default().SFTP
 	cfg.Basefolder = t.TempDir()
 	users := []config.User{{Username: "john", SFTP: true}}
-	if _, err := New(cfg, config.Default().General.SSH, users, discardLogger()); err == nil {
+	if _, err := New(cfg, config.Default().General.SSH, users, nil, discardLogger()); err == nil {
 		t.Error("an account with neither a password nor a key has to be refused")
 	} else if !strings.Contains(err.Error(), "never log in") {
 		t.Errorf("error = %v", err)
@@ -94,7 +94,7 @@ func TestNewRejectsABrokenAuthorizedKey(t *testing.T) {
 	cfg := config.Default().SFTP
 	cfg.Basefolder = t.TempDir()
 	users := []config.User{{Username: "john", SFTP: true, AuthorizedKeys: []string{"ssh-ed25519 not-a-key"}}}
-	if _, err := New(cfg, config.Default().General.SSH, users, discardLogger()); err == nil {
+	if _, err := New(cfg, config.Default().General.SSH, users, nil, discardLogger()); err == nil {
 		t.Error("a malformed authorized key has to be refused at startup")
 	}
 }
@@ -102,7 +102,7 @@ func TestNewRejectsABrokenAuthorizedKey(t *testing.T) {
 func TestNewRejectsMissingFolders(t *testing.T) {
 	cfg := config.Default().SFTP
 	cfg.Basefolder = t.TempDir() + "/nope"
-	if _, err := New(cfg, config.Default().General.SSH, []config.User{fullUser("john", "doe")}, discardLogger()); err == nil {
+	if _, err := New(cfg, config.Default().General.SSH, []config.User{fullUser("john", "doe")}, nil, discardLogger()); err == nil {
 		t.Error("a missing base folder has to be refused")
 	}
 
@@ -110,7 +110,7 @@ func TestNewRejectsMissingFolders(t *testing.T) {
 	cfg.Basefolder = t.TempDir()
 	user := fullUser("john", "doe")
 	user.Basefolder = t.TempDir() + "/nope"
-	if _, err := New(cfg, config.Default().General.SSH, []config.User{user}, discardLogger()); err == nil {
+	if _, err := New(cfg, config.Default().General.SSH, []config.User{user}, nil, discardLogger()); err == nil {
 		t.Error("a missing user base folder has to be refused")
 	}
 }
@@ -119,7 +119,7 @@ func TestDuplicateAccountIsRejected(t *testing.T) {
 	cfg := config.Default().SFTP
 	cfg.Basefolder = t.TempDir()
 	users := []config.User{fullUser("john", "doe"), fullUser("john", "other")}
-	if _, err := New(cfg, config.Default().General.SSH, users, discardLogger()); err == nil {
+	if _, err := New(cfg, config.Default().General.SSH, users, nil, discardLogger()); err == nil {
 		t.Error("the same username twice has to be refused")
 	}
 }

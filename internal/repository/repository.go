@@ -26,12 +26,16 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // Manager runs the repositories. It is run by the supervisor like a server,
 // whichever servers are enabled.
 type Manager struct {
 	log *slog.Logger
+	// store keeps what each repository read, in a bucket of its own, so
+	// that a restart reads only what changed meanwhile.
+	store *store.Store
 
 	mu      sync.Mutex
 	running map[string]*runner
@@ -41,10 +45,10 @@ type Manager struct {
 }
 
 // New builds a manager for the repositories of cfg, whose folders are in
-// cfg.General.BaseFolderFiles.
-func New(cfg config.Config, logger *slog.Logger) (*Manager, error) {
-	m := &Manager{log: logger, running: map[string]*runner{}}
-	wanted, err := build(cfg, logger)
+// cfg.General.BaseFolderFiles, which keeps what it read of them in st.
+func New(cfg config.Config, st *store.Store, logger *slog.Logger) (*Manager, error) {
+	m := &Manager{log: logger, store: st, running: map[string]*runner{}}
+	wanted, err := build(cfg, st, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -54,11 +58,11 @@ func New(cfg config.Config, logger *slog.Logger) (*Manager, error) {
 
 // build makes a runner for every repository of cfg, by name, but for those of
 // a kind the binary was built without, which it leaves alone.
-func build(cfg config.Config, logger *slog.Logger) (map[string]*runner, error) {
+func build(cfg config.Config, st *store.Store, logger *slog.Logger) (map[string]*runner, error) {
 	repos := cfg.UsableRepositories()
 	out := make(map[string]*runner, len(repos))
 	for _, repo := range repos {
-		r, err := newRunner(repo, cfg.General.BaseFolderFiles, logger)
+		r, err := newRunner(repo, cfg.General.BaseFolderFiles, st.Bucket("repository."+repo.Name), logger)
 		if err != nil {
 			return nil, fmt.Errorf("repository %q: %w", repo.Name, err)
 		}
@@ -93,7 +97,7 @@ func (m *Manager) launch(r *runner) {
 // and looks at its folder at once; one taken out stops, and its status with
 // it.
 func (m *Manager) Reload(cfg config.Config) error {
-	wanted, err := build(cfg, m.log)
+	wanted, err := build(cfg, m.store, m.log)
 	if err != nil {
 		return err
 	}

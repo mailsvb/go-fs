@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // The two listeners are independent, so https can serve on its own.
@@ -94,21 +95,21 @@ func TestNewRejectsBadConfiguration(t *testing.T) {
 
 	cfg := config.Default().HTTP
 	cfg.Basefolder = base + "/nope"
-	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", discardLogger()); err == nil {
+	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, discardLogger()); err == nil {
 		t.Error("a missing base folder has to be refused")
 	}
 
 	cfg = config.Default().HTTP
 	cfg.Basefolder = base
 	cfg.PathsRequireAuth = []string{"([unclosed"}
-	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", discardLogger()); err == nil {
+	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, discardLogger()); err == nil {
 		t.Error("a broken pathsRequireAuth pattern has to be refused")
 	}
 
 	cfg = config.Default().HTTP
 	cfg.Basefolder = base
 	users := []config.User{{Username: "john", Password: "doe", HTTP: true, Paths: []string{"([unclosed"}}}
-	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, users, nil, nil, "", discardLogger()); err == nil {
+	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, users, nil, nil, "", nil, discardLogger()); err == nil {
 		t.Error("a broken user path pattern has to be refused")
 	}
 }
@@ -117,11 +118,53 @@ func TestStartNeedsAListener(t *testing.T) {
 	cfg := config.Default().HTTP
 	cfg.Enabled = false
 	cfg.Basefolder = t.TempDir()
-	server, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", discardLogger())
+	server, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, discardLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := server.Start(t.Context()); err == nil {
 		t.Error("starting with neither listener enabled has to fail")
+	}
+}
+
+// What the server generates for itself is kept, so that a server built
+// again, as by a restart, takes the digest nonces, share links and sessions
+// of the one before.
+func TestGeneratedKeysAreKept(t *testing.T) {
+	st, err := store.Open(t.TempDir()+"/go-fs.db", discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	keys := st.Bucket("keys")
+
+	cfg := config.Default().HTTP
+	cfg.Basefolder = t.TempDir()
+	build := func() *Server {
+		t.Helper()
+		server, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", keys, discardLogger())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return server
+	}
+	first, second := build(), build()
+	if fresh, ours := second.nonceState(first.newNonce()); !fresh || !ours {
+		t.Errorf("the nonce of the server before is fresh %v and ours %v, want both", fresh, ours)
+	}
+	if string(first.shareFallback) != string(second.shareFallback) {
+		t.Error("the share links of the server before are not taken")
+	}
+	if string(first.tokens.key) != string(second.tokens.key) {
+		t.Error("the sessions of the server before are not taken")
+	}
+
+	// without a store, each has keys of its own
+	other, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ours := other.nonceState(first.newNonce()); ours {
+		t.Error("a server with no store took the nonce of another")
 	}
 }

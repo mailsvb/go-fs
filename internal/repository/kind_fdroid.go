@@ -3,6 +3,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -94,6 +95,17 @@ func (k *fdroidKind) admit(r release, href string) (entry, error) {
 		return nil, err
 	}
 	return apkEntry{fdroid.Version{Href: href, Added: info.ModTime(), APK: r.(*apkRelease).apk}}, nil
+}
+
+func (k *fdroidKind) decode(raw []byte) (entry, error) {
+	var e apkEntry
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return nil, err
+	}
+	if e.APK == nil {
+		return nil, errors.New("the entry has no apk")
+	}
+	return e, nil
 }
 
 func (k *fdroidKind) inputs(entries []entry) string {

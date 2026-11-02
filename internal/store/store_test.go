@@ -250,3 +250,123 @@ func scanKeys(t *testing.T, b *Bucket, prefix string) []string {
 	}
 	return keys
 }
+
+func TestNilKeepsNothing(t *testing.T) {
+	var s *Store
+	b := s.Bucket("shares")
+	if b != nil {
+		t.Fatalf("Bucket of a nil store = %v, want nil", b)
+	}
+	if err := b.Put("abc", share{Path: "/a"}); err != nil {
+		t.Fatal(err)
+	}
+	var got share
+	if found, err := b.Get("abc", &got); err != nil || found {
+		t.Fatalf("Get from a nil bucket = %v, %v, want false, nil", found, err)
+	}
+	if err := b.Delete("abc"); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := b.Scan("", func(string, func(any) error) error { called = true; return nil }); err != nil || called {
+		t.Fatalf("Scan of a nil bucket = %v and called %v, want nil and not called", err, called)
+	}
+	if err := b.Write(func(*Writer) error { called = true; return nil }); err != nil || called {
+		t.Fatalf("Write to a nil bucket = %v and called %v, want nil and not called", err, called)
+	}
+	var made string
+	created, err := b.Remembered("key", &made, func() error { made = "fresh"; return nil })
+	if err != nil || !created || made != "fresh" {
+		t.Fatalf("Remembered on a nil bucket = %v, %v, %q, want true, nil, %q", created, err, made, "fresh")
+	}
+}
+
+func TestWrite(t *testing.T) {
+	s, _ := openTest(t)
+	shares := s.Bucket("shares")
+	if err := shares.Put("old", share{Path: "/old"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := shares.Write(func(w *Writer) error {
+		if err := w.Put("a", share{Path: "/a"}); err != nil {
+			return err
+		}
+		if err := w.Put("b", share{Path: "/b"}); err != nil {
+			return err
+		}
+		return w.Delete("old")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	if err := shares.Scan("", func(key string, _ func(any) error) error {
+		keys = append(keys, key)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(keys, ",") != "a,b" {
+		t.Fatalf("keys after Write = %v, want [a b]", keys)
+	}
+
+	// a write that fails leaves the bucket as it was
+	failed := errors.New("failed")
+	err = shares.Write(func(w *Writer) error {
+		if err := w.Delete("a"); err != nil {
+			return err
+		}
+		if err := w.Put("c", share{Path: "/c"}); err != nil {
+			return err
+		}
+		return failed
+	})
+	if !errors.Is(err, failed) {
+		t.Fatalf("Write = %v, want %v", err, failed)
+	}
+	var got share
+	if found, _ := shares.Get("a", &got); !found {
+		t.Error("the delete of a Write that failed was kept")
+	}
+	if found, _ := shares.Get("c", &got); found {
+		t.Error("the put of a Write that failed was kept")
+	}
+}
+
+func TestRemembered(t *testing.T) {
+	s, _ := openTest(t)
+	keys := s.Bucket("keys")
+
+	calls := 0
+	create := func(v *string) func() error {
+		return func() error {
+			calls++
+			*v = "secret"
+			return nil
+		}
+	}
+	var first string
+	created, err := keys.Remembered("k", &first, create(&first))
+	if err != nil || !created || first != "secret" {
+		t.Fatalf("first Remembered = %v, %v, %q, want true, nil, %q", created, err, first, "secret")
+	}
+	var second string
+	created, err = keys.Remembered("k", &second, create(&second))
+	if err != nil || created || second != "secret" {
+		t.Fatalf("second Remembered = %v, %v, %q, want false, nil, %q", created, err, second, "secret")
+	}
+	if calls != 1 {
+		t.Fatalf("create was called %d times, want once", calls)
+	}
+
+	// a create that fails keeps nothing
+	failed := errors.New("failed")
+	var none string
+	if _, err := keys.Remembered("other", &none, func() error { return failed }); !errors.Is(err, failed) {
+		t.Fatalf("Remembered = %v, want %v", err, failed)
+	}
+	if found, _ := keys.Get("other", &none); found {
+		t.Fatal("the record of a create that failed was kept")
+	}
+}

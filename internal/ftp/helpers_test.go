@@ -181,7 +181,7 @@ func newServerWith(t *testing.T, tune func(*ftpConfig), tuneTLS func(*config.FTP
 	}
 
 	logs := &logStore{}
-	server, err := New(cfg.FTP, ftps, cfg.Users, slog.New(&recorder{store: logs}))
+	server, err := New(cfg.FTP, ftps, cfg.Users, nil, slog.New(&recorder{store: logs}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

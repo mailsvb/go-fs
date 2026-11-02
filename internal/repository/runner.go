@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // runner keeps one repository.
@@ -25,6 +27,9 @@ type runner struct {
 	folder string
 	kind   kind
 	log    *slog.Logger
+	// cache keeps the packages read and what the metadata lists across a
+	// restart, so that a restart reads only what changed meanwhile.
+	cache *store.Bucket
 
 	// quit is closed to stop the runner, and done once it has stopped.
 	quit     chan struct{}
@@ -50,7 +55,9 @@ type known struct {
 	entry   entry
 }
 
-func newRunner(repo config.Repository, base string, logger *slog.Logger) (*runner, error) {
+// newRunner makes the runner of repo, which starts from what cache kept of
+// the runs before when it runs.
+func newRunner(repo config.Repository, base string, cache *store.Bucket, logger *slog.Logger) (*runner, error) {
 	folder := config.RepositoryPath(base, repo.Folder)
 	log := logger.With("repository", repo.Name)
 	k, status, err := newKind(repo, folder, log)
@@ -63,6 +70,7 @@ func newRunner(repo config.Repository, base string, logger *slog.Logger) (*runne
 		folder:  folder,
 		kind:    k,
 		log:     log,
+		cache:   cache,
 		quit:    make(chan struct{}),
 		done:    make(chan struct{}),
 		known:   map[string]known{},
@@ -71,12 +79,173 @@ func newRunner(repo config.Repository, base string, logger *slog.Logger) (*runne
 	}, nil
 }
 
+// cacheVersion is the version of what the cache keeps of a package. A cache
+// of another is dropped, so that a change to what is read of a package
+// reaches the packages read before it.
+const cacheVersion = 1
+
+// The cache keeps a record of each package under packagePrefix and its path
+// in the repository, and one that says what they were read for under
+// metaKey.
+const (
+	packagePrefix = "pkg/"
+	metaKey       = "meta"
+)
+
+// cacheMeta says what the packages of the cache were read for, which they
+// are good for only as long as it stays the same, and what the metadata
+// written last lists.
+type cacheMeta struct {
+	Version    int    `json:"version"`
+	Type       string `json:"type"`
+	Folder     string `json:"folder"`
+	SigningKey string `json:"signingKey,omitempty"`
+	// Repo is the configuration the metadata was written for, which it is
+	// written again for when it changed.
+	Repo     json.RawMessage `json:"repo,omitempty"`
+	Listed   string          `json:"listed,omitempty"`
+	Packages int             `json:"packages,omitempty"`
+	Albums   int             `json:"albums,omitempty"`
+	Built    time.Time       `json:"built,omitzero"`
+}
+
+// cachedPackage is a package as the cache keeps it.
+type cachedPackage struct {
+	Size    int64           `json:"size"`
+	ModTime time.Time       `json:"modTime"`
+	Entry   json.RawMessage `json:"entry"`
+}
+
+// meta is what the cache says of the runner as it is now.
+func (r *runner) meta() cacheMeta {
+	repo, _ := json.Marshal(r.repo)
+	return cacheMeta{Version: cacheVersion, Type: r.repo.Type, Folder: r.folder, SigningKey: r.repo.SigningKey,
+		Repo: repo, Listed: r.listed, Packages: r.status.Packages, Albums: r.status.Albums, Built: r.status.Built}
+}
+
+// restore takes what the cache kept: the packages read, when they were read
+// for the same type, folder and key, and what the metadata lists, when it was
+// written for the same configuration too. Anything else is dropped. Where the
+// cache cannot be read, every package is read again, as without one.
+func (r *runner) restore() {
+	var kept cacheMeta
+	found, err := r.cache.Get(metaKey, &kept)
+	if err != nil {
+		r.log.Warn("cannot read the cache of the repository, so every package is read again", "error", err)
+		return
+	}
+	now := r.meta()
+	if !found || kept.Version != now.Version || kept.Type != now.Type || kept.Folder != now.Folder ||
+		kept.SigningKey != now.SigningKey {
+		r.drop()
+		return
+	}
+	err = r.cache.Scan(packagePrefix, func(key string, decode func(any) error) error {
+		var p cachedPackage
+		if err := decode(&p); err != nil {
+			return nil
+		}
+		e, err := r.kind.decode(p.Entry)
+		if err != nil {
+			// read again, as a package not kept
+			return nil
+		}
+		r.known[strings.TrimPrefix(key, packagePrefix)] = known{size: p.Size, modTime: p.ModTime, entry: e}
+		return nil
+	})
+	if err != nil {
+		r.log.Warn("cannot read the cache of the repository, so every package is read again", "error", err)
+		r.known = map[string]known{}
+		return
+	}
+	if string(kept.Repo) == string(now.Repo) {
+		r.listed = kept.Listed
+		r.status.Packages = kept.Packages
+		r.status.Albums = kept.Albums
+		r.status.Built = kept.Built
+	}
+	r.log.Debug("repository cache restored", "packages", len(r.known), "listed", r.listed != "")
+}
+
+// drop removes everything the cache keeps.
+func (r *runner) drop() {
+	var keys []string
+	err := r.cache.Scan("", func(key string, _ func(any) error) error {
+		keys = append(keys, key)
+		return nil
+	})
+	if err == nil && len(keys) > 0 {
+		err = r.cache.Write(func(w *store.Writer) error {
+			for _, key := range keys {
+				if err := w.Delete(key); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	if err != nil {
+		r.log.Warn("cannot drop the cache of the repository", "error", err)
+	}
+}
+
+// keep brings the packages of the cache in line with now, from before,
+// writing only those that changed. Where it cannot, the log says so and the
+// repository goes on: the cache only spares reading a package again.
+func (r *runner) keep(before, now map[string]known) {
+	var changed []string
+	for href, k := range now {
+		if b, ok := before[href]; !ok || b.size != k.size || !b.modTime.Equal(k.modTime) {
+			changed = append(changed, href)
+		}
+	}
+	var removed []string
+	for href := range before {
+		if _, ok := now[href]; !ok {
+			removed = append(removed, href)
+		}
+	}
+	if len(changed) == 0 && len(removed) == 0 {
+		return
+	}
+	err := r.cache.Write(func(w *store.Writer) error {
+		// the meta goes with the packages, so that none is ever kept
+		// without saying what it was read for
+		if err := w.Put(metaKey, r.meta()); err != nil {
+			return err
+		}
+		for _, href := range changed {
+			k := now[href]
+			e, err := json.Marshal(k.entry)
+			if err != nil {
+				return err
+			}
+			if err := w.Put(packagePrefix+href, cachedPackage{Size: k.size, ModTime: k.modTime, Entry: e}); err != nil {
+				return err
+			}
+		}
+		for _, href := range removed {
+			if err := w.Delete(packagePrefix + href); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		r.log.Warn("cannot keep the packages read in the cache of the repository", "error", err)
+	}
+}
+
 // run looks at the folder at once and then every pollInterval until ctx ends
 // or stop is called.
 func (r *runner) run(ctx context.Context) {
 	defer close(r.done)
 	r.log.Info("repository started", "type", r.repo.Type, "folder", r.repo.Folder, "key", r.kind.keyID(),
 		"pollInterval", r.repo.Interval())
+	// restored here rather than when the runner is made, so that a runner a
+	// reload makes and drops again never touches the cache, and one that
+	// replaces another reads it once that one stopped
+	r.restore()
 	r.look()
 	ticker := time.NewTicker(time.Duration(r.repo.Interval()) * time.Second)
 	defer ticker.Stop()
@@ -173,6 +342,7 @@ func (r *runner) update(now time.Time) error {
 		current[c.href] = k
 		entries = append(entries, k.entry)
 	}
+	r.keep(r.known, current)
 	r.known = current
 	r.skip(skipped)
 
@@ -188,6 +358,9 @@ func (r *runner) update(now time.Time) error {
 	r.status.Built = now
 	if k, ok := r.kind.(reporter); ok {
 		k.report(&r.status)
+	}
+	if err := r.cache.Put(metaKey, r.meta()); err != nil {
+		r.log.Warn("cannot keep what the metadata lists in the cache of the repository", "error", err)
 	}
 	r.log.Info("repository metadata written", "packages", len(entries))
 	return nil

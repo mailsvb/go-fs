@@ -13,6 +13,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // A browser that has used the login form carries a signed token rather than
@@ -66,11 +67,11 @@ type signer struct {
 // The secret is generated and written into the configuration file at the
 // first start (config.EnsureSecrets), so it is only missing here when that
 // file could not be written. Then, as with the TLS certificate and the SFTP
-// host key, one is generated for this run, which keeps the server usable at
-// the cost of a key that changes on every restart: every browser is logged
-// out, and two hosts serving the same folder cannot share a login. The
-// warning says so.
-func newSigner(configured string, logger *slog.Logger) (*signer, error) {
+// host key, one is generated and kept in keys, which keeps the server usable
+// and its browsers logged in across a restart, though two hosts serving the
+// same folder cannot share a login. With keys nil the key changes on every
+// restart, and every browser is logged out by one. The warning says which.
+func newSigner(configured string, keys *store.Bucket, logger *slog.Logger) (*signer, error) {
 	var key []byte
 	if configured != "" {
 		decoded, err := config.DecodeSessionSecret(configured)
@@ -79,13 +80,19 @@ func newSigner(configured string, logger *slog.Logger) (*signer, error) {
 		}
 		key = decoded
 	} else {
-		key = make([]byte, 32)
-		if _, err := rand.Read(key); err != nil {
+		generated, kept, err := keptKey(keys, "http.sessionToken", 32, logger)
+		if err != nil {
 			return nil, err
 		}
-		logger.Warn("no http.httpSessionTokenSecret configured, generated a temporary " +
-			"signing key; it changes on every restart, so every browser is logged out " +
-			"by one and two hosts cannot share a login")
+		key = generated
+		if kept {
+			logger.Warn("no http.httpSessionTokenSecret configured, using a signing key " +
+				"generated and kept in the persistent data file; two hosts cannot share a login")
+		} else {
+			logger.Warn("no http.httpSessionTokenSecret configured, generated a temporary " +
+				"signing key; it changes on every restart, so every browser is logged out " +
+				"by one and two hosts cannot share a login")
+		}
 	}
 
 	return &signer{

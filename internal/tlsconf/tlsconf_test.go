@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 func capture() (*slog.Logger, *bytes.Buffer) {
@@ -54,7 +55,7 @@ func TestBuildDescribesTheCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	logger, out := capture()
-	if _, err := Build(config.Encode(certPEM), config.Encode(keyPEM), "ftps.cert", "ftps.key", logger); err != nil {
+	if _, err := Build(config.Encode(certPEM), config.Encode(keyPEM), "ftps.cert", "ftps.key", nil, logger); err != nil {
 		t.Fatal(err)
 	}
 	log := out.String()
@@ -82,7 +83,7 @@ func TestBuildWarnsAboutExpiry(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cert, key := certificateExpiring(t, tc.notAfter)
 			logger, out := capture()
-			if _, err := Build(cert, key, "https.cert", "https.key", logger); err != nil {
+			if _, err := Build(cert, key, "https.cert", "https.key", nil, logger); err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(out.String(), "level=WARN") || !strings.Contains(out.String(), tc.want) {
@@ -94,10 +95,61 @@ func TestBuildWarnsAboutExpiry(t *testing.T) {
 
 func TestBuildWithoutMaterialWarns(t *testing.T) {
 	logger, out := capture()
-	if _, err := Build("", "", "ftps.cert", "ftps.key", logger); err != nil {
+	if _, err := Build("", "", "ftps.cert", "ftps.key", nil, logger); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "generated a temporary") {
 		t.Errorf("a generated certificate has to be reported:\n%s", out.String())
+	}
+}
+
+func TestBuildKeepsTheGeneratedCertificate(t *testing.T) {
+	logger, out := capture()
+	st, err := store.Open(t.TempDir()+"/go-fs.db", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	keys := st.Bucket("keys")
+
+	first, err := Build("", "", "ftps.cert", "ftps.key", keys, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Build("", "", "ftps.cert", "ftps.key", keys, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first.Certificates[0].Certificate[0], second.Certificates[0].Certificate[0]) {
+		t.Error("a second build generated another certificate rather than the one kept")
+	}
+	if strings.Contains(out.String(), "generated a temporary") {
+		t.Errorf("a kept certificate is reported as temporary:\n%s", out.String())
+	}
+	other, err := Build("", "", "https.cert", "https.key", keys, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(first.Certificates[0].Certificate[0], other.Certificates[0].Certificate[0]) {
+		t.Error("https was given the certificate of ftps")
+	}
+
+	// one that runs out soon is replaced, and the new one kept
+	cert, key := certificateExpiring(t, time.Now().Add(expiryWarning/2))
+	certPEM, _ := config.DecodeCertificate(cert)
+	keyPEM, _ := config.DecodePrivateKey(key)
+	if err := keys.Put("tls.ftps", keptPair{Cert: certPEM, Key: keyPEM}); err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := Build("", "", "ftps.cert", "ftps.key", keys, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leaf := renewed.Certificates[0].Leaf; leaf.Subject.CommonName != "go-fs self-signed" {
+		t.Errorf("a kept certificate that runs out soon was served: %s", leaf.Subject)
+	}
+	var kept keptPair
+	if found, _ := keys.Get("tls.ftps", &kept); !found || bytes.Equal(kept.Cert, certPEM) {
+		t.Error("the certificate that replaced one running out was not kept")
 	}
 }

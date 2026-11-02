@@ -524,8 +524,9 @@ enabled = false
 port = 8990
 # The certificate and its key themselves, base64 of the PEM, not paths to them,
 # so the whole configuration stays in this one file. When both are empty a
-# self-signed certificate is generated at startup; it changes on every restart
-# and proves no identity, so set your own for anything but a quick test.
+# self-signed certificate is generated at the first start and kept in the
+# persistent data file; it proves no identity, so set your own for anything
+# but a quick test.
 cert = ""
 key = ""
 # to fill them in by hand: base64 < server.crt | tr -d "\n"
@@ -542,8 +543,9 @@ port = 8022
 address = "127.0.0.1"
 
 # The SSH host key, base64 of its PEM encoding, so the whole configuration
-# stays in this one file. Empty generates a key at every start, which makes
-# every client report a changed host key.
+# stays in this one file. Empty generates a key at the first start and keeps
+# it in the persistent data file; should that file be lost, every client
+# reports a changed host key.
 hostkey = ""
 # a stable one: ssh-keygen -q -t ed25519 -N "" -f hostkey && base64 < hostkey | tr -d "\n"
 
@@ -693,8 +695,9 @@ enabled = false
 port = 8443
 # The certificate and its key themselves, base64 of the PEM, not paths to them,
 # so the whole configuration stays in this one file. When both are empty a
-# self-signed certificate is generated at startup; it changes on every restart
-# and proves no identity, so set your own for anything but a quick test.
+# self-signed certificate is generated at the first start and kept in the
+# persistent data file; it proves no identity, so set your own for anything
+# but a quick test.
 cert = ""
 key = ""
 # to fill them in by hand: base64 < server.crt | tr -d "\n"

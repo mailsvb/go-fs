@@ -25,7 +25,7 @@ func newJellyfinRunner(t *testing.T) (*runner, string) {
 		t.Fatal(err)
 	}
 	r, err := newRunner(config.Repository{Name: "music", Type: config.RepositoryTypeJellyfin, Folder: "/music",
-		Title: "Our music"}, base, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		Title: "Our music"}, base, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestJellyfinRetiresWithTheRepository(t *testing.T) {
 		General:      config.General{BaseFolderFiles: base},
 		Repositories: []config.Repository{{Name: "music", Type: config.RepositoryTypeJellyfin, Folder: "/music"}},
 	}
-	m, err := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	m, err := New(cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,5 +168,30 @@ func TestJellyfinRetiresWithTheRepository(t *testing.T) {
 		if l.Name == "music" {
 			t.Error("the library of a repository taken out is still published")
 		}
+	}
+}
+
+// A restart takes the tracks read from the cache and publishes the library
+// without reading any again.
+func TestJellyfinRestartReadsNoTrackAgain(t *testing.T) {
+	r, folder := newJellyfinRunner(t)
+	withCache(t, r)
+	putFile(t, folder, "Band/First/01.mp3", audiotest.MP3(audiotest.Tags{Title: "One", Artist: "Band",
+		Album: "First", Track: 1}, 20, true))
+	if err := r.update(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	disguise(t, filepath.Join(folder, "Band", "First", "01.mp3"))
+	jellyfin.Retire("music")
+
+	again := restart(t, r)
+	if err := again.update(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if l := published(t); !slices.Equal(titles(l), []string{"One"}) || len(again.skipped) != 0 {
+		t.Errorf("after a restart the library has %q and skipped %v", titles(l), again.skipped)
+	}
+	if again.status.Packages != 1 || again.status.Albums != 1 {
+		t.Errorf("after a restart the status is %+v", again.status)
 	}
 }

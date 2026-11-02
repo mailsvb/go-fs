@@ -161,7 +161,10 @@ func (s *Store) sweep() (int, error) {
 }
 
 // Bucket is the records of one part of go-fs. It is created with its first
-// record; until then, reading from it finds nothing.
+// record; until then, reading from it finds nothing. A nil Bucket, which a
+// nil Store hands out, keeps nothing: it finds nothing and writing to it
+// does nothing, so that a part handed no store works as it would for a
+// single run.
 type Bucket struct {
 	store *Store
 	name  []byte
@@ -170,12 +173,18 @@ type Bucket struct {
 // Bucket is the bucket of the given name, "shares", "jellyfin.playstate" and
 // the like: one per kind of record, named after the part that keeps it.
 func (s *Store) Bucket(name string) *Bucket {
+	if s == nil {
+		return nil
+	}
 	return &Bucket{store: s, name: []byte(name)}
 }
 
 // Get decodes the record at key into v and reports whether there was one. A
 // record that ran out is not found.
 func (b *Bucket) Get(key string, v any) (bool, error) {
+	if b == nil {
+		return false, nil
+	}
 	now := b.store.now()
 	found := false
 	err := b.store.db.View(func(tx *bolt.Tx) error {
@@ -208,15 +217,13 @@ func (b *Bucket) PutUntil(key string, v any, expires time.Time) error {
 }
 
 func (b *Bucket) put(key string, v any, expires time.Time) error {
-	payload, err := json.Marshal(v)
+	if b == nil {
+		return nil
+	}
+	value, err := encode(v, expires)
 	if err != nil {
 		return err
 	}
-	value := make([]byte, headerSize+len(payload))
-	if !expires.IsZero() {
-		binary.BigEndian.PutUint64(value, uint64(expires.UnixNano()))
-	}
-	copy(value[headerSize:], payload)
 	// a batch takes the writes that arrive together into one commit, so
 	// that many small ones do not each wait for the disk; it may run the
 	// function more than once, which a put survives
@@ -231,6 +238,9 @@ func (b *Bucket) put(key string, v any, expires time.Time) error {
 
 // Delete removes the record at key. One that is not there is no error.
 func (b *Bucket) Delete(key string) error {
+	if b == nil {
+		return nil
+	}
 	return b.store.db.Batch(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(b.name)
 		if bucket == nil {
@@ -246,6 +256,9 @@ func (b *Bucket) Delete(key string) error {
 // before the first call, so fn may write to the store; an error it returns
 // ends the scan and is returned.
 func (b *Bucket) Scan(prefix string, fn func(key string, decode func(v any) error) error) error {
+	if b == nil {
+		return nil
+	}
 	type record struct {
 		key     string
 		payload []byte
@@ -280,6 +293,98 @@ func (b *Bucket) Scan(prefix string, fn func(key string, decode func(v any) erro
 		}
 	}
 	return nil
+}
+
+// Write calls fn with a Writer whose puts and deletes are made in one
+// transaction: all of them, when fn returns nil, and none otherwise. It is
+// for many records at once, which Put would write one commit at a time. On a
+// nil Bucket fn is not called.
+func (b *Bucket) Write(fn func(w *Writer) error) error {
+	if b == nil {
+		return nil
+	}
+	return b.store.db.Update(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists(b.name)
+		if err != nil {
+			return err
+		}
+		return fn(&Writer{bucket: bucket})
+	})
+}
+
+// Writer writes to a bucket inside the transaction of Write, and only there.
+type Writer struct {
+	bucket *bolt.Bucket
+}
+
+// Put stores v at key, for good, replacing what was there.
+func (w *Writer) Put(key string, v any) error {
+	return w.PutUntil(key, v, time.Time{})
+}
+
+// PutUntil stores v at key until expires, replacing what was there. A zero
+// expires is for good, as Put.
+func (w *Writer) PutUntil(key string, v any, expires time.Time) error {
+	value, err := encode(v, expires)
+	if err != nil {
+		return err
+	}
+	return w.bucket.Put([]byte(key), value)
+}
+
+// Delete removes the record at key. One that is not there is no error.
+func (w *Writer) Delete(key string) error {
+	return w.bucket.Delete([]byte(key))
+}
+
+// Remembered decodes the record at key into v and reports false; when there
+// is none, it calls create to fill v, stores v for good and reports true.
+// It is for what is made once and kept from then on, such as a key: the
+// record is looked for and stored in one transaction, so two that ask at
+// once are given the same. On a nil Bucket, create is called and nothing is
+// kept.
+func (b *Bucket) Remembered(key string, v any, create func() error) (bool, error) {
+	if b == nil {
+		return true, create()
+	}
+	now := b.store.now()
+	created := false
+	err := b.store.db.Update(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists(b.name)
+		if err != nil {
+			return err
+		}
+		if value := bucket.Get([]byte(key)); value != nil && !isExpired(value, now) {
+			if len(value) < headerSize {
+				return b.corrupt(key)
+			}
+			return json.Unmarshal(value[headerSize:], v)
+		}
+		if err := create(); err != nil {
+			return err
+		}
+		value, err := encode(v, time.Time{})
+		if err != nil {
+			return err
+		}
+		created = true
+		return bucket.Put([]byte(key), value)
+	})
+	return created, err
+}
+
+// encode is v as a record: the expiry, zero for none, in front of v in JSON.
+func encode(v any, expires time.Time) ([]byte, error) {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	value := make([]byte, headerSize+len(payload))
+	if !expires.IsZero() {
+		binary.BigEndian.PutUint64(value, uint64(expires.UnixNano()))
+	}
+	copy(value[headerSize:], payload)
+	return value, nil
 }
 
 func (b *Bucket) corrupt(key string) error {
