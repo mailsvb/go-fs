@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.3
 	github.com/aws/smithy-go v1.28.5
 	github.com/cloudsoda/go-smb2 v0.0.0-20260918041005-0c5d69b69701
+	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/klauspost/compress v1.20.3
 	github.com/opencontainers/go-digest v1.0.0
@@ -18,6 +19,7 @@ require (
 	github.com/shogo82148/androidbinary v1.0.6
 	github.com/smallstep/pkcs7 v0.2.3
 	github.com/ulikunitz/xz v0.5.17
+	go.etcd.io/bbolt v1.5.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.61.0
 	golang.org/x/sys v0.49.0
@@ -35,7 +37,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.6 // indirect
 	github.com/cloudflare/circl v1.6.5 // indirect
 	github.com/cloudsoda/sddl v0.0.0-20250224235906-926454e91efc // indirect
-	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8 // indirect
 	github.com/geoffgarside/ber v1.2.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.4 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect

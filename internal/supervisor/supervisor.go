@@ -25,6 +25,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/repository"
 	"github.com/mailsvb/go-fs/internal/service"
+	"github.com/mailsvb/go-fs/internal/store"
 	"github.com/mailsvb/go-fs/internal/syncer"
 )
 
@@ -35,6 +36,9 @@ type env struct {
 	cfg     config.Config
 	path    string
 	updater httpd.Updater
+	// store is where a service keeps what it has to remember across a
+	// restart, each in a bucket of its own; nil in tests that hand none over.
+	store *store.Store
 }
 
 // entry describes how one service is switched on, built and updated.
@@ -161,6 +165,9 @@ type Supervisor struct {
 	// updater is what the http server's update endpoint hands a new binary
 	// to, when main handed one over; tests leave it nil.
 	updater httpd.Updater
+	// store is the persistent data file every service is handed, when main
+	// handed one over; tests leave it nil.
+	store *store.Store
 
 	mu      sync.Mutex
 	running map[string]service.Server
@@ -188,6 +195,12 @@ func (s *Supervisor) Updates(updater httpd.Updater) {
 	s.updater = updater
 }
 
+// Persist hands every service, every time it is built, the store it keeps
+// what it has to remember across a restart in.
+func (s *Supervisor) Persist(st *store.Store) {
+	s.store = st
+}
+
 // Apply brings what is running in line with cfg. A service that cannot be
 // built or reloaded is reported and left as it was, so a bad section never
 // takes down a good one.
@@ -195,7 +208,7 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	current := env{cfg: cfg, path: s.path, updater: s.updater}
+	current := env{cfg: cfg, path: s.path, updater: s.updater, store: s.store}
 	if s.applied {
 		s.log.Info("applying the changed configuration",
 			"sections", strings.Join(changedSections(s.current, cfg), ","))

@@ -22,6 +22,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/selfupdate"
+	"github.com/mailsvb/go-fs/internal/store"
 	"github.com/mailsvb/go-fs/internal/supervisor"
 )
 
@@ -87,6 +88,9 @@ func run(stop <-chan struct{}) error {
 		checkOnly   = flag.Bool("check", false, "load the configuration, report problems and exit")
 		showVersion = flag.Bool("version", false, "print the version and exit")
 		logFile     = flag.String("logfile", "", "write the log to this file, rotated by size, instead of standard output")
+		dataPath    = flag.String("persistent-data", "", "path of the file go-fs keeps what it remembers across a restart in, "+
+			"such as share links and playback progress (default: beside the configuration file, named like it with "+
+			store.FileExtension+")")
 	)
 	flag.Parse()
 
@@ -127,6 +131,10 @@ func run(stop <-chan struct{}) error {
 		return nil
 	}
 
+	if *dataPath == "" {
+		*dataPath = store.DefaultPath(*configPath)
+	}
+
 	logger := logging.NewTo(output, cfg.General.LogLevel, cfg.General.LogFormat)
 	// the first record says what is running, so that a log handed over for
 	// analysis carries the build it came from and the file it was configured by
@@ -139,6 +147,7 @@ func run(stop <-chan struct{}) error {
 		"arch", runtime.GOARCH,
 		"pid", os.Getpid(),
 		"config", *configPath,
+		"persistentData", *dataPath,
 		"installer", packaging,
 		"service", stop != nil,
 		"logLevel", cfg.General.LogLevel,
@@ -192,6 +201,15 @@ func run(stop <-chan struct{}) error {
 			"signing key, so every update will be refused")
 	}
 
+	// opened before the supervisor, so that it is closed after it, once no
+	// service is left to write to it
+	data, err := store.Open(*dataPath, logger.Logger)
+	if err != nil {
+		return err
+	}
+	defer data.Close()
+	logger.Info("opened the persistent data file", "path", *dataPath)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// the signal is taken by hand rather than through signal.NotifyContext, so
@@ -202,6 +220,7 @@ func run(stop <-chan struct{}) error {
 	sup := supervisor.New(logger.Logger, *configPath)
 	sup.TrackLog(logger)
 	sup.Updates(updater)
+	sup.Persist(data)
 	defer sup.Shutdown(context.Background())
 	if err := sup.Apply(ctx, cfg); err != nil {
 		return err
@@ -238,6 +257,11 @@ func run(stop <-chan struct{}) error {
 	cancel()
 	started := time.Now()
 	sup.Shutdown(context.Background())
+	// closed here rather than by the defer, so that the version an update
+	// starts finds the file free
+	if err := data.Close(); err != nil {
+		logger.Warn("cannot close the persistent data file", "path", *dataPath, "error", err)
+	}
 	logger.Info("shutdown complete", "took", time.Since(started).Round(time.Millisecond))
 	if received != nil || stopped {
 		return nil

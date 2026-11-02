@@ -168,7 +168,13 @@ go-fs -config /etc/go-fs.toml
 | `-init <path>` | write a documented starter configuration and exit |
 | `-check` | load the configuration, report problems and exit |
 | `-logfile <path>` | write the log to this file instead of standard output, rotated at 10 MiB with five old files kept; what the Windows service uses |
+| `-persistent-data <path>` | file go-fs keeps what it remembers across a restart in, such as share links and playback progress; by default beside the configuration file and named like it, `go-fs.toml` keeping its data in `go-fs.db` |
 | `-version` | print the version and exit |
+
+The persistent data file is created at the first start, readable by its
+owner only, and held open for as long as go-fs runs: a second go-fs pointed at
+the same file refuses to start. An uninstall keeps it, as it keeps the
+configuration; back the two up together.
 
 `SIGINT` and `SIGTERM` shut the servers down, dropping open connections and
 aborting running transfers. Stopping the Windows service does the same.
