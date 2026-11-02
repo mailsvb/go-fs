@@ -76,7 +76,11 @@ type registryJob struct {
 	// what says what is copied where, for the page and the log.
 	what    string
 	started time.Time
-	cancel  context.CancelFunc
+	// seq is the order the job was started in among the jobs of the server:
+	// the clock can give jobs started together the same time, on Windows
+	// often.
+	seq    uint64
+	cancel context.CancelFunc
 
 	blobsTotal, blobsDone atomic.Int64
 	bytesTotal, bytesDone atomic.Int64
@@ -307,6 +311,8 @@ func listingJob(kind string) bool {
 type registryJobs struct {
 	mu   sync.Mutex
 	jobs map[string]*registryJob
+	// started counts the jobs ever started, for their seq.
+	started uint64
 }
 
 // start runs a job. run returns what the job says when it succeeds.
@@ -347,6 +353,8 @@ func (s *Server) startJob(kind, owner, what string, run func(ctx context.Context
 	if jobs.jobs == nil {
 		jobs.jobs = map[string]*registryJob{}
 	}
+	jobs.started++
+	job.seq = jobs.started
 	jobs.jobs[job.id] = job
 	// the shutdown waits for the job, which it stops first
 	s.wg.Add(1)
@@ -416,12 +424,7 @@ func (s *Server) fetchJobs(owner string) []registryJobJSON {
 		}
 	}
 	jobs.mu.Unlock()
-	sort.Slice(found, func(a, b int) bool {
-		if !found[a].started.Equal(found[b].started) {
-			return found[a].started.After(found[b].started)
-		}
-		return found[a].id < found[b].id
-	})
+	sort.Slice(found, func(a, b int) bool { return found[a].seq > found[b].seq })
 	views := make([]registryJobJSON, 0, len(found))
 	for _, job := range found {
 		views = append(views, job.view())
