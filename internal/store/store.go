@@ -25,6 +25,7 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	bolterrors "go.etcd.io/bbolt/errors"
 )
 
 // FileExtension is what the default file is named with in place of the
@@ -75,7 +76,7 @@ func open(path string, logger *slog.Logger, now func() time.Time, interval time.
 		return nil, err
 	}
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: lockTimeout})
-	if errors.Is(err, bolt.ErrTimeout) {
+	if errors.Is(err, bolterrors.ErrTimeout) {
 		return nil, fmt.Errorf("the persistent data file %s is in use by another go-fs", path)
 	}
 	if err != nil {
