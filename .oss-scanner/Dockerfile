@@ -1,7 +1,7 @@
 # The image Anthropic's OSS Scanner builds go-fs in (github.com/anthropics/oss-scanner,
 # projects/go-fs). The build runs with network access; the scan after it runs
 # without, so everything the tests and new reproducers need is fetched here.
-FROM golang:1.27.2-trixie
+FROM golang:1.27.3-trixie
 
 ENV DEBIAN_FRONTEND=noninteractive \
     CGO_ENABLED=0 \
