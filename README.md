@@ -1439,14 +1439,20 @@ It differs from the package repositories in these ways:
   compilation stays one album, by Various Artists.
 - **Covers** are `cover`, `folder`, `front` or `album` `.jpg`, `.jpeg`,
   `.png` or `.webp` beside the tracks. Otherwise the picture embedded in a
-  track is used. Images are sent at their own size.
+  track is used. Images are sent at their own size. A library and a genre
+  show the cover of their first album that has one. **Covers are sent without
+  a token**, as Jellyfin sends them, because Finamp asks for them without one:
+  anyone who knows the id of an item gets its cover, whatever the `paths` of
+  an account. A request with a token gets only the covers its account may
+  read.
 - **The API is answered at the root of the HTTP server.** In the client, add
   `https://files.example.com`, the server rather than the folder. Requests
   that come from a Jellyfin client are recognized by the `MediaBrowser`
   Authorization header or the token they carry, so a browser still reaches
   the files. Only the few paths a client asks before it has logged in are
   always the API: `/System/Info/Public`, `/System/Ping`, `/Users/Public`,
-  `/Branding/…` and `/QuickConnect/Enabled`. go-fs logs a warning when the
+  `/Branding/…`, `/QuickConnect/Enabled`, and the covers,
+  `/Items/{id}/Images/…`. go-fs logs a warning when the
   served folder has a `System`, `Users`, `Branding` or `QuickConnect` folder
   those paths would hide.
 - **Clients show the server by the libraries' names** and the version of

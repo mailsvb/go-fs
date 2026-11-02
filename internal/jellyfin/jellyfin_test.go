@@ -228,6 +228,19 @@ func TestDescribes(t *testing.T) {
 	if lib.Type != "CollectionFolder" || lib.CollectionType != "music" || lib.ChildCount != 4 {
 		t.Errorf("library %+v", lib)
 	}
+	// a library and a genre show the cover of the first of their albums that
+	// has one
+	first := d.Item(l.Albums[0]).ImageTags["Primary"]
+	if first == "" || lib.ImageTags["Primary"] != first {
+		t.Errorf("the library's image %q, the first album's %q", lib.ImageTags["Primary"], first)
+	}
+	if file, _, ok := CoverOf(l); !ok || filepath.Base(file) != "Folder.JPG" {
+		t.Errorf("the library's cover %q %v", file, ok)
+	}
+	pop, rock := d.Item(l.Genres[0]), d.Item(l.Genres[1])
+	if pop.Name != "Pop" || len(pop.ImageTags) != 0 || rock.Name != "Rock" || rock.ImageTags["Primary"] != first {
+		t.Errorf("genres %q %v, %q %v", pop.Name, pop.ImageTags, rock.Name, rock.ImageTags)
+	}
 	encoded, err := json.Marshal(d.Item(l.Artists[0]))
 	if err != nil {
 		t.Fatal(err)

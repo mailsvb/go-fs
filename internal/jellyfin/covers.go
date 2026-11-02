@@ -104,9 +104,9 @@ func (l *Library) findCover(a *Album) {
 }
 
 // CoverOf is where the image of an item is: an image file on disk, or the
-// track whose picture it is. An artist's is the cover of their first album
-// that has one, and a track's the cover of its album. ok is false for an
-// item without an image.
+// track whose picture it is. An artist's, a library's and a genre's is the
+// cover of the first of its albums that has one, and a track's the cover of
+// its album. ok is false for an item without an image.
 func CoverOf(item Item) (file string, track *Track, ok bool) {
 	a := albumOf(item)
 	if a == nil {
@@ -133,16 +133,28 @@ func albumOf(item Item) *Album {
 		}
 	case *Track:
 		return albumOf(v.Album)
+	case *Library:
+		return firstCovered(v.Albums)
+	case *Genre:
+		return firstCovered(v.Albums)
 	case *Artist:
-		for _, a := range v.Albums {
-			if a.coverTag != "" {
-				return a
-			}
+		if a := firstCovered(v.Albums); a != nil {
+			return a
 		}
 		for _, t := range v.Tracks {
 			if t.Album.coverTag != "" {
 				return t.Album
 			}
+		}
+	}
+	return nil
+}
+
+// firstCovered is the first of albums that has a cover, nil when none has.
+func firstCovered(albums []*Album) *Album {
+	for _, a := range albums {
+		if a.coverTag != "" {
+			return a
 		}
 	}
 	return nil

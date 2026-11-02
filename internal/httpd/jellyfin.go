@@ -71,6 +71,11 @@ var jellyfinRoots = map[string]bool{"system": true, "users": true, "items": true
 	"displaypreferences": true, "branding": true, "quickconnect": true, "library": true,
 	"playlists": true, "albums": true, "studios": true, "persons": true, "playingitems": true}
 
+// jellyfinImagePath is the path of the image of an item, which a client asks
+// for without a token: Jellyfin serves images to anyone, and Finamp's image
+// loaders send none.
+var jellyfinImagePath = regexp.MustCompile(`(?i)^/items/[0-9a-f-]{32,36}/images/[a-z]+(/\d+)?/?$`)
+
 // isJellyfinRequest reports whether a request comes from a Jellyfin client.
 func isJellyfinRequest(r *http.Request) bool {
 	if scheme, _, _ := strings.Cut(r.Header.Get("Authorization"), " "); strings.EqualFold(scheme, "MediaBrowser") ||
@@ -90,6 +95,9 @@ func isJellyfinRequest(r *http.Request) bool {
 		if strings.EqualFold(strings.TrimSuffix(r.URL.Path, "/"), probe) {
 			return true
 		}
+	}
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && jellyfinImagePath.MatchString(r.URL.Path) {
+		return true
 	}
 	if r.Method == http.MethodOptions {
 		asked := strings.ToLower(r.Header.Get("Access-Control-Request-Headers"))
@@ -341,6 +349,18 @@ func (s *Server) serveJellyfin(set *settings, w http.ResponseWriter, r *http.Req
 	}
 
 	j.user = s.jellyfinUser(set, j.client.Token)
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+		(j.is("items", "*", "images", "*") || j.is("items", "*", "images", "*", "*")) {
+		// Jellyfin serves images to anyone, and Finamp's image loaders send
+		// no token; one that comes with a token sees what its account may
+		if j.user != nil {
+			j.libs = j.libraries()
+		} else {
+			j.libs = jellyfin.Libraries()
+		}
+		j.image(j.path[1], j.path[3])
+		return
+	}
 	if j.user == nil {
 		if j.client.Token != "" {
 			s.log.Debug("jellyfin token refused", "url", r.URL.Path, "address", clientAddress(set, r))

@@ -75,8 +75,6 @@ func (j *jellyfinRequest) serve() {
 	case get && j.is("search", "hints"):
 		j.hints()
 
-	case get && (j.is("items", "*", "images", "*") || j.is("items", "*", "images", "*", "*")):
-		j.image(j.path[1], j.path[3])
 	case get && j.is("audio", "*", "*") && (strings.HasPrefix(strings.ToLower(j.path[2]), "stream") ||
 		strings.EqualFold(j.path[2], "universal")):
 		j.send(j.path[1], false)
@@ -323,7 +321,7 @@ func (j *jellyfinRequest) hints() {
 
 // image answers the cover of an item: the image beside its tracks, or the
 // picture a track carries. It is sent as it is; the size a client asks for is
-// not made.
+// not made. serveJellyfin answers it before it asks for an account.
 func (j *jellyfinRequest) image(id, kind string) {
 	item, ok := j.lookup(id)
 	if !ok {

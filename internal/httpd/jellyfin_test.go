@@ -568,6 +568,38 @@ func TestJellyfinShowsWhatTheAccountMayRead(t *testing.T) {
 	}
 }
 
+// TestJellyfinServesCoversWithoutAToken checks covers are answered to a
+// request that carries no token at all, as Jellyfin answers them and as
+// Finamp's image loaders ask for them.
+func TestJellyfinServesCoversWithoutAToken(t *testing.T) {
+	server, library := newJellyfinServer(t, nil)
+	first, solo := library.Albums[0], library.Albums[1]
+	// a folder of files of the same path is not what is answered
+	server.write(t, "Items/0123456789abcdef0123456789abcdef/Images/Primary", "a file")
+
+	guid := strings.ToUpper(first.ID[:8] + "-" + first.ID[8:12] + "-" + first.ID[12:16] + "-" +
+		first.ID[16:20] + "-" + first.ID[20:])
+	for _, path := range []string{"/Items/" + first.ID + "/Images/Primary?format=jpg&quality=90&MaxWidth=100",
+		"/items/" + guid + "/images/primary/0", "/Items/" + first.Tracks[0].ID + "/Images/Primary",
+		"/Items/" + solo.ID + "/Images/Primary", "/Items/" + library.ID + "/Images/Primary"} {
+		res, body := get(t, server, path)
+		if res.StatusCode != http.StatusOK || body != string(audiotest.PNG) ||
+			res.Header.Get("Content-Type") != "image/png" {
+			t.Errorf("%s: %d %s, %d bytes", path, res.StatusCode, res.Header.Get("Content-Type"), len(body))
+		}
+	}
+	for _, path := range []string{"/Items/0123456789abcdef0123456789abcdef/Images/Primary",
+		"/Items/" + first.ID + "/Images/Backdrop"} {
+		if res, body := get(t, server, path); res.StatusCode != http.StatusNotFound || body == "a file" {
+			t.Errorf("%s: %d %q", path, res.StatusCode, body)
+		}
+	}
+	// nothing else is answered without a token
+	if res, _ := get(t, server, "/Items/"+first.ID); res.StatusCode == http.StatusOK {
+		t.Errorf("an item without a token got %d", res.StatusCode)
+	}
+}
+
 func TestJellyfinStreams(t *testing.T) {
 	server, library := newJellyfinServer(t, nil)
 	token := jfToken(t, server, "john", "doe")
