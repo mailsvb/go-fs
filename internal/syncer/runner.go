@@ -117,8 +117,10 @@ func (r *runner) once(ctx context.Context, started time.Time) {
 		return
 	}
 	finished := r.now()
+	// the next run is worked out here too, so that the status never shows
+	// a finished run with none to come
 	done := Status{
-		Started: started, Finished: finished,
+		Started: started, Finished: finished, Next: next(r.job.sync, started, finished),
 		Uploaded: res.uploaded, Downloaded: res.downloaded, Deleted: res.deleted, Bytes: res.bytes,
 		Conflicts: res.conflicts, Failed: res.failed, Failures: res.failures,
 	}
