@@ -187,7 +187,7 @@ func (s *Store) DropBucket(name string) error {
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
 		err := tx.DeleteBucket([]byte(name))
-		if errors.Is(err, bolt.ErrBucketNotFound) {
+		if errors.Is(err, bolterrors.ErrBucketNotFound) {
 			return nil
 		}
 		return err
