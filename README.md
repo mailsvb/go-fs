@@ -2166,6 +2166,36 @@ it goes straight to its name, which Artifactory keeps once all of it is
 there. A chunked upload (`maxChunkSize`) is staged in `general.baseFolderTemp`
 and goes to the server with its last chunk.
 
+**Fetch…** in the menu of a file or a folder copies it into a folder of the
+served tree, chosen in a dialog that lists that tree from its root. It is
+offered where the server has `allowDownload` and the account has
+`allowUserFileCreate`, and on a folder only with `allowUserFolderCreate` too.
+The dialog shows how large what it fetches is: a file at once, and a folder
+once go-fs has walked it, with the number of files and subfolders and their
+total size. Folders below it that cannot be read are counted and left out.
+It shows how much room the disk of the chosen folder has, and offers Fetch
+only where everything fits. The fetch runs in the background, like a fetch
+from a URL, and the transfers in the header follow it, a folder's with how
+many of its files are done.
+
+A folder lands as a folder of its name, with every subfolder, empty ones
+included. If that folder is already there, the fetch fills it in. Before it
+reads a byte, the server walks the folder again and refuses the whole fetch
+if any of these fails:
+
+- a name cannot be stored here;
+- a folder may not be created;
+- a file is there already and the account may not replace it;
+- a file is larger than `maxUploadSize`;
+- the files together are more than the disk of the folder has free;
+- the largest file is more than the disk of the upload staging folder has free.
+
+A replaced file is not counted as room, so a fetch over an earlier copy needs
+as much free space as the first one did. A single file gets the same space
+check, and so does a fetch from a URL whose answer says how large it is. A
+folder fetch that fails or is stopped partway keeps the files it already
+stored.
+
 All requests go to the root, with the server and the path in the query:
 
 ```
@@ -2178,6 +2208,15 @@ or in `Content-Range` chunks), `MKCOL` creates a folder, `MOVE` renames to the
 `path` of the `Destination` link on the same server, and `DELETE` removes a
 file or an empty folder. Each one is logged as `http remote …` with the
 account, the server and the path.
+
+Fetch has its own markers on the root. `GET /?go-fs=local-browse&path=<folder>`
+lists a folder of the served tree, with `writable`, `mkdir` and `free` (bytes,
+`-1` when unknown). `GET ?go-fs=remote-measure&server=…&path=…` returns the
+`files`, `folders`, `skipped`, `bytes` and `largest` of a file or folder of
+the server. `POST ?go-fs=remote-fetch&server=…&path=…` with `{"folder": …}`
+starts the fetch, which is followed through `?go-fs=fetch-job`. While a folder
+fetch walks the folder, its phase is `listing`. Once it downloads, `blobsTotal`
+and `blobsDone` count its files.
 
 ### Synchronising folders
 

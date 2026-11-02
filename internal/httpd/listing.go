@@ -260,6 +260,9 @@ type rights struct {
 	// stores it in a folder of the served tree. It is offered to a session
 	// that may create files; the folder chosen decides the rest.
 	RemoteFetch bool
+	// RemoteFetchFolder is Fetch on a folder there, which stores it with all
+	// that is below it, and so also needs the right to create folders.
+	RemoteFetchFolder bool
 	// Trash says Delete moves to the trash rather than deleting for good,
 	// which is what its question says.
 	Trash bool

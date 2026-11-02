@@ -87,7 +87,7 @@
   {{if .Rights.Download}}<a role="menuitem" data-do="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>{{end}}
   {{if .Rights.Share}}<button type="button" role="menuitem" data-do="share"><svg class="ic"><use href="#i-link"/></svg>Share&#8230;</button>{{end}}
   {{if .Rights.Send}}<button type="button" role="menuitem" data-do="send"><svg class="ic"><use href="#i-send"/></svg>Send File&#8230;</button>{{end}}
-  {{if .Rights.RemoteFetch}}<button type="button" role="menuitem" data-do="remote-fetch"><svg class="ic"><use href="#i-download"/></svg>Fetch&#8230;</button>{{end}}
+  {{if .Rights.RemoteFetch}}<button type="button" role="menuitem" data-do="remote-fetch"{{if .Rights.RemoteFetchFolder}} data-folders="1"{{end}}><svg class="ic"><use href="#i-download"/></svg>Fetch&#8230;</button>{{end}}
   {{if and .Rights.Import .Session.Registry}}<a role="menuitem" data-do="import" data-registry="{{.Session.Registry}}" hidden><svg class="ic"><use href="#i-box"/></svg><span>Import into registry&#8230;</span></a>{{end}}
   {{if .Rights.Rename}}<button type="button" role="menuitem" data-do="rename"><svg class="ic"><use href="#i-pencil"/></svg>Rename&#8230;</button>{{end}}
   {{if or .Rights.DeleteFile .Rights.DeleteFolder}}<button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete</button>{{end}}
@@ -222,6 +222,7 @@
   <form method="dialog">
     <h2 id="remote-fetch-title">Fetch File</h2>
     <p class="what"></p>
+    <p class="analysis" role="status" aria-live="polite"><span class="spinner" hidden></span><span class="text"></span></p>
     <div class="remote">
       <div class="remote-head">
         <nav class="remote-path" aria-label="Local folder"></nav>
@@ -229,6 +230,7 @@
       </div>
       <ul class="remote-list"></ul>
       <p class="where"></p>
+      <p class="space"></p>
     </div>
     <div class="progress" hidden>
       <progress max="1"></progress>

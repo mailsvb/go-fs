@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -71,6 +72,12 @@ func mayFollowFetches(cred credential) bool {
 // a fetch into it may start.
 func mayFetch(cred credential, virtual string) bool {
 	return mayFollowFetches(cred) && fetchGranted(cred.user, virtual, actCreate)
+}
+
+// mayFetchFolder decides whether a folder of a stored server may be fetched
+// into a folder, which creates a folder of its name there.
+func mayFetchFolder(cred credential, virtual string) bool {
+	return mayFetch(cred, virtual) && fetchGranted(cred.user, virtual, actMkdir)
 }
 
 // fetchGranted is the right an account has to a path, whether or not the
@@ -364,6 +371,11 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 	if limit > 0 && res.ContentLength > limit {
 		return "", fetchTooLarge(name, limit)
 	}
+	if res.ContentLength > 0 {
+		if err := checkRoom(set, filepath.Dir(target.Path), folder, res.ContentLength, res.ContentLength); err != nil {
+			return "", err
+		}
+	}
 	job.named(name, "")
 	if res.ContentLength > 0 {
 		job.plan(0, res.ContentLength)
@@ -454,6 +466,34 @@ func fetchReplaces(target vfs.Target, name string, user *account) (bool, error) 
 		return false, fmt.Errorf("you may not create %q here", name)
 	}
 	return false, nil
+}
+
+// freeSpace is how many bytes the disk of a folder has free, or -1 when that
+// cannot be told: diskFree, but for a test, which fills the disk.
+var freeSpace = diskFree
+
+// checkRoom decides whether a fetch of total bytes fits into the folder at
+// dir, which the account knows as shown, and whether the largest file of it
+// fits into the staging folder, where each file is stored before it goes
+// where it belongs. A file that is replaced is not counted as room, so what
+// is asked for may be more than the fetch takes in the end; room that cannot
+// be told is taken to be there.
+func checkRoom(set *settings, dir, shown string, total, largest int64) error {
+	if free := freeSpace(dir); free >= 0 && total > free {
+		return fmt.Errorf("there is not enough room in %s: it needs %s, and %s is free",
+			shown, readableSize(total), readableSize(free))
+	}
+	staging := stagingFolder(set)
+	// the staging folder is made by the first upload or fetch, and may not
+	// be there yet
+	if err := os.MkdirAll(staging, 0o755); err != nil {
+		return nil
+	}
+	if free := freeSpace(staging); free >= 0 && largest > free {
+		return fmt.Errorf("there is not enough room in the upload staging folder: it needs %s, and %s is free",
+			readableSize(largest), readableSize(free))
+	}
+	return nil
 }
 
 func fetchTooLarge(name string, limit int64) error {

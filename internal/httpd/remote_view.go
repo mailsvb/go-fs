@@ -284,18 +284,20 @@ func readRemoteDirectory(fsys remote.FS, folder string) ([]entry, error) {
 // remoteRights are what the page of a server offers: what the account may do
 // in the served folder, short of sharing and sending, which go-fs does with
 // what it serves itself; and fetching a file into the served tree, where the
-// account may create one. Each is offered only where the server allows it too.
+// account may create one, or a folder, where it may create folders too. Each
+// is offered only where the server allows it too.
 func remoteRights(cred credential, server config.Server) rights {
 	perms, allowed := cred.user.perms, server.Rights()
 	return rights{
-		Download:     allowed.Download,
-		Upload:       allowed.Upload && granted(perms, actCreate),
-		Mkdir:        allowed.Create && granted(perms, actMkdir),
-		Rename:       allowed.Rename && granted(perms, actRename),
-		DeleteFile:   allowed.Delete && granted(perms, actDeleteFile),
-		DeleteFolder: allowed.Delete && granted(perms, actDeleteFolder),
-		Downloads:    mayFollowFetches(cred),
-		RemoteFetch:  allowed.Download && granted(perms, actCreate),
+		Download:          allowed.Download,
+		Upload:            allowed.Upload && granted(perms, actCreate),
+		Mkdir:             allowed.Create && granted(perms, actMkdir),
+		Rename:            allowed.Rename && granted(perms, actRename),
+		DeleteFile:        allowed.Delete && granted(perms, actDeleteFile),
+		DeleteFolder:      allowed.Delete && granted(perms, actDeleteFolder),
+		Downloads:         mayFollowFetches(cred),
+		RemoteFetch:       allowed.Download && granted(perms, actCreate),
+		RemoteFetchFolder: allowed.Download && granted(perms, actCreate) && granted(perms, actMkdir),
 	}
 }
 
@@ -451,6 +453,34 @@ func (s *Server) remoteArchive(w http.ResponseWriter, r *http.Request, q *remote
 // A folder below the one packed that cannot be read is left out.
 func (s *Server) walkRemoteArchive(ctx context.Context, fsys remote.FS, folder, name string, archive *tar.Writer) (int, error) {
 	files := 0
+	if info, err := fsys.Stat(folder); err == nil {
+		if err := archive.WriteHeader(archiveHeader(info, name+"/")); err != nil {
+			return files, err
+		}
+	}
+	err := walkRemoteTree(ctx, fsys, folder, func(p, inside string, info fs.FileInfo) error {
+		in := path.Join(name, inside)
+		if info.IsDir() {
+			return archive.WriteHeader(archiveHeader(info, in+"/"))
+		}
+		added, err := addRemoteFile(fsys, archive, p, info, in)
+		if added {
+			files++
+		}
+		return err
+	}, func(dir string, err error) {
+		s.log.Debug("http remote archive skips a folder it cannot read", "path", dir, "error", err)
+	})
+	return files, err
+}
+
+// walkRemoteTree visits what is below a folder of a server, a folder before
+// what is in it, with its path on the server and inside, its path below the
+// folder walked. It visits folders and files only, and a link as the file it
+// leads to but never as a folder, which could lead back up. A folder below
+// the one walked that cannot be read is told to skip and left out.
+func walkRemoteTree(ctx context.Context, fsys remote.FS, folder string,
+	visit func(p, inside string, info fs.FileInfo) error, skip func(dir string, err error)) error {
 	var walk func(dir, inside string, top bool) error
 	walk = func(dir, inside string, top bool) error {
 		infos, err := fsys.ReadDir(dir)
@@ -458,7 +488,7 @@ func (s *Server) walkRemoteArchive(ctx context.Context, fsys remote.FS, folder, 
 			if top {
 				return err
 			}
-			s.log.Debug("http remote archive skips a folder it cannot read", "path", dir, "error", err)
+			skip(dir, err)
 			return nil
 		}
 		for _, info := range infos {
@@ -469,30 +499,21 @@ func (s *Server) walkRemoteArchive(ctx context.Context, fsys remote.FS, folder, 
 			switch {
 			case info.IsDir() && remote.IsLink(info):
 			case info.IsDir():
-				if err := archive.WriteHeader(archiveHeader(info, in+"/")); err != nil {
+				if err := visit(p, in, info); err != nil {
 					return err
 				}
 				if err := walk(p, in, false); err != nil {
 					return err
 				}
 			case info.Mode().IsRegular():
-				added, err := addRemoteFile(fsys, archive, p, info, in)
-				if added {
-					files++
-				}
-				if err != nil {
+				if err := visit(p, in, info); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	if info, err := fsys.Stat(folder); err == nil {
-		if err := archive.WriteHeader(archiveHeader(info, name+"/")); err != nil {
-			return files, err
-		}
-	}
-	return files, walk(folder, name, true)
+	return walk(folder, "", true)
 }
 
 // addRemoteFile writes one file of a server into the archive, as addFile

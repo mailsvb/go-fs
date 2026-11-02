@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -178,8 +179,19 @@ func TestRemoteFetchReplacesOnlyWithTheOverwriteRight(t *testing.T) {
 	if got := server.read(t, "data.bin"); got != "new" {
 		t.Errorf("the file was not replaced: %q", got)
 	}
-	expectFailed(t, remoteFetched(t, server, remoteAt(host, "folder"), "/", session), "not a file")
 	expectFailed(t, remoteFetched(t, server, remoteAt(host, "missing.txt"), "/", session), "there is no")
+
+	// a folder that would replace a file is refused before anything of it
+	// is stored
+	host.Write(t, "folder/another.txt", "another")
+	server.write(t, "folder/inside.txt", "old")
+	expectFailed(t, remoteFetched(t, server, remoteAt(host, "folder"), "/", kim), "already a file")
+	if got := server.read(t, "folder/inside.txt"); got != "old" {
+		t.Errorf("the file was replaced: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(server.base, "folder", "another.txt")); err == nil {
+		t.Error("a refused fetch stored a file of the folder")
+	}
 }
 
 func TestRemoteFetchKeepsToTheUploadLimit(t *testing.T) {
@@ -260,5 +272,206 @@ func TestRemotePageOffersFetchWhereTheAccountMayCreate(t *testing.T) {
 	// and the listing of the served tree offers it nowhere
 	if strings.Contains(listingOf(t, server, session), `data-do="remote-fetch"`) {
 		t.Error("the listing of the served tree offers Fetch from a server")
+	}
+}
+
+// remoteMeasured measures a link of a server as the dialog does.
+func remoteMeasured(t *testing.T, server *testServer, link string, session *http.Cookie) (int, remoteMeasureJSON) {
+	t.Helper()
+	measure := strings.Replace(link, "="+actionRemote+"&", "="+actionRemoteMeasure+"&", 1)
+	res, data := transferRequest(t, server, http.MethodGet, measure, session, nil)
+	var view remoteMeasureJSON
+	if res.StatusCode == http.StatusOK {
+		if err := json.Unmarshal(data, &view); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return res.StatusCode, view
+}
+
+// fullDisk makes every disk have free bytes free, until the test ends.
+func fullDisk(t *testing.T, free int64) {
+	t.Helper()
+	previous := freeSpace
+	freeSpace = func(string) int64 { return free }
+	t.Cleanup(func() { freeSpace = previous })
+}
+
+func TestRemoteFetchStoresAFolderWithAllBelowIt(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
+	host := remotetest.NewSFTPHost(t, "alice", "secret")
+	host.Write(t, "photos/a.jpg", "aaaa")
+	host.Write(t, "photos/2024/b.jpg", "bb")
+	host.Write(t, "photos/2024/deep/c.jpg", "c")
+	if err := os.MkdirAll(filepath.Join(host.Dir, "photos", "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	server, session := remoteServer(t, host, nil)
+	server.mkdir(t, "inbox")
+	server.write(t, "inbox/photos/kept.txt", "kept")
+
+	job := remoteFetched(t, server, remoteAt(host, "photos"), "/inbox", session)
+	expectDone(t, job)
+	for name, want := range map[string]string{
+		"inbox/photos/a.jpg":           "aaaa",
+		"inbox/photos/2024/b.jpg":      "bb",
+		"inbox/photos/2024/deep/c.jpg": "c",
+		"inbox/photos/kept.txt":        "kept",
+	} {
+		if got := server.read(t, name); got != want {
+			t.Errorf("%s holds %q, want %q", name, got, want)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(server.base, "inbox", "photos", "empty")); err != nil || !info.IsDir() {
+		t.Errorf("the empty folder was not made: %v", err)
+	}
+	if !strings.Contains(job.Message, "Fetched 3 files") || !strings.Contains(job.Message, "of photos from Backup") {
+		t.Errorf("the job says %q", job.Message)
+	}
+	if job.Name != "photos/" || job.Folder != "/inbox/" || job.BlobsTotal != 3 || job.BlobsDone != 3 ||
+		job.BytesTotal != 7 || job.BytesDone != 7 {
+		t.Errorf("the job is %+v", job)
+	}
+}
+
+func TestRemoteFetchStoresAFolderOfAnArtifactory(t *testing.T) {
+	host := remotetest.NewArtifactoryHost(t, "the-token", "libs")
+	host.Write(t, "libs/org/lib.jar", "jar-content")
+	host.Write(t, "libs/org/sub/doc.txt", "doc")
+	server, session := artifactoryServer(t, host)
+
+	expectDone(t, remoteFetched(t, server, remoteURL("Artifacts", "/libs/org"), "/", session))
+	if got := server.read(t, "org/lib.jar"); got != "jar-content" {
+		t.Errorf("the file stored is %q", got)
+	}
+	if got := server.read(t, "org/sub/doc.txt"); got != "doc" {
+		t.Errorf("the file below stored is %q", got)
+	}
+}
+
+func TestRemoteMeasureCountsWhatAFetchStores(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
+	host := remotetest.NewSFTPHost(t, "alice", "secret")
+	host.Write(t, "photos/a.jpg", "aaaa")
+	host.Write(t, "photos/2024/b.jpg", "bb")
+	host.Write(t, "photos/2024/deep/c.jpg", "c")
+	server, session := remoteServer(t, host, func(cfg *httpConfig) {
+		cfg.Users = append(cfg.Users, readOnlyUser("reader", "pw"))
+	})
+
+	status, view := remoteMeasured(t, server, remoteAt(host, "photos"), session)
+	if status != http.StatusOK {
+		t.Fatalf("the folder answered %d", status)
+	}
+	want := remoteMeasureJSON{Name: "photos", Dir: true, Files: 3, Folders: 2, Bytes: 7, Largest: 4}
+	if view != want {
+		t.Errorf("the folder measures %+v, want %+v", view, want)
+	}
+	status, view = remoteMeasured(t, server, remoteAt(host, "photos/a.jpg"), session)
+	if want := (remoteMeasureJSON{Name: "a.jpg", Files: 1, Bytes: 4, Largest: 4}); status != http.StatusOK || view != want {
+		t.Errorf("the file answered %d: %+v", status, view)
+	}
+	if status, _ := remoteMeasured(t, server, remoteAt(host, "nowhere"), session); status != http.StatusNotFound {
+		t.Errorf("what is not there answered %d", status)
+	}
+	if status, _ := remoteMeasured(t, server, remoteAt(host, "photos"), nil); status != http.StatusUnauthorized &&
+		status != http.StatusForbidden {
+		t.Errorf("without a session the folder answered %d", status)
+	}
+	// measuring reads no more than browsing the server shows
+	reader := login(t, server, "/", "reader", "pw")
+	if status, _ := remoteMeasured(t, server, remoteAt(host, "photos"), reader); status != http.StatusOK {
+		t.Errorf("a reader was answered %d", status)
+	}
+}
+
+func TestRemoteMeasureIsRefusedWhereTheServerDoesNotAllowDownloads(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
+	host := remotetest.NewSFTPHost(t, "alice", "secret")
+	host.Write(t, "photos/a.jpg", "aaaa")
+	server, session := remoteServer(t, host, func(cfg *httpConfig) {
+		cfg.Servers[0].AllowDownload = new(false)
+	})
+	if status, _ := remoteMeasured(t, server, remoteAt(host, "photos"), session); status != http.StatusForbidden {
+		t.Errorf("the folder answered %d", status)
+	}
+}
+
+func TestRemoteFetchMakesSureItFits(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
+	host := remotetest.NewSFTPHost(t, "alice", "secret")
+	host.Write(t, "photos/a.jpg", "0123456789")
+	host.Write(t, "photos/b.jpg", "0123456789")
+	host.Write(t, "single.bin", "0123456789")
+	server, session := remoteServer(t, host, nil)
+	server.mkdir(t, "inbox")
+
+	fullDisk(t, 15)
+	if _, view := localBrowse(t, server, "/inbox", session); view.Free != 15 {
+		t.Errorf("the folder says %d bytes are free", view.Free)
+	}
+	expectFailed(t, remoteFetched(t, server, remoteAt(host, "photos"), "/inbox", session), "not enough room in /inbox/")
+	if _, err := os.Stat(filepath.Join(server.base, "inbox", "photos")); err == nil {
+		t.Error("a folder that does not fit was made")
+	}
+	// a single file of the folder fits, and so does the file alone
+	expectDone(t, remoteFetched(t, server, remoteAt(host, "single.bin"), "/inbox", session))
+
+	fullDisk(t, 5)
+	expectFailed(t, remoteFetched(t, server, remoteAt(host, "single.bin"), "/", session), "not enough room in /")
+	if _, err := os.Stat(filepath.Join(server.base, "single.bin")); err == nil {
+		t.Error("a file that does not fit was stored")
+	}
+}
+
+func TestRemoteFetchOfAFolderNeedsTheRightToCreateFolders(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
+	host := remotetest.NewSFTPHost(t, "alice", "secret")
+	host.Write(t, "photos/a.jpg", "a")
+	server, _ := remoteServer(t, host, func(cfg *httpConfig) {
+		flat := fullUser("adder", "pw")
+		flat.AllowUserFolderCreate = new(false)
+		cfg.Users = append(cfg.Users, flat)
+	})
+
+	flat := login(t, server, "/", "adder", "pw")
+	if _, view := localBrowse(t, server, "/", flat); !view.Writable || view.Mkdir {
+		t.Errorf("the root says %+v", view)
+	}
+	expectFailed(t, remoteFetched(t, server, remoteAt(host, "photos"), "/", flat), "may not create the folder")
+	if _, err := os.Stat(filepath.Join(server.base, "photos")); err == nil {
+		t.Error("the folder was made")
+	}
+	body := bodyOf(t, remoteDo(t, server, http.MethodGet, remoteURL("Backup", ""), flat, nil, nil))
+	if !strings.Contains(body, `data-do="remote-fetch"`) || strings.Contains(body, `data-folders="1"`) {
+		t.Error("the page offers Fetch on a folder to an account that may not create folders")
+	}
+}
+
+func TestRemoteFetchLeavesOutAFolderItCannotRead(t *testing.T) {
+	skipWithout(t, features.SFTPRemote)
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("a folder cannot be made unreadable here")
+	}
+	host := remotetest.NewSFTPHost(t, "alice", "secret")
+	host.Write(t, "photos/a.jpg", "a")
+	host.Write(t, "photos/locked/b.jpg", "b")
+	locked := filepath.Join(host.Dir, "photos", "locked")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	server, session := remoteServer(t, host, nil)
+
+	if _, view := remoteMeasured(t, server, remoteAt(host, "photos"), session); view.Files != 1 || view.Skipped != 1 {
+		t.Errorf("the folder measures %+v", view)
+	}
+	job := remoteFetched(t, server, remoteAt(host, "photos"), "/", session)
+	expectDone(t, job)
+	if !strings.Contains(job.Message, "1 folder could not be read") {
+		t.Errorf("the job says %q", job.Message)
+	}
+	if got := server.read(t, "photos/a.jpg"); got != "a" {
+		t.Errorf("the file stored is %q", got)
 	}
 }

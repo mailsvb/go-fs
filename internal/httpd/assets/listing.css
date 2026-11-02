@@ -397,6 +397,12 @@ dialog .connected .login { color: var(--ink); font-family: ui-monospace, SFMono-
 dialog .connected .change { margin-left: auto; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 0.85rem; cursor: pointer; }
 dialog .connected .change:disabled { opacity: 0.45; cursor: default; }
 dialog .remote { display: flex; flex-direction: column; gap: 0.4rem; }
+/* Fetch: what is about to be fetched, measured while the dialog is open,
+   and whether it fits into the folder chosen */
+dialog .analysis { display: flex; align-items: center; gap: 0.5rem; color: var(--ink); }
+dialog .analysis.bad, dialog .space.bad { color: var(--bad); }
+dialog .space { color: var(--faint); font-size: 0.8rem; }
+dialog .space:empty { display: none; }
 /* the path of the folder, and beside it a spinner while another is read */
 dialog .remote-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; min-height: 1.3rem; }
 dialog .spinner { flex: none; width: 0.85rem; height: 0.85rem; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }

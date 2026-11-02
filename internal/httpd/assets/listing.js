@@ -180,6 +180,10 @@
     "remote-fetch": {
       403: "Only an account that is logged in and may create files in that folder can fetch into it.",
       404: "That server is no longer stored."
+    },
+    "remote-measure": {
+      403: "Only an account that is logged in may fetch from this server, and only where it allows downloads.",
+      404: "That file or folder is gone, or the server is no longer stored."
     }
   };
 
@@ -494,7 +498,8 @@
   var sharing = menu.querySelector("[data-do='share']");
   // and so is Send File, which uploads one file
   var sendItem = menu.querySelector("[data-do='send']");
-  // and so is Fetch, on the page of a stored server
+  // and so is Fetch, on the page of a stored server, which also takes a
+  // folder where the account may create folders
   var remoteFetchItem = menu.querySelector("[data-do='remote-fetch']");
   // Import into registry is there for a file whose name an image archive has;
   // it opens the registry page's Import dialog with that file
@@ -527,7 +532,7 @@
       sendItem.hidden = isFolder;
     }
     if (remoteFetchItem) {
-      remoteFetchItem.hidden = isFolder;
+      remoteFetchItem.hidden = isFolder && !remoteFetchItem.dataset.folders;
     }
     if (importing) {
       importing.hidden = isFolder || !archiveName.test(row.dataset.name);
@@ -792,11 +797,12 @@
 
   // askJSON sends a request of a transfer and reads why it was refused, in
   // the words of what was asked for
-  function askJSON(what, method, url, body) {
+  function askJSON(what, method, url, body, signal) {
     var options = {
       method: method,
       headers: { Accept: "application/json" },
-      credentials: "same-origin"
+      credentials: "same-origin",
+      signal: signal
     };
     if (body !== undefined) {
       options.headers["Content-Type"] = "application/json";
@@ -966,18 +972,21 @@
       if (bad) {
         return row.item;
       }
+      // a fetch of a folder counts its files as well as its bytes
+      var files = job.blobsTotal > 0 ? job.blobsDone + "/" + job.blobsTotal + " files · " : "";
       if (job.phase !== "downloading") {
         row.share.textContent = "";
-        row.speed.textContent = "Connecting…";
+        row.speed.textContent = job.phase === "listing" ? "Analysing…" : "Connecting…";
         row.fill.style.width = "0";
       } else if (job.bytesTotal > 0) {
         var percent = Math.floor(Math.min(job.bytesDone, job.bytesTotal) * 100 / job.bytesTotal);
-        row.share.textContent = percent + "%";
+        row.share.textContent = files + percent + "%";
         row.speed.textContent = readableRate(job.bytesPerSecond);
         row.fill.style.width = percent + "%";
       } else {
-        // the remote did not say how large it is
-        row.share.textContent = readableSize(job.bytesDone);
+        // the remote did not say how large it is, or a folder holds only
+        // empty files
+        row.share.textContent = files + readableSize(job.bytesDone);
         row.speed.textContent = readableRate(job.bytesPerSecond);
         row.fill.style.width = "0";
       }
@@ -1894,23 +1903,34 @@
 
   // --- fetching from a stored server -----------------------------------
   //
-  // The page of a stored server fetches one of its files into the served
-  // tree: the dialog lists the folders of that tree, from its root, and the
-  // server reads the file from the stored server as a job like a fetch from a
-  // URL, which the transfers in the header follow once it is under way. A
-  // folder the account may not create in is listed, to pass through, but not
-  // offered to fetch into.
+  // The page of a stored server fetches one of its files, or one of its
+  // folders with all that is below it, into the served tree: the dialog lists
+  // the folders of that tree, from its root, and the server reads from the
+  // stored server as a job like a fetch from a URL, which the transfers in
+  // the header follow once it is under way. A folder the account may not
+  // create in is listed, to pass through, but not offered to fetch into.
+  //
+  // The dialog says how large what it fetches is: a file by the size its row
+  // shows, a folder once the server has walked it, which may take a while and
+  // goes on while a folder to fetch into is chosen. Fetch is offered once
+  // that is known and fits into the disk of the folder chosen; the server
+  // checks it again before it reads a byte.
   var remoteFetching = (function () {
     var dialog = document.getElementById("remote-fetch-dialog");
     if (!dialog) {
       return { open: function () {} };
     }
     var form = dialog.querySelector("form");
+    var title = dialog.querySelector("h2");
     var what = dialog.querySelector("p.what");
+    var analysis = dialog.querySelector("p.analysis");
+    var analysisText = analysis.querySelector(".text");
+    var analysisSpinner = analysis.querySelector(".spinner");
     var local = dialog.querySelector(".remote");
     var crumbs = local.querySelector(".remote-path");
     var list = local.querySelector(".remote-list");
     var where = local.querySelector(".where");
+    var space = local.querySelector(".space");
     var spinner = local.querySelector(".spinner");
     var progress = dialog.querySelector(".progress");
     var bar = progress.querySelector("progress");
@@ -1918,14 +1938,21 @@
     var go = form.querySelector("button[value='start']");
     var stop = form.querySelector("button[value='stop']");
     var close = form.querySelector("button[value='cancel']");
-    // name is the file the dialog fetches, source the link that starts the
-    // fetch of it, and at the folder listed now, which the next file opens on
+    // name is the file or folder the dialog fetches, isFolder whether it is
+    // a folder, source the link that starts the fetch of it, and at the
+    // folder listed now, which the next fetch opens on
     var name = null;
+    var isFolder = false;
     var source = null;
     var at = null;
     // asked counts the folders asked for, so that the answer to one that was
     // overtaken is dropped
     var asked = 0;
+    // measured is what the dialog fetches, as the server measured it, once
+    // it has; measuring is the walk of a folder still under way, which a
+    // dialog that closes stops
+    var measured = null;
+    var measuring = null;
     // job is the fetch the dialog waits on until its download begins
     var job = null;
 
@@ -1941,9 +1968,21 @@
       status.classList.remove("bad");
     }
 
-    // Fetch is offered once a folder that may be fetched into is listed
+    function plural(count, one) {
+      return count + " " + one + (count === 1 ? "" : "s");
+    }
+
+    // fits says the folder listed has room for what is fetched, as far as
+    // that can be told
+    function fits() {
+      return !measured || !at || at.free < 0 || measured.bytes <= at.free;
+    }
+
+    // Fetch is offered once a folder that may be fetched into is listed and
+    // what is fetched is measured and fits into it
     function offer() {
-      go.disabled = form.classList.contains("working") || !at || !at.writable;
+      go.disabled = form.classList.contains("working") || !at || !at.writable ||
+        (isFolder && !at.mkdir) || !measured || !fits();
     }
 
     function working(on) {
@@ -1968,14 +2007,100 @@
       close.textContent = on ? "Close" : "Cancel";
     }
 
-    function render(view) {
-      var clash = renderFolders(crumbs, list, view, name);
-      if (!view.writable) {
-        where.textContent = "You may not store files in " + view.path + ".";
+    function analysed(text, bad) {
+      analysisSpinner.hidden = true;
+      analysisText.textContent = text;
+      analysis.classList.toggle("bad", bad === true);
+    }
+
+    // describe says what the dialog fetches, once it is measured
+    function describe(view) {
+      if (!view.dir) {
+        analysed(name + " · " + readableSize(view.bytes));
         return;
       }
-      where.textContent = "Stores " + name + " as " + joinedPath(view.path, name) +
-        (clash ? " · replaces the file there" : "");
+      var text = plural(view.files, "file") +
+        (view.folders > 0 ? " in " + plural(view.folders, "folder") : "") +
+        " · " + readableSize(view.bytes);
+      if (view.skipped > 0) {
+        text += " · " + plural(view.skipped, "folder") + " cannot be read and " +
+          (view.skipped === 1 ? "is" : "are") + " left out";
+      }
+      analysed(text);
+    }
+
+    function measure() {
+      measuring = new AbortController();
+      var signal = measuring.signal;
+      var link = new URL(source, window.location.href);
+      link.searchParams.set("go-fs", "remote-measure");
+      analysisSpinner.hidden = false;
+      analysisText.textContent = "Analysing " + name + "… this takes a while for a large folder.";
+      analysis.classList.remove("bad");
+      askJSON("remote-measure", "GET", link.pathname + link.search, undefined, signal).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        if (signal.aborted) {
+          return;
+        }
+        measuring = null;
+        measured = view;
+        describe(view);
+        update();
+      }).catch(function (err) {
+        if (signal.aborted) {
+          return;
+        }
+        measuring = null;
+        analysed(err.message, true);
+      });
+    }
+
+    function stopMeasuring() {
+      if (measuring) {
+        measuring.abort();
+        measuring = null;
+      }
+    }
+
+    // update says where what is fetched goes, and whether it fits there
+    function update() {
+      offer();
+      if (!at) {
+        return;
+      }
+      space.classList.remove("bad");
+      space.textContent = "";
+      if (!at.writable || !measured) {
+        return;
+      }
+      var needed = readableSize(measured.bytes);
+      if (at.free < 0) {
+        space.textContent = "Needs " + needed + ".";
+      } else if (!fits()) {
+        space.textContent = "Not enough room: needs " + needed + ", and " + readableSize(at.free) +
+          " is free in " + at.path + ".";
+        space.classList.add("bad");
+      } else {
+        space.textContent = "Needs " + needed + " · " + readableSize(at.free) + " free.";
+      }
+    }
+
+    function render(view) {
+      var clash = renderFolders(crumbs, list, view, name);
+      if (!view.writable || (isFolder && !view.mkdir)) {
+        where.textContent = "You may not store " + (isFolder ? "folders" : "files") + " in " + view.path + ".";
+      } else if (isFolder) {
+        var there = (view.entries || []).some(function (entry) {
+          return entry.dir && entry.name === name;
+        });
+        where.textContent = "Stores " + name + " as " + joinedPath(view.path, name) + "/" +
+          (there ? " · fills in the folder there" : clash ? " · a file of that name is in the way" : "");
+      } else {
+        where.textContent = "Stores " + name + " as " + joinedPath(view.path, name) +
+          (clash ? " · replaces the file there" : "");
+      }
+      update();
     }
 
     function browse(path) {
@@ -2014,7 +2139,8 @@
     });
 
     // wait asks after the fetch until its download has begun, as Send File
-    // does; one that could not begin is told here
+    // does; one that could not begin is told here, such as one that does not
+    // fit after all
     function wait() {
       var id = job;
       if (!id) {
@@ -2027,6 +2153,9 @@
           return;
         }
         if (view.state === "running" && view.phase !== "downloading") {
+          if (view.phase === "listing") {
+            tell("Analysing " + name + " again before the fetch…");
+          }
           window.setTimeout(wait, 400);
           return;
         }
@@ -2081,16 +2210,18 @@
         }
         return;
       }
-      if (job || form.classList.contains("working") || !at || !at.writable) {
+      if (job || go.disabled) {
         return;
       }
       start();
     });
 
     // Closed while the fetch has not begun its download: it goes on, and the
-    // transfers follow it from here. A folder still asked for is dropped.
+    // transfers follow it from here. A folder still asked for, or still
+    // measured, is dropped.
     dialog.addEventListener("close", function () {
       asked++;
+      stopMeasuring();
       working(false);
       if (job) {
         job = null;
@@ -2101,11 +2232,24 @@
 
     function open(row) {
       clear();
+      stopMeasuring();
       name = row.dataset.name;
+      isFolder = row.dataset.dir === "1";
       var link = new URL(segment(name), window.location.href);
       link.searchParams.set("go-fs", "remote-fetch");
       source = link.pathname + link.search;
-      what.textContent = "Downloads " + shown + name + " into a folder of this server.";
+      title.textContent = isFolder ? "Fetch Folder" : "Fetch File";
+      what.textContent = isFolder
+        ? "Downloads " + shown + name + " with all its subfolders and files into a folder of this server."
+        : "Downloads " + shown + name + " into a folder of this server.";
+      measured = null;
+      space.textContent = "";
+      if (isFolder) {
+        measure();
+      } else {
+        measured = { dir: false, files: 1, bytes: Number(row.dataset.size) || 0 };
+        describe(measured);
+      }
       quiet();
       busy(false);
       dialog.showModal();
