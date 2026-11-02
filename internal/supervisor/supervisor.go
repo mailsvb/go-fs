@@ -129,7 +129,7 @@ var builtIn = []entry{
 		order:   orderSyncs,
 		enabled: func(e env) bool { return len(e.cfg.UsableSyncs()) > 0 },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			return syncer.New(e.cfg, syncer.StateDir(e.path), e.store.Bucket("syncs"), log)
+			return syncer.New(e.cfg, e.store, syncer.LegacyStateDir(e.path), log)
 		},
 		reload: func(s service.Server, e env) error {
 			return s.(*syncer.Manager).Reload(e.cfg)
@@ -264,6 +264,12 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 			}
 		}
 	}
+
+	// what was kept of a repository or a sync taken out goes, once the
+	// services above stopped it; here rather than in the services, which
+	// do not run once the last one is taken out
+	repository.Prune(s.store, cfg, s.log)
+	syncer.Prune(s.store, cfg, s.log)
 
 	if !incomplete {
 		s.current = cfg

@@ -2,17 +2,14 @@ package syncer
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // job is everything a run of a sync needs, so that a sync whose job did not
@@ -22,11 +19,12 @@ type job struct {
 	server config.Server
 	ssh    config.SSH
 	// local is the folder on disk, trash general.baseFolderTrash, and
-	// stateDir where the snapshot of a sync both ways is kept, "" for
-	// nowhere.
-	local    string
-	trash    string
-	stateDir string
+	// snapshots where the snapshot of a sync both ways is kept, under the
+	// name of the sync; nil keeps none, and a sync both ways then removes
+	// nothing.
+	local     string
+	trash     string
+	snapshots *store.Bucket
 }
 
 // result is what a run did.
@@ -260,27 +258,16 @@ type snapshot struct {
 	Files        map[string]entry `json:"files"`
 }
 
-// snapshotPath is where the snapshot of the sync is kept.
-func (j job) snapshotPath() string {
-	return filepath.Join(j.stateDir, j.sync.Name+".json")
-}
-
 // readSnapshot reads what was alike after the last run, nil when nothing is
 // known of these folders, which removes nothing.
 func (j job) readSnapshot(log *slog.Logger) map[string]entry {
-	if j.stateDir == "" {
-		return nil
-	}
-	body, err := os.ReadFile(j.snapshotPath())
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			log.Warn("sync cannot read what it synced last, and removes nothing this time", "error", err)
-		}
-		return nil
-	}
 	var last snapshot
-	if err := json.Unmarshal(body, &last); err != nil {
+	found, err := j.snapshots.Get(j.sync.Name, &last)
+	if err != nil {
 		log.Warn("sync cannot read what it synced last, and removes nothing this time", "error", err)
+		return nil
+	}
+	if !found {
 		return nil
 	}
 	if !strings.EqualFold(last.Server, j.sync.Server) || last.RemoteFolder != j.sync.RemoteFolder ||
@@ -294,9 +281,6 @@ func (j job) readSnapshot(log *slog.Logger) map[string]entry {
 // run, and what the run made alike. A path a step failed for keeps what the
 // last snapshot said of it, so that the next run decides it the same way.
 func (j job) writeSnapshot(insync, last map[string]entry, res result) error {
-	if j.stateDir == "" {
-		return nil
-	}
 	files := make(map[string]entry, len(insync)+len(res.made))
 	for rel, e := range insync {
 		files[rel] = e
@@ -309,30 +293,6 @@ func (j job) writeSnapshot(insync, last map[string]entry, res result) error {
 			files[rel] = e
 		}
 	}
-	body, err := json.Marshal(snapshot{Server: j.sync.Server, RemoteFolder: j.sync.RemoteFolder,
+	return j.snapshots.Put(j.sync.Name, snapshot{Server: j.sync.Server, RemoteFolder: j.sync.RemoteFolder,
 		LocalFolder: j.sync.LocalFolder, Taken: time.Now(), Files: files})
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(j.stateDir, 0o700); err != nil {
-		return err
-	}
-	staged, err := os.CreateTemp(j.stateDir, j.sync.Name+".json.*")
-	if err != nil {
-		return err
-	}
-	if _, err := staged.Write(body); err != nil {
-		_ = staged.Close()
-		_ = os.Remove(staged.Name())
-		return err
-	}
-	if err := staged.Close(); err != nil {
-		_ = os.Remove(staged.Name())
-		return err
-	}
-	if err := os.Rename(staged.Name(), j.snapshotPath()); err != nil {
-		_ = os.Remove(staged.Name())
-		return err
-	}
-	return nil
 }

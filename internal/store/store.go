@@ -161,6 +161,39 @@ func (s *Store) sweep() (int, error) {
 	return removed, err
 }
 
+// Buckets lists the names of the buckets that begin with prefix, in order; an
+// empty prefix is every bucket. A nil Store has none.
+func (s *Store) Buckets(prefix string) ([]string, error) {
+	if s == nil {
+		return nil, nil
+	}
+	var names []string
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
+			if strings.HasPrefix(string(name), prefix) {
+				names = append(names, string(name))
+			}
+			return nil
+		})
+	})
+	return names, err
+}
+
+// DropBucket removes the bucket of the given name and every record in it, as
+// for a part that is gone. One that is not there is no error.
+func (s *Store) DropBucket(name string) error {
+	if s == nil {
+		return nil
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		err := tx.DeleteBucket([]byte(name))
+		if errors.Is(err, bolt.ErrBucketNotFound) {
+			return nil
+		}
+		return err
+	})
+}
+
 // Bucket is the records of one part of go-fs. It is created with its first
 // record; until then, reading from it finds nothing. A nil Bucket, which a
 // nil Store hands out, keeps nothing: it finds nothing and writing to it

@@ -20,10 +20,12 @@ package syncer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -39,10 +41,10 @@ var protocols = map[string]func(context.Context, job, *slog.Logger) (result, err
 	config.SyncProtocolRsync: runRsync,
 }
 
-// StateDir is where the snapshots of the syncs are kept: beside the
-// configuration file at path, which go-fs writes to already. "" keeps none,
-// and a sync both ways then removes nothing.
-func StateDir(path string) string {
+// LegacyStateDir is where versions before the persistent data file kept the
+// snapshots of the syncs: beside the configuration file at path. It is read
+// only to move them into the data file, "" for nowhere.
+func LegacyStateDir(path string) string {
 	if path == "" {
 		return ""
 	}
@@ -52,12 +54,13 @@ func StateDir(path string) string {
 // Manager runs the syncs. It is run by the supervisor like a server,
 // whichever servers are enabled.
 type Manager struct {
-	log      *slog.Logger
-	stateDir string
+	log *slog.Logger
 	// kept is where the status of each sync's last run is kept, by its
 	// name, so that a restart neither forgets it nor runs a sync again
-	// before it is due.
-	kept *store.Bucket
+	// before it is due, and snapshots where the snapshot of each sync both
+	// ways is.
+	kept      *store.Bucket
+	snapshots *store.Bucket
 
 	mu      sync.Mutex
 	running map[string]*runner
@@ -66,46 +69,99 @@ type Manager struct {
 	wg      sync.WaitGroup
 }
 
-// New builds a manager for the enabled syncs of cfg, which keeps their
-// snapshots in stateDir and the status of their last runs in kept.
-func New(cfg config.Config, stateDir string, kept *store.Bucket, logger *slog.Logger) (*Manager, error) {
-	m := &Manager{log: logger, stateDir: stateDir, kept: kept}
-	m.prune(cfg)
-	m.running = build(cfg, stateDir, kept, logger)
+// New builds a manager for the enabled syncs of cfg, which keeps the status
+// of their last runs and their snapshots in st. The snapshots an earlier
+// version kept in legacyDir are moved into st first.
+func New(cfg config.Config, st *store.Store, legacyDir string, logger *slog.Logger) (*Manager, error) {
+	m := &Manager{log: logger, kept: st.Bucket(statusBucket), snapshots: st.Bucket(snapshotBucket)}
+	m.migrate(cfg, legacyDir)
+	m.running = m.build(cfg)
 	return m, nil
 }
 
-// prune removes the kept status of every sync cfg no longer has. One that is
-// disabled keeps it, for when it is enabled again.
-func (m *Manager) prune(cfg config.Config) {
+// migrate moves the snapshots of the syncs of cfg out of legacyDir, where an
+// earlier version kept them as files, into the data file, and removes the
+// folder once it is empty. A snapshot the data file has already is not
+// overwritten, and a file of a sync cfg does not name is left alone: another
+// configuration beside this one may own it.
+func (m *Manager) migrate(cfg config.Config, legacyDir string) {
+	if legacyDir == "" || m.snapshots == nil {
+		return
+	}
+	for _, s := range cfg.Syncs {
+		file := filepath.Join(legacyDir, s.Name+".json")
+		body, err := os.ReadFile(file)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		var taken snapshot
+		if err == nil {
+			err = json.Unmarshal(body, &taken)
+		}
+		if err == nil {
+			var existing snapshot
+			var found bool
+			if found, err = m.snapshots.Get(s.Name, &existing); err == nil && !found {
+				err = m.snapshots.Put(s.Name, taken)
+			}
+		}
+		if err == nil {
+			err = os.Remove(file)
+		}
+		if err != nil {
+			m.log.Warn("cannot move a sync snapshot into the persistent data file", "sync", s.Name,
+				"file", file, "error", err)
+			continue
+		}
+		m.log.Info("migrated a sync snapshot into the persistent data file", "sync", s.Name, "file", file)
+	}
+	// only an empty folder goes
+	_ = os.Remove(legacyDir)
+}
+
+// The buckets of st the status of each sync's last run and the snapshot of
+// each sync both ways are kept in, under the name of the sync.
+const (
+	statusBucket   = "syncs"
+	snapshotBucket = "syncs.snapshots"
+)
+
+// Prune removes from st the status and snapshot of every sync cfg no longer
+// has. One that is disabled keeps them, for when it is enabled again. The
+// supervisor calls it at every apply, whether the syncs run or not, so that
+// taking out the last one removes what was kept of it too; by then a sync
+// taken out has stopped, and keeps nothing more.
+func Prune(st *store.Store, cfg config.Config, logger *slog.Logger) {
 	configured := map[string]bool{}
 	for _, s := range cfg.Syncs {
 		configured[s.Name] = true
 	}
-	err := m.kept.Scan("", func(name string, _ func(any) error) error {
-		if configured[name] {
-			return nil
+	for _, bucket := range []*store.Bucket{st.Bucket(statusBucket), st.Bucket(snapshotBucket)} {
+		err := bucket.Scan("", func(name string, _ func(any) error) error {
+			if configured[name] {
+				return nil
+			}
+			return bucket.Delete(name)
+		})
+		if err != nil {
+			logger.Warn("cannot remove what was kept of the syncs taken out", "error", err)
 		}
-		return m.kept.Delete(name)
-	})
-	if err != nil {
-		m.log.Warn("cannot remove the kept status of the syncs taken out", "error", err)
 	}
 }
 
 // build makes a runner for every sync of cfg the binary runs, by name.
-func build(cfg config.Config, stateDir string, kept *store.Bucket, logger *slog.Logger) map[string]*runner {
+func (m *Manager) build(cfg config.Config) map[string]*runner {
 	syncs := cfg.UsableSyncs()
 	out := make(map[string]*runner, len(syncs))
 	for _, s := range syncs {
 		server, _ := config.FindServer(cfg.UsableServers(), s.Server)
 		j := job{
 			sync: s, server: server, ssh: cfg.General.SSH,
-			local:    config.RepositoryPath(cfg.General.BaseFolderFiles, s.LocalFolder),
-			trash:    cfg.General.BaseFolderTrash,
-			stateDir: stateDir,
+			local:     config.RepositoryPath(cfg.General.BaseFolderFiles, s.LocalFolder),
+			trash:     cfg.General.BaseFolderTrash,
+			snapshots: m.snapshots,
 		}
-		out[s.Name] = newRunner(j, kept, logger)
+		out[s.Name] = newRunner(j, m.kept, m.log)
 	}
 	return out
 }
@@ -137,8 +193,7 @@ func (m *Manager) launch(r *runner) {
 // and started again; one taken out or disabled stops, and its status with
 // it.
 func (m *Manager) Reload(cfg config.Config) error {
-	m.prune(cfg)
-	wanted := build(cfg, m.stateDir, m.kept, m.log)
+	wanted := m.build(cfg)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	next := make(map[string]*runner, len(wanted))

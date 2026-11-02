@@ -21,6 +21,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/httpd"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // logStore collects what the supervisor reports.
@@ -194,6 +195,42 @@ func TestCleanupRunsBesideTheServers(t *testing.T) {
 	cfg.HTTP.Enabled = false
 	if err := sup.Apply(ctx, cfg); err == nil {
 		t.Error("a configuration with only the cleanup was taken as enabling a server")
+	}
+}
+
+// What was kept of a repository or a sync goes once it is taken out of the
+// configuration, the last one too, whose service does not run any more.
+func TestApplyDropsWhatWasKeptOfWhatIsTakenOut(t *testing.T) {
+	sup, logs, ctx := newSupervisor(t)
+	st, err := store.Open(filepath.Join(t.TempDir(), "go-fs.db"), slog.New(logs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	sup.Persist(st)
+	if err := st.Bucket("repository.music").Put("meta", "kept"); err != nil {
+		t.Fatal(err)
+	}
+	for _, bucket := range []string{"syncs", "syncs.snapshots"} {
+		if err := st.Bucket(bucket).Put("photos", "kept"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := sup.Apply(ctx, baseConfig(t)); err != nil {
+		t.Fatal(err)
+	}
+	if got := sup.Running(); slices.Contains(got, "repositories") || slices.Contains(got, "syncs") {
+		t.Fatalf("running = %v, want neither repositories nor syncs", got)
+	}
+	if names, _ := st.Buckets("repository."); len(names) != 0 {
+		t.Errorf("the cache of a repository taken out is still kept: %v", names)
+	}
+	for _, bucket := range []string{"syncs", "syncs.snapshots"} {
+		var v string
+		if found, _ := st.Bucket(bucket).Get("photos", &v); found {
+			t.Errorf("%s still keeps a sync taken out", bucket)
+		}
 	}
 }
 

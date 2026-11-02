@@ -370,3 +370,41 @@ func TestRemembered(t *testing.T) {
 		t.Fatal("the record of a create that failed was kept")
 	}
 }
+
+func TestBucketsAndDropBucket(t *testing.T) {
+	s, _ := openTest(t)
+	for _, name := range []string{"repository.music", "repository.apps", "syncs"} {
+		if err := s.Bucket(name).Put("k", share{Path: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	names, err := s.Buckets("repository.")
+	if err != nil || strings.Join(names, ",") != "repository.apps,repository.music" {
+		t.Fatalf("Buckets = %v, %v, want [repository.apps repository.music]", names, err)
+	}
+
+	if err := s.DropBucket("repository.music"); err != nil {
+		t.Fatal(err)
+	}
+	var got share
+	if found, err := s.Bucket("repository.music").Get("k", &got); err != nil || found {
+		t.Fatalf("Get from a dropped bucket = %v, %v, want false, nil", found, err)
+	}
+	if found, _ := s.Bucket("repository.apps").Get("k", &got); !found {
+		t.Fatal("dropping one bucket took another with it")
+	}
+	if err := s.DropBucket("repository.music"); err != nil {
+		t.Fatalf("dropping a bucket that is not there = %v, want nil", err)
+	}
+	if names, _ := s.Buckets(""); strings.Join(names, ",") != "repository.apps,syncs" {
+		t.Fatalf("Buckets after the drop = %v", names)
+	}
+
+	var none *Store
+	if names, err := none.Buckets(""); err != nil || names != nil {
+		t.Fatalf("Buckets of a nil store = %v, %v", names, err)
+	}
+	if err := none.DropBucket("x"); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"maps"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,13 +57,43 @@ func New(cfg config.Config, st *store.Store, logger *slog.Logger) (*Manager, err
 	return m, nil
 }
 
+// cachePrefix begins the name of the bucket each repository keeps its cache
+// in, which the name of the repository ends.
+const cachePrefix = "repository."
+
+// Prune drops from st the cache of every repository cfg no longer has. One
+// that is disabled, or of a kind the binary was built without, keeps it, for
+// when it runs again. The supervisor calls it at every apply, whether the
+// repositories run or not, so that taking out the last one drops its cache
+// too; by then a repository taken out has stopped, and writes no more.
+func Prune(st *store.Store, cfg config.Config, logger *slog.Logger) {
+	configured := map[string]bool{}
+	for _, repo := range cfg.Repositories {
+		configured[cachePrefix+repo.Name] = true
+	}
+	names, err := st.Buckets(cachePrefix)
+	for _, name := range names {
+		if configured[name] {
+			continue
+		}
+		if err := st.DropBucket(name); err != nil {
+			logger.Warn("cannot drop the cache of a repository taken out", "bucket", name, "error", err)
+			continue
+		}
+		logger.Info("dropped the cache of a repository taken out", "repository", strings.TrimPrefix(name, cachePrefix))
+	}
+	if err != nil {
+		logger.Warn("cannot list the caches of the repositories", "error", err)
+	}
+}
+
 // build makes a runner for every repository of cfg, by name, but for those of
 // a kind the binary was built without, which it leaves alone.
 func build(cfg config.Config, st *store.Store, logger *slog.Logger) (map[string]*runner, error) {
 	repos := cfg.UsableRepositories()
 	out := make(map[string]*runner, len(repos))
 	for _, repo := range repos {
-		r, err := newRunner(repo, cfg.General.BaseFolderFiles, st.Bucket("repository."+repo.Name), logger)
+		r, err := newRunner(repo, cfg.General.BaseFolderFiles, st.Bucket(cachePrefix+repo.Name), logger)
 		if err != nil {
 			return nil, fmt.Errorf("repository %q: %w", repo.Name, err)
 		}

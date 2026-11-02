@@ -54,7 +54,7 @@ func newFixture(t *testing.T, direction string, del bool) *fixture {
 		sync: config.Sync{Name: "photos", Enabled: true, Protocol: config.SyncProtocolRsync, Server: "backup",
 			RemoteFolder: "remote", LocalFolder: "/photos", Direction: direction, Delete: del, Every: "1h"},
 		server: server, ssh: config.Default().General.SSH,
-		local: local, trash: f.trash, stateDir: t.TempDir(),
+		local: local, trash: f.trash, snapshots: openStore(t).Bucket("syncs.snapshots"),
 	}
 	return f
 }

@@ -183,7 +183,9 @@ Besides share links and playback progress, the file keeps:
   so that clients see the same identity after a restart; that makes the file
   as secret as the configuration;
 * the time and outcome of each sync's last run, so that a restart neither
-  forgets them nor runs a sync again before it is due;
+  forgets them nor runs a sync again before it is due, and what each sync both
+  ways had in sync, which tells a file removed on one side from one new on the
+  other;
 * what each repository read of its packages, so that a restart reads only the
   files that changed meanwhile and writes no metadata when nothing did;
 * what each account did in the [Jellyfin music library](#jellyfin-music-library):
@@ -191,6 +193,9 @@ Besides share links and playback progress, the file keeps:
   history of every track it played, and the tokens its clients logged out
   with. None of it is pruned: what belongs to a file that moved or an account
   that was removed stays, and is back when they are.
+
+What the file keeps of a sync or a repository goes when that is taken out of
+the configuration.
 
 `SIGINT` and `SIGTERM` shut the servers down, dropping open connections and
 aborting running transfers. Stopping the Windows service does the same.
@@ -2196,9 +2201,10 @@ With **delete**, one way, what the target has and the source does not is
 removed from the target. Both ways, a file removed on one side since the last
 run is removed on the other, unless it was changed there meanwhile; without
 delete, it is copied back. To tell a removed file from a new one, a sync both
-ways keeps what it had in sync at the end of each run in a folder
-`go-fs-sync`, beside the configuration file. Its first run, or the first after
-its folders or its server changed, removes nothing. What a sync removes from
+ways keeps what it had in sync at the end of each run in the
+[persistent data file](#run); a `go-fs-sync` folder an earlier version kept
+beside the configuration file is moved into it at the next start. Its first
+run, or the first after its folders or its server changed, removes nothing. What a sync removes from
 the local folder goes to [the trash](#the-trash) when there is one, and every
 removal is logged as `sync removed`. As a guard against a disk that is not
 mounted or a folder emptied by mistake, nothing is removed while one side is

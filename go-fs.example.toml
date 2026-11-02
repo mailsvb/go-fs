@@ -449,7 +449,7 @@ isAdmin = true
 # the last run is removed on the other; without it, the file is copied back.
 # What is removed from the local folder goes to the trash when there is one.
 # Nothing is removed while one side is empty and the other is not. What a sync
-# both ways had in sync at its last run is kept in go-fs-sync, beside this file.
+# both ways had in sync at its last run is kept in the persistent data file.
 # delete = false
 # Run at this interval, such as "15m" or "2h", from when go-fs starts, where
 # the first run is. Either this or at is set.
