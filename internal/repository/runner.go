@@ -82,7 +82,7 @@ func newRunner(repo config.Repository, base string, cache *store.Bucket, logger 
 // cacheVersion is the version of what the cache keeps of a package. A cache
 // of another is dropped, so that a change to what is read of a package
 // reaches the packages read before it.
-const cacheVersion = 1
+const cacheVersion = 2
 
 // The cache keeps a record of each package under packagePrefix and its path
 // in the repository, and one that says what they were read for under

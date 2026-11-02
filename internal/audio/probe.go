@@ -92,6 +92,7 @@ func probeFLAC(r io.ReaderAt, start, size int64) (Format, error) {
 func readStreamInfo(f *Format, info []byte) {
 	f.SampleRate = int(info[10])<<12 | int(info[11])<<4 | int(info[12])>>4
 	f.Channels = int(info[12]>>1&0x07) + 1
+	f.BitDepth = (int(info[12]&0x01)<<4 | int(info[13])>>4) + 1
 	samples := int64(info[13]&0x0f)<<32 | int64(binary.BigEndian.Uint32(info[14:18]))
 	f.Duration = durationOf(samples, f.SampleRate)
 }
@@ -298,6 +299,10 @@ func readSampleEntry(r io.ReaderAt, trak box, f *Format) {
 	}
 	f.Channels = int(binary.BigEndian.Uint16(entry[24:26]))
 	f.SampleRate = int(binary.BigEndian.Uint32(entry[32:36]) >> 16)
+	// the sample size of a lossy codec says nothing of it
+	if f.Codec == "alac" || f.Codec == "flac" {
+		f.BitDepth = int(binary.BigEndian.Uint16(entry[26:28]))
+	}
 }
 
 // probeWAV reads the fmt and data chunks of a RIFF WAVE file.
@@ -323,6 +328,9 @@ func probeWAV(r io.ReaderAt, size int64) (Format, error) {
 			f.Channels = int(binary.LittleEndian.Uint16(format[2:4]))
 			f.SampleRate = int(binary.LittleEndian.Uint32(format[4:8]))
 			byteRate = int(binary.LittleEndian.Uint32(format[8:12]))
+			if f.Codec == "pcm" {
+				f.BitDepth = int(binary.LittleEndian.Uint16(format[14:16]))
+			}
 			f.Bitrate = byteRate * 8
 		case "data":
 			// a file still being written, or streamed, may say more than

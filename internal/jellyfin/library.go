@@ -79,11 +79,13 @@ type Track struct {
 	ID   string
 	Name string
 	Href string
-	// Artist is the artist of the track, and Album the album it is on,
-	// which is never nil. Genre is nil for a track without one.
+	// Artists are the artists of the track, of which there is at least one,
+	// and Artist the first of them. Album is the album it is on, which is
+	// never nil, and Genres the genres it is tagged with.
 	Artist   *Artist
+	Artists  []*Artist
 	Album    *Album
-	Genre    *Genre
+	Genres   []*Genre
 	Composer string
 	Number   int
 	Disc     int
@@ -92,6 +94,10 @@ type Track struct {
 	ModTime  time.Time
 	// Picture says that the file carries a picture.
 	Picture bool
+	// Gain and AlbumGain are the ReplayGain of the track and of its album
+	// as the track is tagged, nil where it is not.
+	Gain      *float64
+	AlbumGain *float64
 	audio.Format
 
 	lib *Library
@@ -108,6 +114,9 @@ type Album struct {
 	Year   int
 	Tracks []*Track
 	Genres []*Genre
+	// Gain is the ReplayGain of the album as its tracks are tagged, nil
+	// where none is.
+	Gain *float64
 	// Added is when the newest of its files was put into the folder.
 	Added    time.Time
 	Duration time.Duration
@@ -201,21 +210,27 @@ func Build(name, title, folder, onDisk string, sources []Source, covers map[stri
 		dir := path.Dir(s.Href)
 		t := &Track{ID: newID(l.Name, s.Href), Href: s.Href, Composer: s.Composer, Number: s.Number,
 			Disc: s.Disc, Year: s.Year, Size: s.Size, ModTime: s.ModTime, Picture: s.Picture,
-			Format: s.Format, lib: l}
+			Gain: s.TrackGain, AlbumGain: s.AlbumGain, Format: s.Format, lib: l}
 		t.Name = s.Title
 		if t.Name == "" {
 			t.Name, t.Number = fromFileName(path.Base(s.Href), t.Number)
 		}
 		folders := strings.Split(dir, "/")
-		artistName := cmp.Or(s.Artist, s.AlbumArtist)
+		artistNames := splitNames(cmp.Or(s.Artist, s.AlbumArtist))
 		albumName := s.Album
 		if dir != "." {
 			albumName = cmp.Or(albumName, folders[len(folders)-1])
-			if len(folders) > 1 {
-				artistName = cmp.Or(artistName, folders[len(folders)-2])
+			if len(folders) > 1 && len(artistNames) == 0 {
+				artistNames = []string{folders[len(folders)-2]}
 			}
 		}
-		t.Artist = artist(cmp.Or(artistName, unknownArtist))
+		if len(artistNames) == 0 {
+			artistNames = []string{unknownArtist}
+		}
+		for _, name := range artistNames {
+			t.Artists = append(t.Artists, artist(name))
+		}
+		t.Artist = t.Artists[0]
 		albumName = cmp.Or(albumName, unknownAlbum)
 
 		var key string
@@ -236,14 +251,14 @@ func Build(name, title, folder, onDisk string, sources []Source, covers map[stri
 		t.Album = a
 		a.Tracks = append(a.Tracks, t)
 
-		if s.Genre != "" {
-			gkey := strings.ToLower(s.Genre)
+		for _, name := range splitNames(s.Genre) {
+			gkey := strings.ToLower(name)
 			g, ok := genres[gkey]
 			if !ok {
-				g = &Genre{ID: newID(l.Name, "genre", gkey), Name: s.Genre, lib: l}
+				g = &Genre{ID: newID(l.Name, "genre", gkey), Name: name, lib: l}
 				genres[gkey] = g
 			}
-			t.Genre = g
+			t.Genres = append(t.Genres, g)
 			g.Tracks = append(g.Tracks, t)
 		}
 		l.Tracks = append(l.Tracks, t)
@@ -267,10 +282,13 @@ func Build(name, title, folder, onDisk string, sources []Source, covers map[stri
 			if t.ModTime.After(a.Added) {
 				a.Added = t.ModTime
 			}
-			if t.Genre != nil && !seen[t.Genre] {
-				seen[t.Genre] = true
-				a.Genres = append(a.Genres, t.Genre)
-				t.Genre.Albums = append(t.Genre.Albums, a)
+			a.Gain = cmp.Or(a.Gain, t.AlbumGain)
+			for _, g := range t.Genres {
+				if !seen[g] {
+					seen[g] = true
+					a.Genres = append(a.Genres, g)
+					g.Albums = append(g.Albums, a)
+				}
 			}
 		}
 		l.findCover(a)
@@ -278,7 +296,9 @@ func Build(name, title, folder, onDisk string, sources []Source, covers map[stri
 		l.Albums = append(l.Albums, a)
 	}
 	for _, t := range l.Tracks {
-		t.Artist.Tracks = append(t.Artist.Tracks, t)
+		for _, a := range t.Artists {
+			a.Tracks = append(a.Tracks, t)
+		}
 	}
 	for _, a := range artists {
 		slices.SortFunc(a.Albums, byName)
@@ -365,6 +385,22 @@ func sortName(name string) string {
 		}
 	}
 	return name
+}
+
+// splitNames are the names a tag holds, of artists or of genres: more than one
+// where a semicolon parts them, or the NUL that ID3v2.4 parts them with. A
+// slash parts none, for the names like AC/DC it is in.
+func splitNames(tag string) []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, name := range strings.FieldsFunc(tag, func(r rune) bool { return r == ';' || r == 0 }) {
+		name = strings.TrimSpace(name)
+		if key := strings.ToLower(name); name != "" && !seen[key] {
+			seen[key] = true
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // fromFileName names an untagged track after its file: without the

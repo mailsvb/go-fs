@@ -1,6 +1,8 @@
 package jellyfin
 
 import (
+	"cmp"
+	"strings"
 	"time"
 )
 
@@ -46,14 +48,29 @@ type BaseItem struct {
 	ImageAspectRatio  float64           `json:"PrimaryImageAspectRatio,omitempty"`
 	CanDownload       bool              `json:"CanDownload"`
 	HasLyrics         bool              `json:"HasLyrics"`
+	People            []Person          `json:"People,omitempty"`
 	UserData          UserData          `json:"UserData"`
 	MediaSources      []MediaSource     `json:"MediaSources,omitempty"`
+	// NormalizationGain is the dB that bring a track or an album to -18
+	// LUFS, and AlbumNormalizationGain the gain of a track's album, which
+	// clients that even out the volume apply; there is none where the tags
+	// say none.
+	NormalizationGain      *float64 `json:"NormalizationGain,omitempty"`
+	AlbumNormalizationGain *float64 `json:"AlbumNormalizationGain,omitempty"`
 }
 
 // NameID names an item another one refers to.
 type NameID struct {
 	Name string `json:"Name"`
 	ID   string `json:"Id"`
+}
+
+// Person is someone who made an item other than its artists: the composer
+// of a track.
+type Person struct {
+	Name string `json:"Name"`
+	ID   string `json:"Id"`
+	Type string `json:"Type"`
 }
 
 // UserData is what Jellyfin keeps of a listener and an item, as Listeners
@@ -72,7 +89,8 @@ type UserData struct {
 }
 
 // MediaSource is a way a track can be played, of which there is one: the
-// file as it is. Nothing is transcoded.
+// file as it is. Nothing is transcoded. Finamp reads every flag of it and of
+// its streams as a bool, and fails on one that is missing.
 type MediaSource struct {
 	Protocol                string        `json:"Protocol"`
 	ID                      string        `json:"Id"`
@@ -90,6 +108,11 @@ type MediaSource struct {
 	IsInfiniteStream        bool          `json:"IsInfiniteStream"`
 	RequiresOpening         bool          `json:"RequiresOpening"`
 	RequiresClosing         bool          `json:"RequiresClosing"`
+	RequiresLooping         bool          `json:"RequiresLooping"`
+	ReadAtNativeFramerate   bool          `json:"ReadAtNativeFramerate"`
+	IgnoreDts               bool          `json:"IgnoreDts"`
+	IgnoreIndex             bool          `json:"IgnoreIndex"`
+	GenPtsInput             bool          `json:"GenPtsInput"`
 	MediaStreams            []MediaStream `json:"MediaStreams"`
 	MediaAttachments        []any         `json:"MediaAttachments"`
 	Formats                 []string      `json:"Formats"`
@@ -99,16 +122,22 @@ type MediaSource struct {
 
 // MediaStream is the audio stream of a track.
 type MediaStream struct {
-	Codec         string `json:"Codec"`
-	Type          string `json:"Type"`
-	Index         int    `json:"Index"`
-	IsDefault     bool   `json:"IsDefault"`
-	IsExternal    bool   `json:"IsExternal"`
-	Channels      int    `json:"Channels,omitempty"`
-	ChannelLayout string `json:"ChannelLayout,omitempty"`
-	SampleRate    int    `json:"SampleRate,omitempty"`
-	BitRate       int    `json:"BitRate,omitempty"`
-	DisplayTitle  string `json:"DisplayTitle"`
+	Codec                  string `json:"Codec"`
+	Type                   string `json:"Type"`
+	Index                  int    `json:"Index"`
+	IsDefault              bool   `json:"IsDefault"`
+	IsExternal             bool   `json:"IsExternal"`
+	IsInterlaced           bool   `json:"IsInterlaced"`
+	IsForced               bool   `json:"IsForced"`
+	IsHearingImpaired      bool   `json:"IsHearingImpaired"`
+	IsTextSubtitleStream   bool   `json:"IsTextSubtitleStream"`
+	SupportsExternalStream bool   `json:"SupportsExternalStream"`
+	Channels               int    `json:"Channels,omitempty"`
+	ChannelLayout          string `json:"ChannelLayout,omitempty"`
+	SampleRate             int    `json:"SampleRate,omitempty"`
+	BitRate                int    `json:"BitRate,omitempty"`
+	BitDepth               int    `json:"BitDepth,omitempty"`
+	DisplayTitle           string `json:"DisplayTitle"`
 }
 
 // Describer describes items to one listener of one server.
@@ -159,12 +188,15 @@ func (d Describer) Item(item Item) BaseItem {
 		b.AlbumArtists = []NameID{nameID(v.Artist)}
 		seen := map[*Artist]bool{}
 		for _, t := range v.Tracks {
-			if !seen[t.Artist] {
-				seen[t.Artist] = true
-				b.Artists = append(b.Artists, t.Artist.Name)
-				b.ArtistItems = append(b.ArtistItems, nameID(t.Artist))
+			for _, a := range t.Artists {
+				if !seen[a] {
+					seen[a] = true
+					b.Artists = append(b.Artists, a.Name)
+					b.ArtistItems = append(b.ArtistItems, nameID(a))
+				}
 			}
 		}
+		b.NormalizationGain = v.Gain
 		for _, g := range v.Genres {
 			b.Genres = append(b.Genres, g.Name)
 			b.GenreItems = append(b.GenreItems, nameID(g))
@@ -194,12 +226,20 @@ func (d Describer) Item(item Item) BaseItem {
 		b.AlbumImageTag = v.Album.coverTag
 		b.AlbumArtist = v.Album.Artist.Name
 		b.AlbumArtists = []NameID{nameID(v.Album.Artist)}
-		b.Artists = []string{v.Artist.Name}
-		b.ArtistItems = []NameID{nameID(v.Artist)}
-		if v.Genre != nil {
-			b.Genres = []string{v.Genre.Name}
-			b.GenreItems = []NameID{nameID(v.Genre)}
+		for _, a := range v.Artists {
+			b.Artists = append(b.Artists, a.Name)
+			b.ArtistItems = append(b.ArtistItems, nameID(a))
 		}
+		for _, g := range v.Genres {
+			b.Genres = append(b.Genres, g.Name)
+			b.GenreItems = append(b.GenreItems, nameID(g))
+		}
+		for _, name := range splitNames(v.Composer) {
+			b.People = append(b.People, Person{Name: name, Type: "Composer",
+				ID: newID(v.lib.Name, "composer", strings.ToLower(name))})
+		}
+		b.NormalizationGain = v.Gain
+		b.AlbumNormalizationGain = cmp.Or(v.AlbumGain, v.Album.Gain)
 		b.MediaSources = []MediaSource{d.MediaSource(v)}
 	}
 	return b
@@ -247,7 +287,8 @@ func (d Describer) MediaSource(t *Track) MediaSource {
 		SupportsDirectPlay: true, SupportsProbing: true, Bitrate: t.Bitrate,
 		MediaAttachments: []any{}, Formats: []string{},
 		MediaStreams: []MediaStream{{Codec: t.Codec, Type: "Audio", IsDefault: true, Channels: t.Channels,
-			ChannelLayout: layout, SampleRate: t.SampleRate, BitRate: t.Bitrate, DisplayTitle: t.Codec}},
+			ChannelLayout: layout, SampleRate: t.SampleRate, BitRate: t.Bitrate, BitDepth: t.BitDepth,
+			DisplayTitle: t.Codec}},
 	}
 }
 

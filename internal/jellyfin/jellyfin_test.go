@@ -238,6 +238,72 @@ func TestDescribes(t *testing.T) {
 	}
 }
 
+func TestSeveralArtistsAndGenres(t *testing.T) {
+	l := Build("music", "", "/music", t.TempDir(), []Source{
+		source("Duo/a.flac", audio.Track{Title: "A", Artist: "One; Two\x00two", AlbumArtist: "One",
+			Album: "Duo", Genre: "Rock;Pop; ", Composer: "Writer; Other"}, 1),
+		source("Duo/b.flac", audio.Track{Title: "B", Artist: "AC/DC", AlbumArtist: "One", Album: "Duo"}, 2),
+	}, nil, day)
+	a := l.Tracks[0]
+	if got := names(a.Artists); !slices.Equal(got, []string{"One", "Two"}) || a.Artist.Name != "One" {
+		t.Errorf("artists %q, the first %q", got, a.Artist.Name)
+	}
+	if got := names(a.Genres); !slices.Equal(got, []string{"Rock", "Pop"}) {
+		t.Errorf("genres %q", got)
+	}
+	if got := names(l.Artists); !slices.Equal(got, []string{"AC/DC", "One", "Two"}) {
+		t.Errorf("all artists %q", got)
+	}
+	two := newID("music", "artist", "two")
+	if got := find(t, l, Query{Types: []string{"Audio"}, Recursive: true, ArtistIDs: []string{two}}); !slices.Equal(got, []string{"A"}) {
+		t.Errorf("the tracks of the second artist %q", got)
+	}
+	if got := find(t, l, Query{ParentID: newID("music", "genre", "pop"), Types: []string{"Audio"}}); !slices.Equal(got, []string{"A"}) {
+		t.Errorf("the tracks of the second genre %q", got)
+	}
+	d := Describer{ServerID: "server"}
+	described := d.Item(a)
+	if !slices.Equal(described.Artists, []string{"One", "Two"}) || len(described.ArtistItems) != 2 ||
+		!slices.Equal(described.Genres, []string{"Rock", "Pop"}) {
+		t.Errorf("track %+v", described)
+	}
+	if len(described.People) != 2 || described.People[0] != (Person{Name: "Writer", Type: "Composer",
+		ID: newID("music", "composer", "writer")}) {
+		t.Errorf("people %+v", described.People)
+	}
+	if album := d.Item(l.Albums[0]); !slices.Equal(album.Artists, []string{"One", "Two", "AC/DC"}) {
+		t.Errorf("album artists %q", album.Artists)
+	}
+}
+
+func TestDescribesTheGains(t *testing.T) {
+	db := func(f float64) *float64 { return &f }
+	l := Build("music", "", "/music", t.TempDir(), []Source{
+		source("Album/a.flac", audio.Track{Title: "A", Album: "Album", TrackGain: db(-6.5)}, 1),
+		source("Album/b.flac", audio.Track{Title: "B", Album: "Album", TrackGain: db(-2), AlbumGain: db(-4)}, 2),
+		source("Plain/c.flac", audio.Track{Title: "C", Album: "Plain"}, 3),
+	}, nil, day)
+	d := Describer{ServerID: "server"}
+	a, b := d.Item(l.Tracks[0]), d.Item(l.Tracks[1])
+	if a.NormalizationGain == nil || *a.NormalizationGain != -6.5 ||
+		a.AlbumNormalizationGain == nil || *a.AlbumNormalizationGain != -4 {
+		t.Errorf("a track without an album gain: %v %v", a.NormalizationGain, a.AlbumNormalizationGain)
+	}
+	if b.NormalizationGain == nil || *b.NormalizationGain != -2 {
+		t.Errorf("track gain %v", b.NormalizationGain)
+	}
+	if album := d.Item(l.Albums[0]); album.NormalizationGain == nil || *album.NormalizationGain != -4 {
+		t.Errorf("album gain %v", album.NormalizationGain)
+	}
+	encoded, err := json.Marshal(d.Item(l.Tracks[2]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "NormalizationGain") || strings.Contains(string(encoded), "People") {
+		t.Errorf("an untagged track %s", encoded)
+	}
+}
+
 func TestPublish(t *testing.T) {
 	l := library(t)
 	Publish(l)

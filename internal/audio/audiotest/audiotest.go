@@ -6,6 +6,7 @@ package audiotest
 import (
 	"bytes"
 	"encoding/binary"
+	"slices"
 	"strconv"
 )
 
@@ -16,11 +17,27 @@ type Tags struct {
 	AlbumArtist string
 	Album       string
 	Genre       string
+	Composer    string
 	Track       int
 	Disc        int
 	Year        int
 	// Picture is a PNG the file carries, the cover of its album.
 	Picture []byte
+	// Extra are tags the format has no field of its own for, by name, as
+	// ReplayGain is written: a TXXX frame of ID3v2, a comment of Vorbis, a
+	// freeform atom of MP4.
+	Extra map[string]string
+}
+
+// extra are the names of the extra tags, in order, so that a file is built
+// the same every time.
+func (t Tags) extra() []string {
+	var names []string
+	for name := range t.Extra {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 // PNG is the smallest picture there is: one transparent pixel.
@@ -75,9 +92,13 @@ func id3v2(tags Tags) []byte {
 	text("TPE2", tags.AlbumArtist)
 	text("TALB", tags.Album)
 	text("TCON", tags.Genre)
+	text("TCOM", tags.Composer)
 	number("TRCK", tags.Track)
 	number("TPOS", tags.Disc)
 	number("TYER", tags.Year)
+	for _, name := range tags.extra() {
+		frame(&frames, "TXXX", append([]byte{0}, name+"\x00"+tags.Extra[name]...))
+	}
 	if tags.Picture != nil {
 		var apic bytes.Buffer
 		apic.WriteByte(0)
@@ -169,9 +190,13 @@ func vorbisComment(tags Tags, opus bool) []byte {
 	add("ALBUMARTIST", tags.AlbumArtist)
 	add("ALBUM", tags.Album)
 	add("GENRE", tags.Genre)
+	add("COMPOSER", tags.Composer)
 	number("TRACKNUMBER", tags.Track)
 	number("DISCNUMBER", tags.Disc)
 	number("DATE", tags.Year)
+	for _, name := range tags.extra() {
+		add(name, tags.Extra[name])
+	}
 	_ = binary.Write(&b, binary.LittleEndian, uint32(len(vendor)))
 	b.WriteString(vendor)
 	_ = binary.Write(&b, binary.LittleEndian, uint32(len(comments)))
@@ -264,6 +289,7 @@ func M4A(tags Tags, seconds int) []byte {
 	text("aART", tags.AlbumArtist)
 	text("\xa9alb", tags.Album)
 	text("\xa9gen", tags.Genre)
+	text("\xa9wrt", tags.Composer)
 	if tags.Year != 0 {
 		text("\xa9day", strconv.Itoa(tags.Year))
 	}
@@ -275,6 +301,13 @@ func M4A(tags Tags, seconds int) []byte {
 	}
 	if tags.Picture != nil {
 		ilst = append(ilst, atom("covr", data(14, tags.Picture))...)
+	}
+	for _, name := range tags.extra() {
+		// a freeform atom: who defines the name, the name, and the value
+		ilst = append(ilst, atom("----", cat(
+			atom("mean", cat([]byte{0, 0, 0, 0}, []byte("com.apple.iTunes"))),
+			atom("name", cat([]byte{0, 0, 0, 0}, []byte(name))),
+			data(1, []byte(tags.Extra[name]))))...)
 	}
 	meta := cat([]byte{0, 0, 0, 0}, atom("ilst", ilst))
 	moov := atom("moov", cat(atom("mvhd", mvhd), trak, atom("udta", atom("meta", meta))))

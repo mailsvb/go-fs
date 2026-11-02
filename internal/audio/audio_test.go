@@ -9,11 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dhowden/tag"
+
 	"github.com/mailsvb/go-fs/internal/audio/audiotest"
 )
 
 var tags = audiotest.Tags{Title: "Song", Artist: "Someone", AlbumArtist: "The Band", Album: "First",
-	Genre: "Rock", Track: 3, Disc: 2, Year: 2001, Picture: audiotest.PNG}
+	Genre: "Rock", Composer: "Writer", Track: 3, Disc: 2, Year: 2001, Picture: audiotest.PNG}
 
 func write(t *testing.T, name string, content []byte) string {
 	t.Helper()
@@ -57,7 +59,8 @@ func TestReadsTagsAndLength(t *testing.T) {
 			t.Errorf("%s: duration %v, want %.2fs", c.name, track.Duration, c.seconds)
 		}
 		if track.Title != "Song" || track.Artist != "Someone" || track.AlbumArtist != "The Band" ||
-			track.Album != "First" || track.Genre != "Rock" || track.Number != 3 || track.Year != 2001 {
+			track.Album != "First" || track.Genre != "Rock" || track.Composer != "Writer" || track.Number != 3 ||
+			track.Year != 2001 {
 			t.Errorf("%s: tags %+v", c.name, track)
 		}
 		if track.Disc != 2 {
@@ -136,6 +139,93 @@ func TestRefusesWhatIsNoAudio(t *testing.T) {
 	} {
 		if _, err := Read(write(t, name, content)); !errors.Is(err, ErrNotAudio) {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestReadsTheReplayGain(t *testing.T) {
+	gained := tags
+	gained.Extra = map[string]string{"REPLAYGAIN_TRACK_GAIN": "-7.89 dB", "REPLAYGAIN_ALBUM_GAIN": "+1.5 dB"}
+	for name, content := range map[string][]byte{
+		"a.mp3":  audiotest.MP3(gained, 3, true),
+		"a.flac": audiotest.FLAC(gained, 1),
+		"a.m4a":  audiotest.M4A(gained, 1),
+		"a.opus": audiotest.Opus(gained, 1),
+	} {
+		track, err := Read(write(t, name, content))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if track.TrackGain == nil || *track.TrackGain != -7.89 || track.AlbumGain == nil || *track.AlbumGain != 1.5 {
+			t.Errorf("%s: gains %v %v", name, track.TrackGain, track.AlbumGain)
+		}
+	}
+	track, err := Read(write(t, "none.flac", audiotest.FLAC(tags, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if track.TrackGain != nil || track.AlbumGain != nil {
+		t.Errorf("an untagged gain: %v %v", track.TrackGain, track.AlbumGain)
+	}
+}
+
+func TestReadsGains(t *testing.T) {
+	db := func(f float64) *float64 { return &f }
+	cases := []struct {
+		raw          map[string]any
+		track, album *float64
+	}{
+		{map[string]any{"replaygain_track_gain": "-3.20dB", "replaygain_album_gain": "garbage"}, db(-3.2), nil},
+		{map[string]any{"TXXX": &tag.Comm{Description: "replaygain_track_gain", Text: "2 dB"},
+			"TXXX_0": &tag.Comm{Description: "REPLAYGAIN_ALBUM_GAIN", Text: "-1 dB"}}, db(2), db(-1)},
+		// Opus: Q7.8 to -23 LUFS
+		{map[string]any{"r128_track_gain": "-1280", "r128_album_gain": "256"}, db(0), db(6)},
+		{map[string]any{"replaygain_track_gain": "-4 dB", "r128_track_gain": "0"}, db(-4), nil},
+		{map[string]any{"replaygain_track_gain": "NaN dB", "replaygain_album_gain": "+Inf"}, nil, nil},
+	}
+	same := func(a, b *float64) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
+	for _, c := range cases {
+		track, album := gains(c.raw)
+		if !same(track, c.track) || !same(album, c.album) {
+			t.Errorf("%v: %v %v", c.raw, track, album)
+		}
+	}
+}
+
+func TestReadsNoComposerWhereNoneIsTagged(t *testing.T) {
+	plain := audiotest.Tags{Title: "Song", Artist: "Someone"}
+	for name, content := range map[string][]byte{
+		"a.mp3":  audiotest.MP3(plain, 3, true),
+		"a.flac": audiotest.FLAC(plain, 1),
+		"a.m4a":  audiotest.M4A(plain, 1),
+		"a.opus": audiotest.Opus(plain, 1),
+	} {
+		track, err := Read(write(t, name, content))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if track.Composer != "" {
+			t.Errorf("%s: composer %q", name, track.Composer)
+		}
+	}
+}
+
+func TestReadsTheBitDepthOfLosslessAudio(t *testing.T) {
+	for name, want := range map[string]struct {
+		content []byte
+		depth   int
+	}{
+		"a.flac": {audiotest.FLAC(tags, 1), 16},
+		"a.wav":  {audiotest.WAV(1), 8},
+		"a.mp3":  {audiotest.MP3(tags, 3, true), 0},
+		"a.m4a":  {audiotest.M4A(tags, 1), 0},
+	} {
+		track, err := Read(write(t, name, want.content))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if track.BitDepth != want.depth {
+			t.Errorf("%s: bit depth %d, want %d", name, track.BitDepth, want.depth)
 		}
 	}
 }

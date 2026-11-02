@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +37,10 @@ type Track struct {
 	// Picture says that the file carries a picture, the cover of its album
 	// as a rule, which Picture reads when it is asked for.
 	Picture bool
+	// TrackGain and AlbumGain are the ReplayGain of the track and of its
+	// album, the dB that bring them to -18 LUFS; nil where not tagged.
+	TrackGain *float64
+	AlbumGain *float64
 
 	Format
 }
@@ -55,6 +61,9 @@ type Format struct {
 	// both 0 when they cannot be told.
 	SampleRate int
 	Channels   int
+	// BitDepth is the bits of a sample of lossless audio, 0 for a lossy
+	// codec, which has none.
+	BitDepth int
 }
 
 // ErrNotAudio is the error of a file that is not audio this package reads.
@@ -88,10 +97,17 @@ func Read(path string) (Track, error) {
 		track.Album = clean(m.Album())
 		track.Genre = clean(m.Genre())
 		track.Composer = clean(m.Composer())
+		if m.Format() == tag.VORBIS {
+			// which answers the performer, or the artist, for a composer
+			// that is not tagged
+			composer, _ := m.Raw()["composer"].(string)
+			track.Composer = clean(composer)
+		}
 		track.Number, _ = m.Track()
 		track.Disc, _ = m.Disc()
 		track.Year = m.Year()
 		track.Picture = m.Picture() != nil && len(m.Picture().Data) > 0
+		track.TrackGain, track.AlbumGain = gains(m.Raw())
 	}
 	return track, nil
 }
@@ -130,6 +146,44 @@ func pictureType(ext string) string {
 		return "image/gif"
 	}
 	return "image/jpeg"
+}
+
+// gains reads the ReplayGain of a track and of its album from the raw tags:
+// the REPLAYGAIN_* comments of FLAC and Ogg, and the TXXX frames of ID3v2 and
+// the freeform atoms of MP4 that carry the same, or else the R128_* comments
+// of Opus.
+func gains(raw map[string]any) (track, album *float64) {
+	values := map[string]string{}
+	for key, v := range raw {
+		switch v := v.(type) {
+		case string:
+			values[strings.ToLower(key)] = v
+		case *tag.Comm:
+			values[strings.ToLower(v.Description)] = v.Text
+		}
+	}
+	return gain(values, "track"), gain(values, "album")
+}
+
+// gain is the gain of the track or the album, nil where no tag says it.
+func gain(values map[string]string, of string) *float64 {
+	if v, ok := values["replaygain_"+of+"_gain"]; ok {
+		// such as "-7.89 dB"
+		if fields := strings.Fields(clean(v)); len(fields) > 0 {
+			number := strings.TrimSuffix(strings.ToLower(fields[0]), "db")
+			if db, err := strconv.ParseFloat(number, 64); err == nil && !math.IsNaN(db) && !math.IsInf(db, 0) {
+				return &db
+			}
+		}
+	}
+	// a Q7.8 number of dB to -23 LUFS, which is 5 dB below -18
+	if v, ok := values["r128_"+of+"_gain"]; ok {
+		if n, err := strconv.Atoi(clean(v)); err == nil {
+			db := float64(n)/256 + 5
+			return &db
+		}
+	}
+	return nil
 }
 
 // clean takes away what a tag carries around its text: blanks, and the NUL

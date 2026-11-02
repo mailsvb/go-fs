@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"slices"
@@ -78,6 +80,9 @@ func (j *jellyfinRequest) serve() {
 	case get && j.is("audio", "*", "*") && (strings.HasPrefix(strings.ToLower(j.path[2]), "stream") ||
 		strings.EqualFold(j.path[2], "universal")):
 		j.send(j.path[1], false)
+	case get && j.is("audio", "*", "*") && (strings.EqualFold(j.path[2], "main.m3u8") ||
+		strings.EqualFold(j.path[2], "master.m3u8")):
+		j.hls(j.path[1])
 	case get && (j.is("items", "*", "download") || j.is("items", "*", "file")):
 		j.send(j.path[1], true)
 	case (get || post) && j.is("items", "*", "playbackinfo"):
@@ -169,6 +174,11 @@ func (j *jellyfinRequest) query() jellyfin.Query {
 			q.Played = &no
 		case "isresumable":
 			q.Resumable = true
+		case "isnotfolder":
+			// what a mix of an artist or a genre is played from
+			if len(q.Types) == 0 {
+				q.Types = []string{"Audio"}
+			}
 		}
 	}
 	if len(q.Types) == 0 && strings.EqualFold(p["mediatypes"], "Audio") {
@@ -181,6 +191,11 @@ func (j *jellyfinRequest) query() jellyfin.Query {
 
 func (j *jellyfinRequest) items(q jellyfin.Query) {
 	items, total := jellyfin.Find(j.libs, q)
+	if len(q.IDs) > total {
+		// a client asks for what it kept, such as its queue, which may be
+		// of another server or of files no longer there
+		j.s.log.Debug("jellyfin items not found", "user", j.user.name, "asked", len(q.IDs), "found", total)
+	}
 	j.page(items, total, min(max(q.Start, 0), total))
 }
 
@@ -398,6 +413,33 @@ func (j *jellyfinRequest) send(id string, download bool) {
 	j.s.log.Info("http download", "user", j.user.name, "file", t.Virtual(), "bytes", bytesSent,
 		"size", info.Size(), "via", "jellyfin", "client", j.client.Client,
 		"address", clientAddress(j.set, j.r), "took", time.Since(started).Round(time.Millisecond))
+}
+
+// hls answers a client that asks for a stream to be transcoded and sent in
+// segments, which nothing here does: the playlist of one segment, the file
+// as it is, which players take for MP3 and for AAC without a container. Of
+// any other file they take no segment, and the client has to be told to play
+// it as it is.
+func (j *jellyfinRequest) hls(id string) {
+	t, ok := j.track(id)
+	if !ok {
+		return
+	}
+	if t.Container != "mp3" && t.Container != "aac" {
+		j.s.log.Debug("jellyfin cannot stream as HLS without transcoding, turn transcoding off in the client",
+			"user", j.user.name, "file", t.Virtual(), "container", t.Container, "client", j.client.Client)
+		http.Error(j.w, "this server does not transcode: play the file as it is", http.StatusUnsupportedMediaType)
+		return
+	}
+	// the segment is fetched by itself, so it carries the token the
+	// playlist is asked for with
+	seconds := t.Duration.Seconds()
+	playlist := fmt.Sprintf("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-TARGETDURATION:%d\n"+
+		"#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:%.3f,\nstream.%s?ApiKey=%s\n#EXT-X-ENDLIST\n",
+		max(1, int(math.Ceil(seconds))), seconds, t.Container, url.QueryEscape(j.client.Token))
+	j.w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	j.w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(j.w, playlist)
 }
 
 // playbackInfo says how a track is played: as its file is.

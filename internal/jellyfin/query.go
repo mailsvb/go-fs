@@ -202,17 +202,15 @@ func (q Query) matches(item Item) bool {
 	year := 0
 	switch v := item.(type) {
 	case *Track:
-		artists = []Item{v.Artist, v.Album.Artist}
+		artists = append(appendAll(nil, v.Artists), v.Album.Artist)
 		albumArtists = []Item{v.Album.Artist}
 		albums = []Item{v.Album}
-		if v.Genre != nil {
-			genres = []Item{v.Genre}
-		}
+		genres = appendAll(nil, v.Genres)
 		year = v.Year
 	case *Album:
 		artists = []Item{v.Artist}
 		for _, t := range v.Tracks {
-			artists = append(artists, t.Artist)
+			artists = appendAll(artists, t.Artists)
 		}
 		albumArtists = []Item{v.Artist}
 		albums = []Item{v}

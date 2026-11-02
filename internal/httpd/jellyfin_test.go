@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,7 +27,8 @@ import (
 
 // newJellyfinServer serves a library in /music of two albums: one of a band,
 // with a cover beside it, and one of someone else, whose track carries its
-// picture. john reads everything; anna reads the band only.
+// picture, its ReplayGain and its composer. john reads everything; anna reads
+// the band only.
 func newJellyfinServer(t *testing.T, tune func(*httpConfig)) (*testServer, *jellyfin.Library) {
 	t.Helper()
 	anna := readOnlyUser("anna", "secret")
@@ -46,7 +48,8 @@ func newJellyfinServer(t *testing.T, tune func(*httpConfig)) (*testServer, *jell
 			AlbumArtist: "The Band", Album: "First", Track: 2, Year: 2001, Genre: "Rock"}, 100, true),
 		"Band/First/cover.png": audiotest.PNG,
 		"Other/Solo/song.flac": audiotest.FLAC(audiotest.Tags{Title: "Solo song", Artist: "Someone",
-			Album: "Solo", Genre: "Jazz", Picture: audiotest.PNG}, 30),
+			Album: "Solo", Genre: "Jazz", Composer: "Writer", Picture: audiotest.PNG,
+			Extra: map[string]string{"REPLAYGAIN_TRACK_GAIN": "-6.50 dB", "REPLAYGAIN_ALBUM_GAIN": "-5.00 dB"}}, 30),
 	}
 	var sources []jellyfin.Source
 	var hrefs []string
@@ -406,6 +409,61 @@ func TestJellyfinLoginAnswersWhatClientsRequire(t *testing.T) {
 	}
 }
 
+// Finamp reads these fields of a track without allowing for them to be
+// missing, and shows no track of an album when one is.
+func TestJellyfinTracksAnswerWhatClientsRequire(t *testing.T) {
+	server, library := newJellyfinServer(t, nil)
+	token := jfToken(t, server, "john", "doe")
+	album, track := library.Albums[0], library.Albums[0].Tracks[0]
+	source := []string{"Protocol", "Type", "IsRemote", "SupportsTranscoding", "SupportsDirectStream",
+		"SupportsDirectPlay", "IsInfiniteStream", "RequiresOpening", "RequiresClosing", "RequiresLooping",
+		"SupportsProbing", "ReadAtNativeFramerate", "IgnoreDts", "IgnoreIndex", "GenPtsInput", "MediaStreams"}
+	stream := []string{"IsInterlaced", "IsDefault", "IsForced", "Type", "Index", "IsExternal",
+		"IsTextSubtitleStream", "SupportsExternalStream"}
+	has := func(what string, object map[string]any, keys ...string) {
+		t.Helper()
+		for _, key := range keys {
+			if object[key] == nil {
+				t.Errorf("%s has no %s", what, key)
+			}
+		}
+	}
+	check := func(what string, sources []any) {
+		t.Helper()
+		if len(sources) != 1 {
+			t.Fatalf("%s has %d media sources", what, len(sources))
+		}
+		s, _ := sources[0].(map[string]any)
+		has(what+" media source", s, source...)
+		streams, _ := s["MediaStreams"].([]any)
+		if len(streams) != 1 {
+			t.Fatalf("%s has %d media streams", what, len(streams))
+		}
+		ms, _ := streams[0].(map[string]any)
+		has(what+" media stream", ms, stream...)
+	}
+
+	var page map[string]any
+	decode(t, jf(t, server, http.MethodGet, "/Users/x/Items?ParentId="+album.ID+"&IncludeItemTypes=Audio&Recursive=true",
+		token, nil), &page)
+	has("the page", page, "TotalRecordCount", "StartIndex")
+	items, _ := page["Items"].([]any)
+	if len(items) == 0 {
+		t.Fatal("the album has no tracks")
+	}
+	item, _ := items[0].(map[string]any)
+	has("the track", item, "Id")
+	data, _ := item["UserData"].(map[string]any)
+	has("the user data", data, "PlaybackPositionTicks", "PlayCount", "IsFavorite", "Played")
+	sources, _ := item["MediaSources"].([]any)
+	check("the track", sources)
+
+	var info map[string]any
+	decode(t, jf(t, server, http.MethodPost, "/Items/"+track.ID+"/PlaybackInfo", token, strings.NewReader("{}")), &info)
+	sources, _ = info["MediaSources"].([]any)
+	check("the playback info", sources)
+}
+
 func TestJellyfinBrowses(t *testing.T) {
 	server, library := newJellyfinServer(t, nil)
 	token := jfToken(t, server, "john", "doe")
@@ -551,6 +609,120 @@ func TestJellyfinStreams(t *testing.T) {
 	album := library.Albums[0]
 	if res := jf(t, server, http.MethodGet, "/Audio/"+album.ID+"/stream", token, nil); res.StatusCode != http.StatusNotFound {
 		t.Errorf("an album was streamed: %d", res.StatusCode)
+	}
+}
+
+// jfTrack finds a track of the library by its name.
+func jfTrack(t *testing.T, library *jellyfin.Library, name string) *jellyfin.Track {
+	t.Helper()
+	for _, track := range library.Tracks {
+		if track.Name == name {
+			return track
+		}
+	}
+	t.Fatalf("no track %q", name)
+	return nil
+}
+
+func TestJellyfinStreamsMP3AsHLS(t *testing.T) {
+	server, library := newJellyfinServer(t, nil)
+	token := jfToken(t, server, "john", "doe")
+	track := library.Albums[0].Tracks[0]
+	content, err := os.ReadFile(track.OnDisk())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// as Finamp asks when it is told to transcode: the token in the query
+	playlist := server.url("/Audio/" + track.ID + "/main.m3u8?ApiKey=" + token + "&audioCodec=aac&segmentContainer=ts")
+	req, _ := http.NewRequest(http.MethodGet, playlist, nil)
+	res := do(t, req)
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "application/vnd.apple.mpegurl" ||
+		!strings.HasPrefix(string(body), "#EXTM3U\n") || !strings.Contains(string(body), "#EXT-X-ENDLIST") {
+		t.Fatalf("the playlist: %d %s\n%s", res.StatusCode, res.Header.Get("Content-Type"), body)
+	}
+	var segment string
+	for _, line := range strings.Split(string(body), "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			segment = line
+		}
+	}
+	base, _ := url.Parse(playlist)
+	ref, err := url.Parse(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ = http.NewRequest(http.MethodGet, base.ResolveReference(ref).String(), nil)
+	res = do(t, req)
+	body, _ = io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK || !bytes.Equal(body, content) {
+		t.Errorf("the segment %q: %d, %d bytes", segment, res.StatusCode, len(body))
+	}
+
+	flac := jfTrack(t, library, "Solo song")
+	if res := jf(t, server, http.MethodGet, "/Audio/"+flac.ID+"/main.m3u8", token, nil); res.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("a FLAC as HLS: %d", res.StatusCode)
+	}
+	if record := server.logs.find("jellyfin cannot stream as HLS without transcoding, turn transcoding off in the client"); record == nil ||
+		record["container"] != "flac" {
+		t.Errorf("the refusal is logged as %v", record)
+	}
+}
+
+func TestJellyfinDescribesGainsAndFormat(t *testing.T) {
+	server, library := newJellyfinServer(t, nil)
+	token := jfToken(t, server, "john", "doe")
+	flac, mp3 := jfTrack(t, library, "Solo song"), library.Albums[0].Tracks[0]
+
+	var item struct {
+		NormalizationGain, AlbumNormalizationGain *float64
+		People                                    []jellyfin.Person
+		MediaSources                              []jellyfin.MediaSource
+	}
+	decode(t, jf(t, server, http.MethodGet, "/Users/x/Items/"+flac.ID, token, nil), &item)
+	if item.NormalizationGain == nil || *item.NormalizationGain != -6.5 ||
+		item.AlbumNormalizationGain == nil || *item.AlbumNormalizationGain != -5 {
+		t.Errorf("the gains %v %v", item.NormalizationGain, item.AlbumNormalizationGain)
+	}
+	if len(item.People) != 1 || item.People[0].Name != "Writer" || item.People[0].Type != "Composer" {
+		t.Errorf("people %+v", item.People)
+	}
+	if len(item.MediaSources) != 1 || item.MediaSources[0].MediaStreams[0].BitDepth != 16 {
+		t.Errorf("media sources %+v", item.MediaSources)
+	}
+	var info struct{ MediaSources []jellyfin.MediaSource }
+	decode(t, jf(t, server, http.MethodGet, "/Items/"+flac.ID+"/PlaybackInfo", token, nil), &info)
+	if len(info.MediaSources) != 1 || info.MediaSources[0].MediaStreams[0].BitDepth != 16 {
+		t.Errorf("playback info %+v", info.MediaSources)
+	}
+
+	var album struct{ NormalizationGain *float64 }
+	decode(t, jf(t, server, http.MethodGet, "/Users/x/Items/"+flac.Album.ID, token, nil), &album)
+	if album.NormalizationGain == nil || *album.NormalizationGain != -5 {
+		t.Errorf("the album gain %v", album.NormalizationGain)
+	}
+
+	var plain map[string]any
+	decode(t, jf(t, server, http.MethodGet, "/Users/x/Items/"+mp3.ID, token, nil), &plain)
+	if _, ok := plain["NormalizationGain"]; ok {
+		t.Errorf("an MP3 without ReplayGain has a gain: %v", plain["NormalizationGain"])
+	}
+}
+
+func TestJellyfinMixesTracksOnly(t *testing.T) {
+	server, library := newJellyfinServer(t, nil)
+	token := jfToken(t, server, "john", "doe")
+	band := library.Albums[0].Artist
+	// as Finamp asks for the tracks of an artist's mix
+	mix := jfList(t, server, "/Users/x/Items?Filters=IsNotFolder&Recursive=true&SortBy=Random&ArtistIds="+band.ID, token)
+	if names := mix.names(); len(names) != 2 || !slices.Contains(names, "One") || !slices.Contains(names, "Two") {
+		t.Errorf("the mix %q", names)
+	}
+	for _, item := range mix.Items {
+		if item.Type != "Audio" {
+			t.Errorf("the mix has a %s", item.Type)
+		}
 	}
 }
 
