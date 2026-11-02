@@ -32,9 +32,16 @@ type Query struct {
 	// AlbumArtists leaves out the artists of no album, who only appear on
 	// the albums of others.
 	AlbumArtists bool
-	// Favorites asks for the favorites only, of which there are none: the
-	// library keeps nothing of its listeners.
-	Favorites bool
+	// Data is what is kept of the listener and an item, as Listeners.Data
+	// has it, which the filters below and the sorts by plays read; nil for
+	// nothing, which no favorite and no played item passes.
+	Data func(Item) Record
+	// Favorite asks for the favorites only, or for the others; nil for
+	// both. Played asks the same of the items that were played, and
+	// Resumable for the tracks that are resumed where they were stopped.
+	Favorite  *bool
+	Played    *bool
+	Resumable bool
 
 	// SortBy are the keys the items are sorted by, the first first, and
 	// Descending says which of them sort the other way; the one before
@@ -175,8 +182,12 @@ func appendAll[T Item](items []Item, more []T) []Item {
 
 // matches reports whether an item passes the filters of the query.
 func (q Query) matches(item Item) bool {
-	if q.Favorites {
-		return false
+	if q.Favorite != nil || q.Played != nil || q.Resumable {
+		r := q.record(item)
+		if q.Favorite != nil && r.Favorite != *q.Favorite || q.Played != nil && r.Played != *q.Played ||
+			q.Resumable && r.Position == 0 {
+			return false
+		}
 	}
 	if a, ok := item.(*Artist); ok && q.AlbumArtists && len(a.Albums) == 0 {
 		return false
@@ -245,7 +256,7 @@ func anyID(items []Item, ids []string) bool {
 func (q Query) sort(items []Item) {
 	var keys []func(a, b Item) int
 	for i, key := range q.SortBy {
-		compare := sortKey(strings.ToLower(key))
+		compare := q.sortKey(strings.ToLower(key))
 		if compare == nil {
 			continue
 		}
@@ -276,10 +287,22 @@ func (q Query) sort(items []Item) {
 	})
 }
 
+// record is what is kept of the listener and an item.
+func (q Query) record(item Item) Record {
+	if q.Data == nil {
+		return Record{}
+	}
+	return q.Data(item)
+}
+
 // sortKey compares two items by a key of SortBy; nil for a key the library
-// has nothing to sort by, such as how often a track was played.
-func sortKey(key string) func(a, b Item) int {
+// has nothing to sort by, such as the rating of a critic.
+func (q Query) sortKey(key string) func(a, b Item) int {
 	switch key {
+	case "dateplayed":
+		return func(a, b Item) int { return q.record(a).LastPlayed.Compare(q.record(b).LastPlayed) }
+	case "playcount":
+		return func(a, b Item) int { return cmp.Compare(q.record(a).PlayCount, q.record(b).PlayCount) }
 	case "sortname", "name":
 		return func(a, b Item) int { return strings.Compare(sortName(a.ItemName()), sortName(b.ItemName())) }
 	case "album":

@@ -185,7 +185,12 @@ Besides share links and playback progress, the file keeps:
 * the time and outcome of each sync's last run, so that a restart neither
   forgets them nor runs a sync again before it is due;
 * what each repository read of its packages, so that a restart reads only the
-  files that changed meanwhile and writes no metadata when nothing did.
+  files that changed meanwhile and writes no metadata when nothing did;
+* what each account did in the [Jellyfin music library](#jellyfin-music-library):
+  play counts, favorites, resume positions, the views its clients set, the
+  history of every track it played, and the tokens its clients logged out
+  with. None of it is pruned: what belongs to a file that moved or an account
+  that was removed stays, and is back when they are.
 
 `SIGINT` and `SIGTERM` shut the servers down, dropping open connections and
 aborting running transfers. Stopping the Windows service does the same.
@@ -1440,16 +1445,20 @@ It differs from the package repositories in these ways:
   those paths would hide.
 - **Clients log in with the accounts of go-fs** that set `http`. A client is
   given a token that lasts a year and stops working when the account's
-  password changes. An account sees the tracks it may read, by its `paths` and
+  password changes, or when the client logs out with it. An account sees the tracks it may read, by its `paths` and
   `allowUserFileRetrieve`, and the albums, artists and genres of those. A
   library it can read nothing of is not shown to it.
 - **The folder needs an account.** It is protected as if it were in
   `pathsRequireAuth`, over HTTP and WebDAV. TFTP knows no accounts and serves
   it like any other folder, so keep TFTP off, or its folder elsewhere, where
   the music is private.
-- Play counts, favorites, playlists and resume positions are not kept. A
-  client that sets them is told it worked, and the change is gone with the next
-  answer.
+- **What an account plays is kept** in the
+  [persistent data file](#run), across clients and restarts. A track
+  counts as played once half of it, or four minutes, was heard, as Last.fm
+  counts a scrobble, and each play goes into the account's history. Albums,
+  artists, genres and tracks can be favorites. A track of ten minutes or more,
+  a mix or a chapter, is resumed where it was stopped. The views a client sets
+  are kept per client. Playlists are not kept: a client sees none.
 
 The record of a library on the REPOSITORY tab shows how many tracks and
 albums it has, and the address clients add. A binary built with the tag

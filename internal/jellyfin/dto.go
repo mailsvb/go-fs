@@ -56,15 +56,19 @@ type NameID struct {
 	ID   string `json:"Id"`
 }
 
-// UserData is what Jellyfin keeps of a listener and an item, of which the
-// library keeps nothing: an item is never played and never a favorite here.
+// UserData is what Jellyfin keeps of a listener and an item, as Listeners
+// keeps it.
 type UserData struct {
-	PlaybackPositionTicks int64  `json:"PlaybackPositionTicks"`
-	PlayCount             int    `json:"PlayCount"`
-	IsFavorite            bool   `json:"IsFavorite"`
-	Played                bool   `json:"Played"`
-	Key                   string `json:"Key"`
-	ItemID                string `json:"ItemId"`
+	PlaybackPositionTicks int64   `json:"PlaybackPositionTicks"`
+	PlayedPercentage      float64 `json:"PlayedPercentage,omitempty"`
+	// UnplayedItemCount is how many tracks of an album were not played.
+	UnplayedItemCount *int   `json:"UnplayedItemCount,omitempty"`
+	PlayCount         int    `json:"PlayCount"`
+	IsFavorite        bool   `json:"IsFavorite"`
+	LastPlayedDate    string `json:"LastPlayedDate,omitempty"`
+	Played            bool   `json:"Played"`
+	Key               string `json:"Key"`
+	ItemID            string `json:"ItemId"`
 }
 
 // MediaSource is a way a track can be played, of which there is one: the
@@ -110,6 +114,9 @@ type MediaStream struct {
 // Describer describes items to one listener of one server.
 type Describer struct {
 	ServerID string
+	// Data is what is kept of the listener and an item, as Listeners.Data
+	// has it; nil for nothing.
+	Data func(Item) Record
 }
 
 // Items describes items.
@@ -129,7 +136,7 @@ func (d Describer) Item(item Item) BaseItem {
 		MediaType: "Unknown", LocationType: "FileSystem", ImageTags: map[string]string{},
 		Genres: []string{}, GenreItems: []NameID{}, Artists: []string{}, ArtistItems: []NameID{},
 		AlbumArtists: []NameID{}, BackdropImageTags: []string{},
-		UserData: UserData{Key: item.ItemID(), ItemID: item.ItemID()},
+		UserData: d.UserData(item),
 	}
 	if tag := imageTag(item); tag != "" {
 		b.ImageTags["Primary"] = tag
@@ -196,6 +203,33 @@ func (d Describer) Item(item Item) BaseItem {
 		b.MediaSources = []MediaSource{d.MediaSource(v)}
 	}
 	return b
+}
+
+// UserData describes what is kept of the listener and an item.
+func (d Describer) UserData(item Item) UserData {
+	u := UserData{Key: item.ItemID(), ItemID: item.ItemID()}
+	if d.Data == nil {
+		return u
+	}
+	r := d.Data(item)
+	u.Played, u.PlayCount, u.IsFavorite = r.Played, r.PlayCount, r.Favorite
+	u.LastPlayedDate = date(r.LastPlayed)
+	u.PlaybackPositionTicks = r.Position
+	switch v := item.(type) {
+	case *Track:
+		if runtime := ticks(v.Duration); r.Position > 0 && runtime > 0 {
+			u.PlayedPercentage = 100 * float64(r.Position) / float64(runtime)
+		}
+	case *Album:
+		unplayed := 0
+		for _, t := range v.Tracks {
+			if !d.Data(t).Played {
+				unplayed++
+			}
+		}
+		u.UnplayedItemCount = &unplayed
+	}
+	return u
 }
 
 // MediaSource describes the file of a track, which is played as it is.

@@ -6,9 +6,14 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -41,13 +46,15 @@ func (j *jellyfinRequest) serve() {
 	case get && (j.is("items", "latest") || j.is("useritems", "latest")):
 		j.latest()
 	case get && (j.is("items", "resume") || j.is("useritems", "resume")):
-		j.page(nil, 0, 0)
+		j.resume()
 	case get && j.is("items", "counts"):
 		j.counts()
 	case get && j.is("items", "*"):
 		j.item(j.path[1])
 	case get && j.is("items", "*", "ancestors"):
 		j.ancestors(j.path[1])
+	case (get || post) && (j.is("items", "*", "userdata") || j.is("useritems", "*", "userdata")):
+		j.itemUserData(j.path[1], post)
 
 	case get && j.is("artists"):
 		q := j.query()
@@ -77,24 +84,27 @@ func (j *jellyfinRequest) serve() {
 		j.playbackInfo(j.path[1])
 
 	case post && (j.is("sessions", "playing") || j.is("sessions", "playing", "progress") ||
-		j.is("sessions", "playing", "stopped") || j.is("sessions", "playing", "ping") ||
-		j.is("sessions", "capabilities") || j.is("sessions", "capabilities", "full") ||
-		j.is("sessions", "logout")):
-		// nothing is kept of what a client plays, and a token cannot be
-		// taken back: it is good until it runs out or the password changes
-		j.s.log.Debug("jellyfin report", "user", j.user.name, "url", r.URL.Path, "client", j.client.Client)
+		j.is("sessions", "playing", "stopped")):
+		j.playing(strings.ToLower(j.path[len(j.path)-1]))
+	case post && j.is("playingitems", "*"):
+		j.report("playing", j.path[1], j.positionParam())
+	case post && j.is("playingitems", "*", "progress"):
+		j.report("progress", j.path[1], j.positionParam())
+	case r.Method == http.MethodDelete && j.is("playingitems", "*"):
+		j.report("stopped", j.path[1], j.positionParam())
+	case post && (j.is("sessions", "playing", "ping") || j.is("sessions", "capabilities") ||
+		j.is("sessions", "capabilities", "full")):
 		w.WriteHeader(http.StatusNoContent)
+	case post && j.is("sessions", "logout"):
+		j.logout()
 	case get && j.is("sessions"):
 		writeJSON(w, http.StatusOK, []any{j.session()})
 	case (post || r.Method == http.MethodDelete) && (j.is("userfavoriteitems", "*") || j.is("userplayeditems", "*")):
 		j.userData(j.path[1], post)
 	case get && j.is("displaypreferences", "*"):
-		writeJSON(w, http.StatusOK, map[string]any{"Id": j.path[1], "SortBy": "SortName", "SortOrder": "Ascending",
-			"RememberIndexing": false, "RememberSorting": false, "PrimaryImageHeight": 250,
-			"PrimaryImageWidth": 250, "ScrollDirection": "Horizontal", "ShowBackdrop": false,
-			"ShowSidebar": false, "IndexBy": "", "CustomPrefs": map[string]string{}, "Client": j.client.Client})
+		j.displayPreferences(j.path[1])
 	case post && j.is("displaypreferences", "*"):
-		w.WriteHeader(http.StatusNoContent)
+		j.keepDisplayPreferences(j.path[1])
 	case get && (j.is("items", "*", "instantmix") || j.is("items", "*", "similar") ||
 		j.is("albums", "*", "similar") || j.is("artists", "*", "similar") ||
 		j.is("albums", "*", "instantmix") || j.is("artists", "instantmix") ||
@@ -131,7 +141,13 @@ func (j *jellyfinRequest) query() jellyfin.Query {
 		GenreIDs:       ids(p["genreids"]),
 		Genres:         list(p["genres"], "|"),
 		SortBy:         list(p["sortby"], ","),
-		Favorites:      strings.EqualFold(p["isfavorite"], "true"),
+		Data:           j.data(),
+	}
+	if favorite, err := strconv.ParseBool(p["isfavorite"]); err == nil {
+		q.Favorite = &favorite
+	}
+	if played, err := strconv.ParseBool(p["isplayed"]); err == nil {
+		q.Played = &played
 	}
 	for _, year := range list(p["years"], ",") {
 		if n, err := strconv.Atoi(year); err == nil {
@@ -141,11 +157,18 @@ func (j *jellyfinRequest) query() jellyfin.Query {
 	for _, order := range list(p["sortorder"], ",") {
 		q.Descending = append(q.Descending, strings.EqualFold(order, "Descending"))
 	}
+	yes, no := true, false
 	for _, filter := range list(p["filters"], ",") {
-		// nothing was ever played, and nothing is a favorite
+		// a favorite is what Jellyfin calls a like as well
 		switch strings.ToLower(filter) {
-		case "isfavorite", "isplayed", "isresumable", "likes", "isfavoriteorlikes":
-			q.Favorites = true
+		case "isfavorite", "likes", "isfavoriteorlikes":
+			q.Favorite = &yes
+		case "isplayed":
+			q.Played = &yes
+		case "isunplayed":
+			q.Played = &no
+		case "isresumable":
+			q.Resumable = true
 		}
 	}
 	if len(q.Types) == 0 && strings.EqualFold(p["mediatypes"], "Audio") {
@@ -172,6 +195,23 @@ func (j *jellyfinRequest) latest() {
 		Types: []string{"MusicAlbum"}, Recursive: true, SortBy: []string{"DateCreated"},
 		Descending: []bool{true}, Limit: limit})
 	writeJSON(j.w, http.StatusOK, j.describer().Items(items))
+}
+
+// resume answers the tracks that are resumed where they were stopped, the
+// one played last first.
+func (j *jellyfinRequest) resume() {
+	q := j.query()
+	audio := func(kind string) bool { return strings.EqualFold(kind, "Audio") }
+	if media := list(j.params["mediatypes"], ","); len(media) > 0 && !slices.ContainsFunc(media, audio) ||
+		len(q.Types) > 0 && !slices.ContainsFunc(q.Types, audio) {
+		j.page(nil, 0, 0)
+		return
+	}
+	q.Types, q.Recursive, q.Resumable = []string{"Audio"}, true, true
+	if len(q.SortBy) == 0 {
+		q.SortBy, q.Descending = []string{"DatePlayed"}, []bool{true}
+	}
+	j.items(q)
 }
 
 func (j *jellyfinRequest) counts() {
@@ -374,20 +414,259 @@ func (j *jellyfinRequest) playbackInfo(id string) {
 	})
 }
 
-// userData answers marking an item a favorite, or played, as if it were
-// kept, which it is not.
+// jellyfinBodyLimit is the most of a body of a report or a view that is
+// read.
+const jellyfinBodyLimit = 64 << 10
+
+// playing takes a report of what a client plays, in the body Jellyfin gives
+// it: PlaybackStartInfo, PlaybackProgressInfo or PlaybackStopInfo.
+func (j *jellyfinRequest) playing(event string) {
+	var body struct {
+		ItemID        string `json:"ItemId"`
+		PositionTicks *int64
+	}
+	err := json.NewDecoder(io.LimitReader(j.r.Body, jellyfinBodyLimit)).Decode(&body)
+	if err != nil && !errors.Is(err, io.EOF) {
+		http.Error(j.w, "the body is not the JSON of a playback report", http.StatusBadRequest)
+		return
+	}
+	j.report(event, body.ItemID, body.PositionTicks)
+}
+
+// positionParam is where a client is in a track, as the older reports put
+// it in the query; nil when they do not.
+func (j *jellyfinRequest) positionParam() *int64 {
+	position, err := strconv.ParseInt(j.params["positionticks"], 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &position
+}
+
+// report takes a report of a client that started playing a track, is at a
+// position in it, or stopped. One of no track, as a client sends while it
+// plays nothing, is taken and forgotten.
+func (j *jellyfinRequest) report(event, id string, position *int64) {
+	if id == "" {
+		j.w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	t, ok := j.track(id)
+	if !ok {
+		return
+	}
+	report := jellyfin.Report{User: j.user.name, Device: j.client.DeviceID, Client: j.client.Client, Track: t}
+	if position != nil {
+		report.Position, report.HasPosition = time.Duration(*position)*100, true
+	}
+	listeners := j.s.jellyfin.listeners
+	var err error
+	switch event {
+	case "playing":
+		err = listeners.Started(report)
+	case "progress":
+		err = listeners.Progress(report)
+	case "stopped":
+		err = listeners.Stopped(report)
+	}
+	if err != nil {
+		j.s.log.Warn("jellyfin cannot keep what was played in the persistent data file", "user", j.user.name,
+			"file", t.Virtual(), "error", err)
+	}
+	j.w.WriteHeader(http.StatusNoContent)
+}
+
+// userData marks an item a favorite, or played, or takes that back. Marking
+// an album played marks its tracks.
 func (j *jellyfinRequest) userData(id string, set bool) {
 	item, ok := j.lookup(id)
 	if !ok {
 		return
 	}
-	data := jellyfin.UserData{Key: item.ItemID(), ItemID: item.ItemID()}
+	var err error
 	if strings.EqualFold(j.path[0], "userfavoriteitems") {
-		data.IsFavorite = set
+		_, err = j.s.jellyfin.listeners.Update(j.user.name, item.ItemID(),
+			func(r *jellyfin.Record) { r.Favorite = set })
 	} else {
-		data.Played = set
+		var date time.Time
+		if value := j.params["dateplayed"]; set && value != "" {
+			if date, err = jellyfinDate(value); err != nil {
+				http.Error(j.w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		err = j.markPlayed(item, set, date)
 	}
-	writeJSON(j.w, http.StatusOK, data)
+	if err != nil {
+		j.userDataFailed(item, err)
+		return
+	}
+	writeJSON(j.w, http.StatusOK, j.describer().UserData(item))
+}
+
+// itemUserData answers what is kept of the account and an item, and changes
+// it as UpdateUserItemDataDto says, field by field: what the body leaves out
+// stays as it is.
+func (j *jellyfinRequest) itemUserData(id string, update bool) {
+	item, ok := j.lookup(id)
+	if !ok {
+		return
+	}
+	if !update {
+		writeJSON(j.w, http.StatusOK, j.describer().UserData(item))
+		return
+	}
+	var body struct {
+		IsFavorite            *bool
+		Played                *bool
+		PlaybackPositionTicks *int64
+		PlayCount             *int
+		LastPlayedDate        *string
+	}
+	if err := json.NewDecoder(io.LimitReader(j.r.Body, jellyfinBodyLimit)).Decode(&body); err != nil {
+		http.Error(j.w, "the body is not the JSON of user data", http.StatusBadRequest)
+		return
+	}
+	var last time.Time
+	if body.LastPlayedDate != nil && *body.LastPlayedDate != "" {
+		var err error
+		if last, err = jellyfinDate(*body.LastPlayedDate); err != nil {
+			http.Error(j.w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	// what is played of an album, an artist or a genre is what is played
+	// of its tracks
+	if _, isTrack := item.(*jellyfin.Track); !isTrack && body.Played != nil {
+		if err := j.markPlayed(item, *body.Played, time.Time{}); err != nil {
+			j.userDataFailed(item, err)
+			return
+		}
+		body.Played = nil
+	}
+	_, err := j.s.jellyfin.listeners.Update(j.user.name, item.ItemID(), func(r *jellyfin.Record) {
+		if body.IsFavorite != nil {
+			r.Favorite = *body.IsFavorite
+		}
+		if body.Played != nil {
+			r.Played = *body.Played
+		}
+		if body.PlaybackPositionTicks != nil {
+			r.Position = max(*body.PlaybackPositionTicks, 0)
+		}
+		if body.PlayCount != nil {
+			r.PlayCount = max(*body.PlayCount, 0)
+		}
+		if body.LastPlayedDate != nil {
+			r.LastPlayed = last
+		}
+	})
+	if err != nil {
+		j.userDataFailed(item, err)
+		return
+	}
+	writeJSON(j.w, http.StatusOK, j.describer().UserData(item))
+}
+
+// markPlayed marks the tracks of an item played, on date when it is not
+// zero, or not played.
+func (j *jellyfinRequest) markPlayed(item jellyfin.Item, played bool, date time.Time) error {
+	tracks := jellyfin.TracksOf(item)
+	if played {
+		return j.s.jellyfin.listeners.MarkPlayed(j.user.name, tracks, date)
+	}
+	return j.s.jellyfin.listeners.MarkUnplayed(j.user.name, tracks)
+}
+
+func (j *jellyfinRequest) userDataFailed(item jellyfin.Item, err error) {
+	j.s.log.Warn("jellyfin cannot keep user data in the persistent data file", "user", j.user.name,
+		"item", item.ItemName(), "error", err)
+	http.Error(j.w, "the user data cannot be kept", http.StatusInternalServerError)
+}
+
+// jellyfinDate reads a date as a client sends one: in ISO 8601, with or
+// without its zone, which is UTC then.
+func jellyfinDate(value string) (time.Time, error) {
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.9999999", "2006-01-02"} {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("%q is not a date", value)
+}
+
+// preferencesKey is where the views a client sets for an id are kept: by
+// account, by id and by the client the query names, or the one that asks.
+func (j *jellyfinRequest) preferencesKey(id string) string {
+	client := j.params["client"]
+	if client == "" {
+		client = j.client.Client
+	}
+	return j.user.name + "\x00" + id + "\x00" + client
+}
+
+// displayPreferences answers the views a client set for an id, or those it
+// starts with.
+func (j *jellyfinRequest) displayPreferences(id string) {
+	var kept json.RawMessage
+	found, err := j.s.jellyfin.preferences.Get(j.preferencesKey(id), &kept)
+	if err != nil {
+		j.s.log.Warn("jellyfin cannot read display preferences from the persistent data file",
+			"user", j.user.name, "error", err)
+	}
+	if found {
+		writeJSON(j.w, http.StatusOK, kept)
+		return
+	}
+	writeJSON(j.w, http.StatusOK, map[string]any{"Id": id, "SortBy": "SortName", "SortOrder": "Ascending",
+		"RememberIndexing": false, "RememberSorting": false, "PrimaryImageHeight": 250,
+		"PrimaryImageWidth": 250, "ScrollDirection": "Horizontal", "ShowBackdrop": false,
+		"ShowSidebar": false, "IndexBy": "", "CustomPrefs": map[string]string{}, "Client": j.client.Client})
+}
+
+// keepDisplayPreferences keeps the views a client sets for an id, as it
+// sends them.
+func (j *jellyfinRequest) keepDisplayPreferences(id string) {
+	body, err := io.ReadAll(io.LimitReader(j.r.Body, jellyfinBodyLimit+1))
+	if err != nil {
+		http.Error(j.w, "the body cannot be read", http.StatusBadRequest)
+		return
+	}
+	if len(body) > jellyfinBodyLimit {
+		http.Error(j.w, "the display preferences are too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	var prefs map[string]any
+	if err := json.Unmarshal(body, &prefs); err != nil || prefs == nil {
+		http.Error(j.w, "the body is not the JSON of display preferences", http.StatusBadRequest)
+		return
+	}
+	if err := j.s.jellyfin.preferences.Put(j.preferencesKey(id), json.RawMessage(body)); err != nil {
+		j.s.log.Warn("jellyfin cannot keep display preferences in the persistent data file",
+			"user", j.user.name, "error", err)
+	}
+	j.w.WriteHeader(http.StatusNoContent)
+}
+
+// logout takes back the token the client logged out with, until it would
+// have run out. Without a persistent data file it cannot be: it stays good,
+// as a token did before there was one.
+func (j *jellyfinRequest) logout() {
+	claims, _ := j.s.jellyfinClaims(j.set, j.client.Token)
+	switch {
+	case claims == nil || claims.ID == "" || claims.ExpiresAt == nil:
+	case j.s.jellyfin.revoked == nil:
+		j.s.log.Debug("jellyfin logout without a persistent data file, the token stays good",
+			"user", j.user.name, "client", j.client.Client)
+	default:
+		if err := j.s.jellyfin.revoked.PutUntil(claims.ID, struct{}{}, claims.ExpiresAt.Time); err != nil {
+			j.s.log.Warn("jellyfin cannot keep a token logged out with in the persistent data file",
+				"user", j.user.name, "error", err)
+		}
+	}
+	j.s.log.Info("jellyfin logout", "user", j.user.name, "client", j.client.Client, "device", j.client.Device,
+		"address", clientAddress(j.set, j.r))
+	j.w.WriteHeader(http.StatusNoContent)
 }
 
 // list splits a parameter at any of seps, leaving out what is empty.

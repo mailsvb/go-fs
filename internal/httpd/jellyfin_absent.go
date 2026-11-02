@@ -2,7 +2,12 @@
 
 package httpd
 
-import "net/http"
+import (
+	"log/slog"
+	"net/http"
+
+	"github.com/mailsvb/go-fs/internal/store"
+)
 
 // A binary built without the Jellyfin music library, go-fs-light for one,
 // has no jellyfin repository, so no request is one of a Jellyfin client and
@@ -13,3 +18,7 @@ func isJellyfinRequest(*http.Request) bool { return false }
 func (s *Server) serveJellyfin(*settings, http.ResponseWriter, *http.Request) {}
 
 func (s *Server) warnAboutJellyfin(*settings) {}
+
+type jellyfinState struct{}
+
+func newJellyfinState(*store.Store, *slog.Logger) jellyfinState { return jellyfinState{} }

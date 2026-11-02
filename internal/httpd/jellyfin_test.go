@@ -5,6 +5,7 @@ package httpd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/audio/audiotest"
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/jellyfin"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // newJellyfinServer serves a library in /music of two albums: one of a band,
@@ -404,5 +406,210 @@ func TestJellyfinStreams(t *testing.T) {
 	album := library.Albums[0]
 	if res := jf(t, server, http.MethodGet, "/Audio/"+album.ID+"/stream", token, nil); res.StatusCode != http.StatusNotFound {
 		t.Errorf("an album was streamed: %d", res.StatusCode)
+	}
+}
+
+// jfSend sends a request of a Jellyfin client and answers its status.
+func jfSend(t *testing.T, server *testServer, method, path, token, body string) int {
+	t.Helper()
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	res := jf(t, server, method, path, token, reader)
+	_ = res.Body.Close()
+	return res.StatusCode
+}
+
+func TestJellyfinKeepsWhatWasPlayed(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "go-fs.db"), discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	server, _ := newJellyfinServer(t, func(cfg *httpConfig) { cfg.Store = st })
+	token := jfToken(t, server, "john", "doe")
+	tracks := "/Users/x/Items?IncludeItemTypes=Audio&Recursive=true&SortBy=SortName"
+	one := jfList(t, server, tracks, token).Items[0]
+	album := one.AlbumId
+	var item struct {
+		RunTimeTicks int64
+		UserData     jellyfin.UserData
+	}
+	decode(t, jf(t, server, http.MethodGet, "/Items/"+one.Id, token, nil), &item)
+	if item.RunTimeTicks == 0 || item.UserData.Played {
+		t.Fatalf("the track before it is played: %+v", item)
+	}
+
+	// played to the end, reported as Jellyfin reports it
+	for _, report := range []struct{ path, body string }{
+		{"/Sessions/Playing", `{"ItemId":"` + one.Id + `","PositionTicks":0}`},
+		{"/Sessions/Playing/Progress", fmt.Sprintf(`{"ItemId":"%s","PositionTicks":%d}`, one.Id, item.RunTimeTicks/2)},
+		{"/Sessions/Playing/Stopped", fmt.Sprintf(`{"ItemId":"%s","PositionTicks":%d}`, one.Id, item.RunTimeTicks)},
+	} {
+		if status := jfSend(t, server, http.MethodPost, report.path, token, report.body); status != http.StatusNoContent {
+			t.Fatalf("%s got %d", report.path, status)
+		}
+	}
+	decode(t, jf(t, server, http.MethodGet, "/Items/"+one.Id, token, nil), &item)
+	if !item.UserData.Played || item.UserData.PlayCount != 1 || item.UserData.LastPlayedDate == "" {
+		t.Errorf("the track after it was played: %+v", item.UserData)
+	}
+	if got := jfList(t, server, tracks+"&Filters=IsPlayed", token).names(); !slices.Equal(got, []string{"One"}) {
+		t.Errorf("played %q", got)
+	}
+	// the older reports, in the query
+	if status := jfSend(t, server, http.MethodPost, "/Users/x/PlayingItems/"+one.Id, token, ""); status != http.StatusNoContent {
+		t.Errorf("a legacy start got %d", status)
+	}
+	if status := jfSend(t, server, http.MethodDelete, fmt.Sprintf("/PlayingItems/%s?positionTicks=%d", one.Id,
+		item.RunTimeTicks), token, ""); status != http.StatusNoContent {
+		t.Errorf("a legacy stop got %d", status)
+	}
+	decode(t, jf(t, server, http.MethodGet, "/UserItems/"+one.Id+"/UserData", token, nil), &item.UserData)
+	if item.UserData.PlayCount != 2 {
+		t.Errorf("after a legacy report: %+v", item.UserData)
+	}
+	var played int
+	if err := server.jellyfin.listeners.History("john", time.Time{}, func(jellyfin.Play) error {
+		played++
+		return nil
+	}); err != nil || played != 2 {
+		t.Errorf("history of %d plays, %v", played, err)
+	}
+
+	// a favorite album, and taken back
+	var data jellyfin.UserData
+	decode(t, jf(t, server, http.MethodPost, "/Users/x/FavoriteItems/"+album, token, nil), &data)
+	if !data.IsFavorite || data.ItemID != album {
+		t.Errorf("favorite %+v", data)
+	}
+	albums := "/Items?IncludeItemTypes=MusicAlbum&Recursive=true&"
+	if got := jfList(t, server, albums+"IsFavorite=true", token).names(); !slices.Equal(got, []string{"First"}) {
+		t.Errorf("favorite albums %q", got)
+	}
+	if got := jfList(t, server, albums+"IsFavorite=false", token).names(); !slices.Equal(got, []string{"Solo"}) {
+		t.Errorf("other albums %q", got)
+	}
+	decode(t, jf(t, server, http.MethodDelete, "/UserFavoriteItems/"+album, token, nil), &data)
+	if got := jfList(t, server, albums+"Filters=IsFavorite", token).names(); len(got) != 0 || data.IsFavorite {
+		t.Errorf("favorite albums after one was taken back %q", got)
+	}
+
+	// an album marked played on a date marks its tracks
+	decode(t, jf(t, server, http.MethodPost, "/Users/x/PlayedItems/"+album+"?datePlayed=2026-01-02T03:04:05.000Z",
+		token, nil), &data)
+	if !data.Played || data.PlayCount != 4 || data.UnplayedItemCount == nil || *data.UnplayedItemCount != 0 ||
+		data.LastPlayedDate == "" {
+		t.Errorf("an album marked played %+v", data)
+	}
+	decode(t, jf(t, server, http.MethodDelete, "/UserPlayedItems/"+album, token, nil), &data)
+	if data.Played || data.PlayCount != 0 {
+		t.Errorf("an album marked unplayed %+v", data)
+	}
+	if status := jfSend(t, server, http.MethodPost, "/UserPlayedItems/"+album+"?datePlayed=yesterday", token, ""); status != http.StatusBadRequest {
+		t.Errorf("a date that is none got %d", status)
+	}
+
+	// a position set by hand is resumed from
+	decode(t, jf(t, server, http.MethodPost, "/UserItems/"+one.Id+"/UserData", token,
+		strings.NewReader(`{"PlaybackPositionTicks":1234}`)), &data)
+	if data.PlaybackPositionTicks != 1234 || data.Played {
+		t.Errorf("a position set %+v", data)
+	}
+	if got := jfList(t, server, "/UserItems/Resume?MediaTypes=Audio", token).names(); !slices.Equal(got, []string{"One"}) {
+		t.Errorf("resumed %q", got)
+	}
+	if got := jfList(t, server, "/UserItems/Resume?MediaTypes=Video", token).names(); len(got) != 0 {
+		t.Errorf("resumed videos %q", got)
+	}
+
+	// what is kept is the account's own
+	anna := jfToken(t, server, "anna", "secret")
+	decode(t, jf(t, server, http.MethodGet, "/Items/"+one.Id, anna, nil), &item)
+	if item.UserData.PlayCount != 0 || item.UserData.PlaybackPositionTicks != 0 {
+		t.Errorf("another account sees %+v", item.UserData)
+	}
+	solo := ""
+	for _, track := range jfList(t, server, tracks, token).Items {
+		if track.Name == "Solo song" {
+			solo = track.Id
+		}
+	}
+	if status := jfSend(t, server, http.MethodPost, "/Sessions/Playing", anna, `{"ItemId":"`+solo+`"}`); status != http.StatusNotFound {
+		t.Errorf("a report of a track the account may not read got %d", status)
+	}
+	if status := jfSend(t, server, http.MethodPost, "/UserFavoriteItems/"+solo, anna, ""); status != http.StatusNotFound {
+		t.Errorf("a favorite the account may not read got %d", status)
+	}
+	if status := jfSend(t, server, http.MethodPost, "/Sessions/Playing", token, "not json"); status != http.StatusBadRequest {
+		t.Errorf("a report that is not JSON got %d", status)
+	}
+}
+
+func TestJellyfinKeepsDisplayPreferences(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "go-fs.db"), discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	server, _ := newJellyfinServer(t, func(cfg *httpConfig) { cfg.Store = st })
+	token := jfToken(t, server, "john", "doe")
+	var prefs struct {
+		SortBy      string
+		CustomPrefs map[string]string
+	}
+	path := "/DisplayPreferences/usersettings?userId=x&client=emby"
+	if status := jfSend(t, server, http.MethodPost, path, token,
+		`{"Id":"usersettings","SortBy":"Album","CustomPrefs":{"homesection0":"latestmedia"}}`); status != http.StatusNoContent {
+		t.Fatalf("keeping preferences got %d", status)
+	}
+	decode(t, jf(t, server, http.MethodGet, path, token, nil), &prefs)
+	if prefs.SortBy != "Album" || prefs.CustomPrefs["homesection0"] != "latestmedia" {
+		t.Errorf("kept preferences %+v", prefs)
+	}
+	decode(t, jf(t, server, http.MethodGet, "/DisplayPreferences/usersettings?client=other", token, nil), &prefs)
+	if prefs.SortBy != "SortName" {
+		t.Errorf("another client's preferences %+v", prefs)
+	}
+	anna := jfToken(t, server, "anna", "secret")
+	decode(t, jf(t, server, http.MethodGet, path, anna, nil), &prefs)
+	if prefs.SortBy != "SortName" {
+		t.Errorf("another account's preferences %+v", prefs)
+	}
+	for _, body := range []string{"[1]", "null", "{"} {
+		if status := jfSend(t, server, http.MethodPost, path, token, body); status != http.StatusBadRequest {
+			t.Errorf("preferences of %s got %d", body, status)
+		}
+	}
+}
+
+func TestJellyfinLogout(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "go-fs.db"), discardLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	server, _ := newJellyfinServer(t, func(cfg *httpConfig) { cfg.Store = st })
+	token := jfToken(t, server, "john", "doe")
+	other := jfToken(t, server, "john", "doe")
+	if status := jfSend(t, server, http.MethodPost, "/Sessions/Logout", token, ""); status != http.StatusNoContent {
+		t.Fatalf("logout got %d", status)
+	}
+	if status := jfSend(t, server, http.MethodGet, "/System/Info", token, ""); status != http.StatusUnauthorized {
+		t.Errorf("a token logged out with got %d", status)
+	}
+	if status := jfSend(t, server, http.MethodGet, "/System/Info", other, ""); status != http.StatusOK {
+		t.Errorf("another token of the account got %d", status)
+	}
+
+	// without a persistent data file, a token cannot be taken back
+	plain, _ := newJellyfinServer(t, nil)
+	token = jfToken(t, plain, "john", "doe")
+	if status := jfSend(t, plain, http.MethodPost, "/Sessions/Logout", token, ""); status != http.StatusNoContent {
+		t.Fatalf("logout without a store got %d", status)
+	}
+	if status := jfSend(t, plain, http.MethodGet, "/System/Info", token, ""); status != http.StatusOK {
+		t.Errorf("a token logged out with, without a store, got %d", status)
 	}
 }

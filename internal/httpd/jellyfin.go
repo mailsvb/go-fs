@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/mailsvb/go-fs/internal/jellyfin"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // While there is a jellyfin repository, the server speaks enough of the API
@@ -39,9 +41,14 @@ import (
 // and is given a token, a JWT signed with the key of the session tokens for
 // an audience of its own. A Jellyfin client keeps its token for good, so it
 // lasts a year rather than a session; it stops being accepted when the
-// account changes its password. What the account may see is looked up on
-// every request: the tracks it may read, by its paths and its right to
-// retrieve files, and the albums, artists and genres of those.
+// account changes its password, or when the client logs out with it. What
+// the account may see is looked up on every request: the tracks it may read,
+// by its paths and its right to retrieve files, and the albums, artists and
+// genres of those.
+//
+// What a client reports it played, marks a favorite and sets of its views is
+// kept in the persistent data file, by account, so that every client of the
+// account sees it, also after a restart; see jellyfin.Listeners.
 const (
 	jellyfinTokenAudience = "go-fs-jellyfin"
 	jellyfinTokenLifetime = 365 * 24 * time.Hour
@@ -62,7 +69,7 @@ var jellyfinRoots = map[string]bool{"system": true, "users": true, "items": true
 	"artists": true, "genres": true, "musicgenres": true, "search": true, "sessions": true,
 	"userviews": true, "useritems": true, "userfavoriteitems": true, "userplayeditems": true,
 	"displaypreferences": true, "branding": true, "quickconnect": true, "library": true,
-	"playlists": true, "albums": true, "studios": true, "persons": true}
+	"playlists": true, "albums": true, "studios": true, "persons": true, "playingitems": true}
 
 // isJellyfinRequest reports whether a request comes from a Jellyfin client.
 func isJellyfinRequest(r *http.Request) bool {
@@ -106,6 +113,32 @@ func (s *Server) warnAboutJellyfin(set *settings) {
 			s.log.Warn("the Jellyfin API answers a few paths in the folder "+name+" of general.baseFolderFiles, "+
 				"which cannot be reached over http", "baseFolderFiles", s.root.Base())
 		}
+	}
+}
+
+// The buckets of the persistent data file the Jellyfin API keeps its own in,
+// beside those of jellyfin.Listeners.
+const (
+	// jellyfinPreferences are the views a client sets, by account, by the
+	// id the client gives them and by client.
+	jellyfinPreferences = "jellyfin.preferences"
+	// jellyfinRevoked are the ids of the tokens a client logged out with,
+	// each until it would have run out.
+	jellyfinRevoked = "jellyfin.revoked"
+)
+
+// jellyfinState is what the Jellyfin API keeps across requests.
+type jellyfinState struct {
+	listeners   *jellyfin.Listeners
+	preferences *store.Bucket
+	revoked     *store.Bucket
+}
+
+func newJellyfinState(st *store.Store, logger *slog.Logger) jellyfinState {
+	return jellyfinState{
+		listeners:   jellyfin.NewListeners(st, logger),
+		preferences: st.Bucket(jellyfinPreferences),
+		revoked:     st.Bucket(jellyfinRevoked),
 	}
 }
 
@@ -194,10 +227,29 @@ func (s *signer) mintJellyfin(user *account) (string, error) {
 
 // jellyfinUser resolves the token of a request to its account, nil for none
 // or one that is not accepted, including one whose account has gone or has
-// changed its password since.
+// changed its password since, and one a client logged out with.
 func (s *Server) jellyfinUser(set *settings, raw string) *account {
-	if raw == "" {
+	claims, user := s.jellyfinClaims(set, raw)
+	if user == nil {
 		return nil
+	}
+	revoked, err := s.jellyfin.revoked.Get(claims.ID, &struct{}{})
+	if err != nil {
+		s.log.Warn("jellyfin cannot read the tokens logged out with from the persistent data file",
+			"error", err)
+		return nil
+	}
+	if revoked {
+		return nil
+	}
+	return user
+}
+
+// jellyfinClaims reads a token, and resolves it to its account: nil, nil for
+// a token that is not accepted.
+func (s *Server) jellyfinClaims(set *settings, raw string) (*sessionClaims, *account) {
+	if raw == "" {
+		return nil, nil
 	}
 	claims := &sessionClaims{}
 	_, err := jellyfinParser.ParseWithClaims(raw, claims, func(token *jwt.Token) (any, error) {
@@ -207,13 +259,13 @@ func (s *Server) jellyfinUser(set *settings, raw string) *account {
 		return s.tokens.key, nil
 	})
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	user := accountNamed(set.accounts, claims.Subject)
 	if user == nil || !s.tokens.issuedFor(claims, user) {
-		return nil
+		return nil, nil
 	}
-	return user
+	return claims, user
 }
 
 // jellyfinID is an id of the form Jellyfin gives its ids, of something of
@@ -311,6 +363,8 @@ func jellyfinPath(p string) []string {
 			return append([]string{"UserFavoriteItems"}, parts[3:]...)
 		case "playeditems":
 			return append([]string{"UserPlayedItems"}, parts[3:]...)
+		case "playingitems":
+			return parts[2:]
 		}
 	}
 	return parts
@@ -406,7 +460,12 @@ func (j *jellyfinRequest) readable(virtual string) bool {
 }
 
 func (j *jellyfinRequest) describer() jellyfin.Describer {
-	return jellyfin.Describer{ServerID: j.s.jellyfinID("server")}
+	return jellyfin.Describer{ServerID: j.s.jellyfinID("server"), Data: j.data()}
+}
+
+// data is what is kept of the account and an item.
+func (j *jellyfinRequest) data() func(jellyfin.Item) jellyfin.Record {
+	return j.s.jellyfin.listeners.Data(j.user.name)
 }
 
 func (j *jellyfinRequest) serverName() string {

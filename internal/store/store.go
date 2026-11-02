@@ -171,7 +171,7 @@ type Bucket struct {
 	name  []byte
 }
 
-// Bucket is the bucket of the given name, "shares", "jellyfin.playstate" and
+// Bucket is the bucket of the given name, "shares", "jellyfin.userdata" and
 // the like: one per kind of record, named after the part that keeps it.
 func (s *Store) Bucket(name string) *Bucket {
 	if s == nil {

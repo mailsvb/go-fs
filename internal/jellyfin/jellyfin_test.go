@@ -179,7 +179,7 @@ func TestFind(t *testing.T) {
 		{"a page", Query{ParentID: l.ID, Start: 1, Limit: 2}, []string{"Mix", "Second"}},
 		{"past the end", Query{ParentID: l.ID, Start: 10}, []string{}},
 		{"some ids", Query{IDs: []string{l.Albums[2].ID, l.Tracks[0].ID}}, []string{"Second", "One"}},
-		{"favorites", Query{Types: []string{"Audio"}, Recursive: true, Favorites: true}, []string{}},
+		{"favorites", Query{Types: []string{"Audio"}, Recursive: true, Favorite: &yes}, []string{}},
 		{"an unknown parent", Query{ParentID: "nothing"}, []string{}},
 	}
 	for _, c := range cases {

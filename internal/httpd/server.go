@@ -126,6 +126,8 @@ type Server struct {
 	transferEvents transferEvents
 	// dav holds the locks of the WebDAV clients; see webdav.go.
 	dav davState
+	// jellyfin keeps what the Jellyfin clients played; see jellyfin.go.
+	jellyfin jellyfinState
 }
 
 // New prepares a server. The base folder has to exist and every configured
@@ -286,7 +288,9 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, 
 // admin interface edits; empty leaves the interface out. keys is where the
 // keys and the certificate the server generates for itself are kept, so that
 // they stay the same across a restart; nil keeps them for this run only.
-func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.User, bearers []config.Token, servers []config.Server, configPath string, keys *store.Bucket, logger *slog.Logger) (*Server, error) {
+// data is the persistent data file, where what Jellyfin clients played is
+// kept; nil keeps it for this run only.
+func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.User, bearers []config.Token, servers []config.Server, configPath string, keys *store.Bucket, data *store.Store, logger *slog.Logger) (*Server, error) {
 	root, err := vfs.New(cfg.Basefolder)
 	if err != nil {
 		return nil, fmt.Errorf("general.baseFolderFiles: %w", err)
@@ -330,6 +334,7 @@ func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.
 		logins:        newLoginTracker(),
 		done:          make(chan struct{}),
 		dav:           newDAVState(),
+		jellyfin:      newJellyfinState(data, logger),
 	}
 	if configPath != "" {
 		// built whether or not the switch is on: the switch is read from the

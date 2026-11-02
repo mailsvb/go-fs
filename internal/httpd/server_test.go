@@ -95,21 +95,21 @@ func TestNewRejectsBadConfiguration(t *testing.T) {
 
 	cfg := config.Default().HTTP
 	cfg.Basefolder = base + "/nope"
-	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, discardLogger()); err == nil {
+	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, nil, discardLogger()); err == nil {
 		t.Error("a missing base folder has to be refused")
 	}
 
 	cfg = config.Default().HTTP
 	cfg.Basefolder = base
 	cfg.PathsRequireAuth = []string{"([unclosed"}
-	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, discardLogger()); err == nil {
+	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, nil, discardLogger()); err == nil {
 		t.Error("a broken pathsRequireAuth pattern has to be refused")
 	}
 
 	cfg = config.Default().HTTP
 	cfg.Basefolder = base
 	users := []config.User{{Username: "john", Password: "doe", HTTP: true, Paths: []string{"([unclosed"}}}
-	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, users, nil, nil, "", nil, discardLogger()); err == nil {
+	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, users, nil, nil, "", nil, nil, discardLogger()); err == nil {
 		t.Error("a broken user path pattern has to be refused")
 	}
 }
@@ -118,7 +118,7 @@ func TestStartNeedsAListener(t *testing.T) {
 	cfg := config.Default().HTTP
 	cfg.Enabled = false
 	cfg.Basefolder = t.TempDir()
-	server, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, discardLogger())
+	server, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, nil, discardLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestGeneratedKeysAreKept(t *testing.T) {
 	cfg.Basefolder = t.TempDir()
 	build := func() *Server {
 		t.Helper()
-		server, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", keys, discardLogger())
+		server, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", keys, nil, discardLogger())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -160,7 +160,7 @@ func TestGeneratedKeysAreKept(t *testing.T) {
 	}
 
 	// without a store, each has keys of its own
-	other, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, discardLogger())
+	other, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, nil, discardLogger())
 	if err != nil {
 		t.Fatal(err)
 	}

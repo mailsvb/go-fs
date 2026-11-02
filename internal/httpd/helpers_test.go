@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/store"
 )
 
 // logStore collects the records a server writes.
@@ -128,6 +129,8 @@ type httpConfig struct {
 	// ConfigPath is the file the admin interface edits, empty for a server
 	// without one, which is what most tests want.
 	ConfigPath string
+	// Store is the persistent data file, nil for none.
+	Store *store.Store
 }
 
 // newServer starts a server on an ephemeral port. By default nothing is
@@ -163,7 +166,7 @@ func newServerWith(t *testing.T, tune func(*httpConfig), tuneTLS func(*config.HT
 	}
 
 	logs := &logStore{}
-	server, err := New(cfg.HTTP, https, cfg.SSH, cfg.Users, cfg.Tokens, cfg.Servers, cfg.ConfigPath, nil, slog.New(&recorder{store: logs}))
+	server, err := New(cfg.HTTP, https, cfg.SSH, cfg.Users, cfg.Tokens, cfg.Servers, cfg.ConfigPath, nil, cfg.Store, slog.New(&recorder{store: logs}))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

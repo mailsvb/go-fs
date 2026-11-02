@@ -154,7 +154,7 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	web, err := httpd.New(cfg.HTTP, cfg.HTTPS, cfg.General.SSH, cfg.HTTPServerUsers(), cfg.Tokens, cfg.Servers, "", nil, log)
+	web, err := httpd.New(cfg.HTTP, cfg.HTTPS, cfg.General.SSH, cfg.HTTPServerUsers(), cfg.Tokens, cfg.Servers, "", nil, nil, log)
 	if err != nil {
 		t.Fatalf("httpd.New: %v", err)
 	}

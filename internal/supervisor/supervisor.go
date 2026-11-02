@@ -89,7 +89,7 @@ var builtIn = []entry{
 		order:   orderHTTP,
 		enabled: func(e env) bool { return e.cfg.HTTP.Enabled || e.cfg.HTTPS.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			server, err := httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.cfg.UsableServers(), e.path, e.store.Bucket(keys), log)
+			server, err := httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.cfg.UsableServers(), e.path, e.store.Bucket(keys), e.store, log)
 			if err != nil {
 				return nil, err
 			}
