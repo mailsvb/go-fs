@@ -41,12 +41,13 @@ func TestDirectoryListing(t *testing.T) {
 		`<a href="/">..</a>`,            // the way back up
 		`<a href="deeper/">deeper/</a>`, // folders carry a trailing slash
 		`<a href="new.iso">new.iso</a>`, //
-		`<a href="old.txt">old.txt</a>`, //
-		"Folder",                        // the folder's Type cell
-		"ISO",                           // from the extension table
-		"Document",                      //
-		`<table id="listing"`,           // the listing this server renders
-		`data-folder="/sub/"`,           // what the script builds its requests from
+		// a file the browser can show opens in a tab of its own
+		`<a href="old.txt?go-fs=view" target="_blank" rel="noopener">old.txt</a>`,
+		"Folder",              // the folder's Type cell
+		"ISO",                 // from the extension table
+		"Document",            //
+		`<table id="listing"`, // the listing this server renders
+		`data-folder="/sub/"`, // what the script builds its requests from
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page is missing %q", want)
@@ -258,9 +259,9 @@ func TestListingEscapesNames(t *testing.T) {
 		t.Error("the name was not escaped into the page")
 	}
 	for _, want := range []string{
-		`href="a%20b&amp;c%3Cd%3E.txt"`,      // escaped for a URL, then for the attribute
-		`data-name="a b&amp;c&lt;d&gt;.txt"`, // what the script renames and deletes by
-		`a b&amp;c&lt;d&gt;.txt</a>`,         // the text of the link
+		`href="a%20b&amp;c%3Cd%3E.txt?go-fs=view"`, // escaped for a URL, then for the attribute
+		`data-name="a b&amp;c&lt;d&gt;.txt"`,       // what the script renames and deletes by
+		`a b&amp;c&lt;d&gt;.txt</a>`,               // the text of the link
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page is missing %q\ngot: %s", want, body)

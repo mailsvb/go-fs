@@ -212,6 +212,16 @@ func TestRemoteDownloadsAFileAndAFolder(t *testing.T) {
 	if !strings.Contains(res.Header.Get("Content-Disposition"), "report.txt") {
 		t.Errorf("the download is called %q", res.Header.Get("Content-Disposition"))
 	}
+	res = remoteDo(t, server, http.MethodGet, remoteAt(host, "docs/report.txt")+"&view=1", session, nil, nil)
+	if body := bodyOf(t, res); res.StatusCode != http.StatusOK || body != "0123456789" {
+		t.Fatalf("the view answered %d: %q", res.StatusCode, body)
+	}
+	if got := res.Header.Get("Content-Disposition"); got != `inline; filename="report.txt"` {
+		t.Errorf("the view is sent as %q", got)
+	}
+	if got := res.Header.Get("Content-Security-Policy"); got != viewPolicy {
+		t.Errorf("the view has the policy %q", got)
+	}
 	res = remoteDo(t, server, http.MethodGet, remoteAt(host, "docs/report.txt"), session, nil,
 		map[string]string{"Range": "bytes=2-4"})
 	if body := bodyOf(t, res); res.StatusCode != http.StatusPartialContent || body != "234" {

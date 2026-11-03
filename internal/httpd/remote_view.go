@@ -54,6 +54,9 @@ const (
 	remotePathParam   = "path"
 	// remoteArchiveParam asks for a folder as an archive.
 	remoteArchiveParam = "archive"
+	// remoteViewParam asks for a file to be shown, as actionView does on the
+	// served tree.
+	remoteViewParam = "view"
 )
 
 // remoteAction reports a request for a stored server.
@@ -318,6 +321,7 @@ func remotePlace(server, folder string) listingPlace {
 		link: func(item entry) string {
 			return remoteURL(server, path.Join(shown, item.bare()))
 		},
+		view: "&" + remoteViewParam + "=1",
 	}
 	if shown != "/" {
 		place.Parent = remoteURL(server, path.Dir(strings.TrimSuffix(shown, "/")))
@@ -401,8 +405,10 @@ func (s *Server) remoteDownload(set *settings, w http.ResponseWriter, r *http.Re
 	}
 	defer func() { _ = file.Close() }()
 	name := path.Base(q.path)
-	w.Header().Set("Content-Disposition", disposition(name))
-	w.Header().Set("Content-Type", typeOf(name).Media)
+	event := "http remote download"
+	if fileHeaders(w, name, r.URL.Query().Get(remoteViewParam) != "") {
+		event = "http remote view"
+	}
 	started := time.Now()
 	http.ServeContent(w, r, name, info.ModTime(), file)
 	if r.Method == http.MethodHead {
@@ -416,7 +422,7 @@ func (s *Server) remoteDownload(set *settings, w http.ResponseWriter, r *http.Re
 	if status != http.StatusOK && status != http.StatusPartialContent {
 		return
 	}
-	s.log.Info("http remote download", "user", q.user.name, "file", q.logged(q.path),
+	s.log.Info(event, "user", q.user.name, "file", q.logged(q.path),
 		"bytes", sent, "size", info.Size(), "status", status, "address", clientAddress(set, r),
 		"took", time.Since(started).Round(time.Millisecond))
 }

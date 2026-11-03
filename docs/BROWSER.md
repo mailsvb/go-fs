@@ -126,6 +126,28 @@ Once an hour, what has been in the trash longer than `general.trashRetentionDays
 deleted on the page. When each path was deleted is kept in
 `<trash>/.go-fs-trash.json`.
 
+## Viewing a file
+
+Clicking the name of a PDF or a plain-text file in the listing opens it in a
+new tab instead of downloading it: `.pdf`, `.txt`, `.log`, `.md`, `.csv`, `.tsv`,
+`.ini`, `.conf`, `.cfg`, `.yaml`, `.yml`, `.toml`, `.json`, `.xml`, `.sh` and
+`.properties`. Any other file is downloaded when its name is clicked, as before,
+and **Download** in a row's menu always downloads, whatever the type.
+
+The endpoint is `?go-fs=view` on the file (`&view=1` in the listing of a stored
+server). It needs the right a download needs, answers ranges the way a download
+does, and is logged as `http view`. Without it a `GET` is the download it always
+was, so programs see no difference. A type not in the list is downloaded even
+when a view is asked for.
+
+A file is shown from the listing's own origin, which carries the session. So
+what is shown must never run script there: an uploaded `.html` or `.svg` that
+did would act as whoever opened it. Text is therefore always sent as
+`text/plain; charset=utf-8`, even `.json` and `.xml`, and markup is not viewed at
+all. Every view also carries `X-Content-Type-Options: nosniff` and
+`Content-Security-Policy: sandbox; default-src 'none'`, which gives the document
+an origin of its own. Browsers show a PDF in that sandbox as they do without it.
+
 ## Downloading a folder
 
 **Download** on a folder in the listing saves the whole folder as

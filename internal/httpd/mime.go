@@ -71,6 +71,41 @@ var contentTypes = map[string]contentType{
 	".rpm": {"application/x-rpm", "RPM"},
 }
 
+// viewTypes are the files a browser is shown rather than handed, by the media
+// type they are shown as. Text is all sent as text/plain, whatever it is, so
+// that nothing uploaded is rendered as a page: an .xml is not styled into one,
+// and markup is left out entirely. A page from the served tree would run its
+// script with the listing's origin, and so with the session of whoever opened
+// it.
+var viewTypes = map[string]string{
+	".pdf": "application/pdf",
+
+	".txt":        textView,
+	".log":        textView,
+	".md":         textView,
+	".csv":        textView,
+	".tsv":        textView,
+	".ini":        textView,
+	".conf":       textView,
+	".cfg":        textView,
+	".yaml":       textView,
+	".yml":        textView,
+	".toml":       textView,
+	".json":       textView,
+	".xml":        textView,
+	".sh":         textView,
+	".properties": textView,
+}
+
+const textView = "text/plain; charset=utf-8"
+
+// viewTypeOf reports the media type a name is shown as, and whether it is
+// shown at all.
+func viewTypeOf(name string) (string, bool) {
+	media, ok := viewTypes[strings.ToLower(filepath.Ext(name))]
+	return media, ok
+}
+
 // typeOf reports the content type of a name, falling back to a generic one.
 func typeOf(name string) contentType {
 	if found, ok := contentTypes[strings.ToLower(filepath.Ext(name))]; ok {

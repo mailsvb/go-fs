@@ -114,8 +114,10 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 	defer func() { _ = file.Close() }()
 
 	name := filepath.Base(target.Path)
-	w.Header().Set("Content-Disposition", disposition(name))
-	w.Header().Set("Content-Type", typeOf(name).Media)
+	event := "http download"
+	if fileHeaders(w, name, r.URL.Query().Get(sessionParam) == actionView) {
+		event = "http view"
+	}
 	// ServeContent adds Content-Length and, unlike the Node implementation,
 	// answers a range request, so a large download can be resumed
 	started := time.Now()
@@ -130,14 +132,42 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 				"status", recorder.status, "method", r.Method)
 			return
 		}
-		s.log.Info("http download", "user", nameOf(user), "file", target.Virtual,
+		s.log.Info(event, "user", nameOf(user), "file", target.Virtual,
 			"bytes", recorder.bytes, "size", info.Size(), "status", recorder.status,
 			"address", clientAddress(set, r), "took", time.Since(started).Round(time.Millisecond))
 		return
 	}
-	s.log.Info("http download", "user", nameOf(user), "file", target.Virtual,
+	s.log.Info(event, "user", nameOf(user), "file", target.Virtual,
 		"bytes", info.Size(), "address", clientAddress(set, r))
 }
+
+// actionView is the marker on a file that asks for it to be shown in the
+// browser rather than downloaded. The listing links the names of the files it
+// can show to it; a file it cannot show is downloaded as without it.
+const actionView = "view"
+
+// fileHeaders sets what a file is sent with, and reports whether it is sent
+// to be viewed: only when view asks for that and the type is one viewTypes
+// lists. A view is locked down so that what it shows can never act on the
+// origin it came from: nosniff keeps the browser to the type it was given,
+// and the policy puts the document in a sandbox of an origin of its own,
+// which a PDF viewer runs in as well.
+func fileHeaders(w http.ResponseWriter, name string, view bool) bool {
+	header := w.Header()
+	header.Set("X-Content-Type-Options", "nosniff")
+	if media, ok := viewTypeOf(name); ok && view {
+		header.Set("Content-Disposition", dispositionAs("inline", name))
+		header.Set("Content-Type", media)
+		header.Set("Content-Security-Policy", viewPolicy)
+		return true
+	}
+	header.Set("Content-Disposition", disposition(name))
+	header.Set("Content-Type", typeOf(name).Media)
+	return false
+}
+
+// viewPolicy is the Content-Security-Policy of a file that is viewed.
+const viewPolicy = "sandbox; default-src 'none'"
 
 // handlePut stores an uploaded file. A body of octet-stream, or one without a
 // Content-Type, is the file; a multipart body carries it in a part. Folders
@@ -647,6 +677,12 @@ func isClientGone(err error) bool {
 // in the RFC 5987 form, which is how a client that understands it gets the
 // real name back.
 func disposition(name string) string {
+	return dispositionAs("attachment", name)
+}
+
+// dispositionAs is disposition with the type given: attachment for a download,
+// inline for a file the browser is to show.
+func dispositionAs(kind, name string) string {
 	plain := make([]rune, 0, len(name))
 	exact := true
 	for _, r := range name {
@@ -662,7 +698,7 @@ func disposition(name string) string {
 		}
 	}
 	quoted := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(string(plain))
-	header := `attachment; filename="` + quoted + `"`
+	header := kind + `; filename="` + quoted + `"`
 	if exact {
 		return header
 	}

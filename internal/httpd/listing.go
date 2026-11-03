@@ -308,9 +308,12 @@ type column struct {
 }
 
 type listingRow struct {
-	Name     string
-	Label    string
-	Link     string
+	Name  string
+	Label string
+	Link  string
+	// View says Link shows the file rather than downloads it, which opens it
+	// in a tab of its own.
+	View     bool
 	IsDir    bool
 	Group    string
 	Bytes    int64
@@ -428,6 +431,9 @@ type listingPlace struct {
 	Error string
 	// link is where a row leads.
 	link func(item entry) string
+	// view is what the link of a file is given to show it rather than
+	// download it.
+	view string
 }
 
 // localPlace is a folder of the served tree, whose rows are relative links.
@@ -440,6 +446,7 @@ func localPlace(virtual string) listingPlace {
 		link: func(item entry) string {
 			return (&url.URL{Path: item.Name}).String()
 		},
+		view: "?" + sessionParam + "=" + actionView,
 	}
 }
 
@@ -467,6 +474,9 @@ func listingPage(place listingPlace, entries []entry, order sortOrder, allowed r
 			// a folder has no size worth showing, but it does have a date, and
 			// without it the date column could not be sorted on
 			row.Size = "—"
+		} else if _, ok := viewTypeOf(item.Name); ok {
+			row.Link += place.view
+			row.View = true
 		}
 		rows = append(rows, row)
 	}
