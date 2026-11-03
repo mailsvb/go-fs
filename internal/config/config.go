@@ -1234,8 +1234,8 @@ func Save(path string, cfg Config) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// exampleSecrets are the passwords this project prints in its own README and
-// starter configuration. One of them in a live file is not a password at all:
+// exampleSecrets are the passwords this project prints in its own
+// documentation and starter configuration. One of them in a live file is not a password at all:
 // it is on every page anyone reads before installing this.
 var exampleSecrets = map[string]bool{"admin": true, "doe": true, "mustermann": true}
 

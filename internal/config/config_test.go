@@ -1042,8 +1042,8 @@ func TestArtifactoryURL(t *testing.T) {
 }
 
 // go-fs.example.toml in the repository root is the same file the binary embeds
-// and -init writes, which is what the README says it is. Nothing copies one to
-// the other, so this is what stops them drifting apart — an example that still
+// and -init writes, which is what the documentation says it is. Nothing copies
+// one to the other, so this is what stops them drifting apart — an example that still
 // held live accounts after the template stopped would be worse than no example
 // at all.
 func TestTheExampleFileIsTheTemplate(t *testing.T) {

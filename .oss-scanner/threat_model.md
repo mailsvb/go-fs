@@ -5,8 +5,8 @@ HTTP and HTTPS with a browser interface, an S3 compatible API, an OCI container
 registry, rpm and F-Droid package repositories, and TFTP, all configured from
 one TOML file that an admin web interface can edit. It is run on servers and
 reachable from untrusted networks, so every listener takes untrusted input.
-README.md documents the behaviour each server promises; treat a deviation from
-it that crosses a trust boundary as a finding.
+README.md and docs/ document the behaviour each server promises; treat a
+deviation from it that crosses a trust boundary as a finding.
 
 ## Who is trusted
 
@@ -39,7 +39,8 @@ it that crosses a trust boundary as a finding.
   credential kinds (the admin interface and self-update refuse Basic/Digest),
   algorithm or signature confusion, timing leaks (`internal/secrets`), login
   rate limiting and lockout bypass, and `trustedProxies` spoofing of the client
-  address. Every operation must need exactly the rights in README's table.
+  address. Every operation must need exactly the rights in the table in
+  docs/CONFIGURATION.md#accounts.
 - **Self-update** (`internal/selfupdate`, `internal/httpd/update.go`): an
   `.update` file must be accepted only with a valid ed25519 signature by a key
   the binary trusts; anything that installs or executes unsigned or
@@ -112,7 +113,7 @@ it that crosses a trust boundary as a finding.
   disk exhaustion, holding every slot); login rate limit bypass; information
   disclosure of file names or metadata outside an account's scope.
 - **Low:** the same needing an authenticated account, or a non-default
-  configuration that README warns about.
+  configuration that the docs warn about.
 
 ## Reports
 
