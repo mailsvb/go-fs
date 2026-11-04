@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>Player</title>
+<link rel="stylesheet" href="videojs/video-js.min.css">
+<link rel="stylesheet" href="player.css">
+<script type="module" src="player.js"></script>
+</head>
+<body>
+<svg class="icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+</svg>
+<div class="track">
+  <svg class="ic note"><use href="#i-music"/></svg>
+  <div class="about">
+    <span class="name" id="name">Nothing playing</span>
+    <span class="where" id="where" role="status"></span>
+  </div>
+</div>
+<div class="controls" id="controls">
+  <audio id="audio" class="video-js" preload="auto"></audio>
+</div>
+<button class="plain icon" id="close" type="button" title="Close the player"><svg class="ic"><use href="#i-close"/></svg></button>
+</body>
+</html>

@@ -55,14 +55,94 @@ export function openLink(href) {
   }
 }
 
-// stylesheet adds the style of a library to the page, once.
+// stylesheet adds the style of a library to the page, once, also when the
+// page already links it by a relative path.
 export function stylesheet(href) {
-  const url = String(href);
-  if (document.querySelector('link[rel="stylesheet"][href="' + CSS.escape(url) + '"]')) {
+  const url = new URL(String(href), document.baseURI).href;
+  if ([...document.querySelectorAll('link[rel="stylesheet"]')].some((link) => link.href === url)) {
     return;
   }
   const link = document.createElement("link");
   link.rel = "stylesheet";
   link.href = url;
   document.head.append(link);
+}
+
+// script runs a script that is not a module but sets a global, once.
+export function script(href) {
+  const url = String(href);
+  const there = document.querySelector('script[src="' + CSS.escape(url) + '"]');
+  if (there) {
+    return there.loaded;
+  }
+  const element = document.createElement("script");
+  element.src = url;
+  element.loaded = new Promise((resolve, reject) => {
+    element.onload = resolve;
+    element.onerror = () => reject(new Failure("The player could not be loaded."));
+  });
+  document.head.append(element);
+  return element.loaded;
+}
+
+const videojsBase = new URL("../videojs/", import.meta.url);
+
+// videojs loads Video.js and its style, and resolves to it.
+export async function videojs() {
+  stylesheet(new URL("video-js.min.css", videojsBase));
+  if (!window.videojs) {
+    await script(new URL("video.core.min.js", videojsBase));
+  }
+  return window.videojs;
+}
+
+// mediaKeys are the keys a player answers besides its own: the arrows seek
+// and change the volume, as in every player
+export function mediaKeys(event) {
+  const player = this;
+  switch (event.key) {
+    case " ":
+    case "k":
+    case "K":
+      event.preventDefault();
+      if (player.paused()) {
+        player.play();
+      } else {
+        player.pause();
+      }
+      break;
+    case "m":
+    case "M":
+      event.preventDefault();
+      player.muted(!player.muted());
+      break;
+    case "f":
+    case "F":
+      if (player.isAudio && player.isAudio()) {
+        return;
+      }
+      event.preventDefault();
+      if (player.isFullscreen()) {
+        player.exitFullscreen();
+      } else {
+        player.requestFullscreen();
+      }
+      break;
+    case "ArrowLeft":
+      event.preventDefault();
+      player.currentTime(Math.max(0, player.currentTime() - 5));
+      break;
+    case "ArrowRight":
+      event.preventDefault();
+      player.currentTime(Math.min(player.duration() || Infinity, player.currentTime() + 5));
+      break;
+    case "ArrowUp":
+      event.preventDefault();
+      player.volume(Math.min(1, player.volume() + 0.1));
+      break;
+    case "ArrowDown":
+      event.preventDefault();
+      player.volume(Math.max(0, player.volume() - 0.1));
+      break;
+  }
 }

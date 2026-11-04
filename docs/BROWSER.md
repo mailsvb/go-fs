@@ -140,6 +140,7 @@ binary, so nothing is fetched from anywhere but go-fs:
 | `.csv`, `.tsv` | the same, as a sheet whose every field is the text it is |
 | text and source code: `.txt`, `.log`, `.md`, `.ini`, `.conf`, `.yaml`, `.json`, `.xml`, `.html`, `.css`, `.sh`, `.go`, `.js`, `.ts`, `.py`, `.java`, `.c`, `.cs`, `.rs`, `.sql` and many more, and `Makefile`, `Dockerfile`, `README`, `LICENSE` and the like | [Ace](https://ace.c9.io), read only, coloured by the type of the file |
 | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp` | the browser |
+| `.mp4`, `.m4v`, `.webm`, `.ogv`, `.mov`, `.mkv` | [Video.js](https://videojs.com), played by the browser (see [Playing audio and video](#playing-audio-and-video)) |
 
 Whatever draws it, the window looks the same: the name, the page or slide it is
 at, or the sheet, the zoom with *Fit to width* and *Fit the page*, **Download**
@@ -167,6 +168,52 @@ way a download does, and is logged as `http view`. Without the marker a `GET` is
 the download it always was, so programs see no difference. A PDF or a text file
 asked for with it is sent to be shown in the tab; any other type is sent as a
 download, which the viewer reads all the same.
+
+### Playing audio and video
+
+A video opens in the same window as any other file, filling it, and starts
+playing; audio plays in a bar at the bottom of the window instead, which stays
+there while you browse other folders. Both are played by the browser itself,
+with [Video.js](https://videojs.com) for the controls: nothing is converted,
+so what plays is what the browser can play, and the listing asks it before it
+offers a file. Whatever it cannot play is downloaded when its name is clicked,
+as before.
+
+| Kind | Files | Usually played by |
+|---|---|---|
+| Video | `.mp4`, `.m4v`, `.webm`, `.ogv`, `.mov`, `.mkv` | every current browser for H.264 or VP9 in `.mp4` and `.webm`; `.mov` and `.mkv` where the browser takes them, which for H.264 is Chrome, Edge and Safari for `.mov`, and Chrome and Edge for `.mkv` |
+| Audio | `.mp3`, `.m4a`, `.aac`, `.ogg`, `.oga`, `.opus`, `.flac`, `.wav`, `.weba` | every current browser; Safari takes `.ogg` and `.opus` only in recent versions |
+
+An `.avi`, `.wmv` or `.flv` is never offered, since no browser plays them. A
+file whose container the browser takes but whose codec it does not, an `.mp4`
+with H.265 in a browser without it for one, says that the browser cannot play
+it, with **Download** offered instead.
+
+**Video** has play and pause, the time, a progress bar to seek on, the speed,
+the volume, picture in picture and full screen. Space or K plays and pauses,
+←/→ seek 5 seconds, ↑/↓ change the volume, M mutes, F goes full screen, and
+Escape closes the window.
+
+**Audio** starts with the file you clicked; the other audio files of that
+folder, in the order the listing shows them and without those the filter
+hides, become the queue. The bar shows the name and where it is in the queue,
+with previous, play and pause, next, the time, a progress bar, the speed and
+the volume, and moves on to the next file when one ends. Previous goes back to
+the start of the file once it has played a few seconds, and to the one before
+otherwise. A file that does not play is passed over. Clicking another audio
+file starts a new queue from its folder. The × closes the bar.
+
+While the bar plays you can browse: open folders, go back and forward with the
+browser, upload, rename and delete, and the music goes on. The first time the
+page would otherwise be left, it keeps itself and shows the next page in a
+frame above the bar, and the address bar and the title follow that frame, so
+a link copied from the address bar is the folder you are in. Reloading the
+page, closing the tab or logging out stops the music. A video opened while
+audio plays pauses it.
+
+A video is not read into the page whole, as a document is: the browser asks
+for the parts it plays and seeks to as ranges of `?go-fs=view`, each of which
+is logged as an `http view`.
 
 ### Editing a text file
 
@@ -211,8 +258,10 @@ an origin of its own. Browsers show a PDF in that sandbox as they do without it.
 
 The viewer itself is a page of go-fs in a frame of the listing, with a policy of
 its own: script only from go-fs, with WebAssembly for the parsers of the
-libraries, and no fetch, image or font from any other host. The editor runs no
-workers and lays out text as text. A document that
+libraries, and no fetch, image, font or media from any other host. The editor runs no
+workers and lays out text as text. The bar that plays audio is a page of the
+viewer as well, with the same policy, and plays only files of go-fs; while it
+plays, the listing shows the pages one browses to in a frame of its own origin. A document that
 got a library to write markup still could not run script, and it reaches
 nothing outside go-fs.
 
@@ -234,11 +283,12 @@ go-fs reserved it, keeps it as it is; go-fs says so in its log when it starts.
 The libraries go-fs embeds are [pdf.js](https://github.com/mozilla/pdf.js)
 under the Apache License 2.0 and the
 [Office Open XML Viewer](https://github.com/yukiyokotani/office-open-xml-viewer)
-under the MIT License, with the fonts and parsers they bring, and
-[Ace](https://github.com/ajaxorg/ace) under the BSD 3-Clause License. Their
-licenses are served beside them, at `/.go-fs/viewer/<build>/pdfjs/LICENSE`,
-`/.go-fs/viewer/<build>/ooxml/LICENSE` with `THIRD_PARTY_NOTICES.md` and
-`/.go-fs/viewer/<build>/ace/LICENSE`, and
+under the MIT License, with the fonts and parsers they bring,
+[Ace](https://github.com/ajaxorg/ace) under the BSD 3-Clause License, and
+[Video.js](https://github.com/videojs/video.js) under the Apache License 2.0.
+Their licenses are served beside them, at `/.go-fs/viewer/<build>/pdfjs/LICENSE`,
+`/.go-fs/viewer/<build>/ooxml/LICENSE` with `THIRD_PARTY_NOTICES.md`,
+`/.go-fs/viewer/<build>/ace/LICENSE` and `/.go-fs/viewer/<build>/videojs/LICENSE`, and
 `/.go-fs/viewer/<build>/VERSIONS` says which versions the build has.
 
 ## Downloading a folder

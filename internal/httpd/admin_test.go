@@ -244,6 +244,10 @@ func TestTheMenuOffersTheOtherPagesInOrder(t *testing.T) {
 	if strings.Contains(listing, `</svg>Files</a>`) {
 		t.Error("the listing links to itself")
 	}
+	// logging out leaves the shell a listing plays audio in, if it is in one
+	if !strings.Contains(listing, `action="/?go-fs=logout" target="_top">`) {
+		t.Error("the listing logs out inside its frame")
+	}
 
 	registry := bodyOf(t, withSession(t, server, http.MethodGet, "/?go-fs=registry", root))
 	inOrder("registry", registry, `<summary class="plain" title="Registry" aria-label="Registry"><svg class="ic"><use href="#i-box"/></svg><span class="label">Registry<`,
@@ -259,6 +263,9 @@ func TestTheMenuOffersTheOtherPagesInOrder(t *testing.T) {
 	admin := bodyOf(t, withSession(t, server, http.MethodGet, "/?go-fs=admin", root))
 	inOrder("admin", admin, `<summary class="plain"><svg class="ic"><use href="#i-gear"/></svg>Admin<`,
 		`</svg>Files</a>`, `<a href="/?go-fs=registry">`, `<a href="/?go-fs=trash">`, `</svg>Log out root</button>`)
+	if !strings.Contains(admin, `target="_top"><button type="submit">`) {
+		t.Error("the admin page logs out inside its frame")
+	}
 
 	// without a registry the admin page offers none
 	plain := adminServer(t, nil)

@@ -35,12 +35,16 @@ var contentTypes = map[string]contentType{
 	".opus": {"audio/ogg", "Audio"},
 	".oga":  {"audio/ogg", "Audio"},
 	".aac":  {"audio/aac", "Audio"},
+	".weba": {"audio/webm", "Audio"},
 
 	// Video
 	".mp4":  {"video/mp4", "Video"},
 	".webm": {"video/webm", "Video"},
 	".avi":  {"video/x-msvideo", "Video"},
 	".mov":  {"video/quicktime", "Video"},
+	".m4v":  {"video/mp4", "Video"},
+	".ogv":  {"video/ogg", "Video"},
+	".mkv":  {"video/x-matroska", "Video"},
 
 	// Documents
 	".txt":  {"text/plain", "Document"},

@@ -60,7 +60,7 @@
     {{end}}
     {{range .Entries}}
     <tr data-name="{{.Name}}" data-dir="{{.Group}}" data-size="{{.Bytes}}" data-time="{{.Unix}}" data-kind="{{.Kind}}"{{if .EditSrc}} data-edit="{{.EditSrc}}"{{end}}{{if (or (and .IsDir $.Rights.DeleteFolder) (and (not .IsDir) $.Rights.DeleteFile))}} data-delete="1"{{end}}>
-      <td><span class="name"><svg class="ic{{if .IsDir}} dir{{end}}"><use href="{{if .IsDir}}#i-folder{{else}}#i-file{{end}}"/></svg>{{if or .IsDir $.Rights.Download}}<a href="{{.Link}}"{{if .View}} target="_blank" rel="noopener"{{end}}{{if and $.Viewer .Viewer}} data-viewer="{{.Viewer}}" data-viewer-src="{{.ViewerSrc}}"{{end}}>{{.Label}}</a>{{else}}<span>{{.Label}}</span>{{end}}</span></td>
+      <td><span class="name"><svg class="ic{{if .IsDir}} dir{{end}}"><use href="{{if .IsDir}}#i-folder{{else}}#i-file{{end}}"/></svg>{{if or .IsDir $.Rights.Download}}<a href="{{.Link}}"{{if .View}} target="_blank" rel="noopener"{{end}}{{if and $.Viewer .Viewer}} data-viewer="{{.Viewer}}" data-viewer-src="{{.ViewerSrc}}"{{if .ViewerType}} data-viewer-type="{{.ViewerType}}"{{end}}{{end}}>{{.Label}}</a>{{else}}<span>{{.Label}}</span>{{end}}</span></td>
       <td class="meta c-mod">{{.Modified}}</td>
       <td class="meta c-kind">{{.Kind}}</td>
       <td class="meta num c-size">{{.Size}}</td>
@@ -289,7 +289,7 @@
 {{if .Viewer}}
 <!-- the document viewer, which a name it shows opens over the page; its page
      is of this origin, with a policy of its own -->
-<dialog id="viewer" class="viewer" data-page="{{.Viewer}}" aria-label="Viewer">
+<dialog id="viewer" class="viewer" data-page="{{.Viewer}}"{{if .Player}} data-player="{{.Player}}"{{end}} aria-label="Viewer">
   <iframe title="Viewer"></iframe>
 </dialog>
 {{end}}

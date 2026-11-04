@@ -25,8 +25,9 @@ platform Go supports builds with a plain `GOOS=… GOARCH=… go build .`.
 ## The libraries of the document viewer
 
 The document viewer of the web interface (see [Viewing a file](BROWSER.md#viewing-a-file))
-draws files with pdf.js, the Office Open XML Viewer and Ace, the editor text is
-shown and edited in, which the binary embeds.
+draws files with pdf.js, the Office Open XML Viewer, Ace, the editor text is
+shown and edited in, and Video.js, which plays audio and video, which the
+binary embeds.
 They are not committed: `go run ./tools/viewer`, which `make viewer-deps` runs and
 every build and test target of the Makefile runs first, fetches them from npm
 into `internal/httpd/viewer/libs/`. Only `internal/httpd/viewer/libraries.lock` is
@@ -48,7 +49,11 @@ that is already there costs nothing.
 
 `go run ./tools/viewer -update` (`make viewer-update`) pins the version npm tags
 `latest` of each library, says what changed, and fetches it; an update is a
-change to the lock file alone, which is reviewed as one.
+change to the lock file alone, which is reviewed as one. Video.js follows the
+tag `latest-8` instead: the package npm tags `latest` is a stub of version 10,
+which only throws, and version 10 is a different player in other packages.
+Of Video.js only its core build is embedded, without the streaming of HLS and
+DASH, since go-fs plays files as they are.
 `go run ./tools/viewer -check` fails unless what is fetched is what the lock file
 pins, which the release workflow runs before it builds.
 

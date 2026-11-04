@@ -63,15 +63,22 @@ deviation from it that crosses a trust boundary as a finding.
 - **Document viewer** (`internal/httpd/viewer`): the listing opens a file in a
   frame of the same origin, where pdf.js and the Office Open XML Viewer parse
   the bytes of uploaded PDF, Word, Excel and PowerPoint files, Ace shows and
-  edits text (saving it with a `PUT` the overwrite right governs), and the
-  browser decodes images. The libraries are fetched at build time by `tools/viewer`
+  edits text (saving it with a `PUT` the overwrite right governs), the
+  browser decodes images, and plays audio and video through Video.js, which
+  streams them by range from `?go-fs=view`. Audio plays in a bar, a page of the
+  viewer in a frame of the listing; while it plays, the listing turns into a
+  shell that shows the pages browsed to in a same-origin frame above the bar,
+  and the bar, the shell and the listing in it talk by `postMessage`, each
+  checking the origin and the window of the other. The libraries are fetched at build time by `tools/viewer`
   and must match the sha512 `internal/httpd/viewer/libraries.lock` pins. The
   page is served below `/.go-fs/viewer/` under `Content-Security-Policy`
   allowing script from this origin only, with `'wasm-unsafe-eval'`, no inline
-  script and no other host for anything. A crafted document that runs script
-  in that frame, which would act with the session of whoever opened it, reaches
-  another host, opens a `javascript:` or same-origin link, or a page of the
-  served tree that is rendered as HTML or SVG anywhere, is a finding.
+  script and no other host for anything, media included. A crafted document
+  or media file that runs script in that frame, which would act with the
+  session of whoever opened it, reaches another host, opens a `javascript:` or
+  same-origin link, or a page of the served tree that is rendered as HTML or
+  SVG anywhere, is a finding, and so is a message that makes the bar play a
+  file of another host or the shell show a page of another origin.
 - **Secrets at rest**: stored server passwords and Cryptomator vaults
   (`internal/cryptomator`, in go-fs only) must not be readable without their keys; secrets in
   the configuration must not leak into logs, listings or API answers.

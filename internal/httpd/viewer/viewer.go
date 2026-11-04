@@ -3,8 +3,10 @@
 // Package viewer is the document viewer of the web interface: the page the
 // listing opens over itself to show a file in the browser, and the libraries
 // it draws them with, pdf.js for PDF, the viewer of Office Open XML for Word,
-// Excel and PowerPoint and Ace for text, which it also edits in, which the
-// binary embeds, so that nothing is fetched from anywhere but go-fs.
+// Excel and PowerPoint, Ace for text, which it also edits in, and Video.js for
+// video, which the binary embeds, so that nothing is fetched from anywhere but
+// go-fs. It also serves the player of audio, the bar the listing keeps at the
+// bottom of the window while it plays, which is Video.js as well.
 //
 // The libraries load their parts by paths relative to their own, so they are
 // served below a path of their own, Prefix, in the folder /.go-fs/ that the
@@ -107,6 +109,15 @@ func Page() string {
 	return prefix + "index.html"
 }
 
+// Player is the path of the bar that plays audio, which the listing opens in
+// a frame at the bottom of the window, "" without the libraries.
+func Player() string {
+	if !available {
+		return ""
+	}
+	return prefix + "player.html"
+}
+
 // kinds says how the viewer shows a file, by its extension. Text is shown in
 // the editor, read only unless it is opened to be edited: every kind of text
 // and source code the listing is likely to hold, less the delimited text,
@@ -134,6 +145,27 @@ var kinds = map[string]string{
 	".webp": "image",
 	".avif": "image",
 	".bmp":  "image",
+
+	// video and audio are played as they are, never converted, so only what
+	// a browser plays itself is offered, and the listing still asks the
+	// browser before it offers one: an .avi, a .wmv or an .flv no browser
+	// plays, and a .mov or an .mkv only some do
+	".mp4":  "video",
+	".m4v":  "video",
+	".webm": "video",
+	".ogv":  "video",
+	".mov":  "video",
+	".mkv":  "video",
+
+	".mp3":  "audio",
+	".m4a":  "audio",
+	".aac":  "audio",
+	".ogg":  "audio",
+	".oga":  "audio",
+	".opus": "audio",
+	".flac": "audio",
+	".wav":  "audio",
+	".weba": "audio",
 }
 
 // textExtensions are the extensions of text, which kinds takes as "text".
@@ -220,12 +252,13 @@ func Editable(name string) bool {
 // anywhere else, and no inline script runs, so a document that got a
 // library to write markup still could not run any. Inline style is allowed:
 // both libraries lay out text with the style they set, and style runs
-// nothing.
+// nothing. Media is the files of the server, which the player streams.
 const pagePolicy = "default-src 'none'; " +
 	"script-src 'self' 'wasm-unsafe-eval'; " +
 	"worker-src 'self' blob: data:; " +
 	"connect-src 'self'; " +
 	"img-src 'self' blob: data:; " +
+	"media-src 'self'; " +
 	"font-src 'self' blob: data:; " +
 	"style-src 'self' 'unsafe-inline'; " +
 	"frame-ancestors 'self'; " +

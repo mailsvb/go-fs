@@ -305,6 +305,38 @@ dialog.viewer {
   background: var(--ground);
 }
 dialog.viewer iframe { display: block; width: 100%; height: 100%; border: 0; }
+
+/* The bar that plays audio sits at the bottom of the window, over nothing:
+   the page leaves room for it. While it plays, the page may be a shell, a
+   frame above the bar that shows the pages one browses to, with everything
+   of the page itself hidden. */
+:root { --player-height: 4rem; }
+body.playing { padding-bottom: var(--player-height); }
+iframe.player {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  width: 100%;
+  height: calc(var(--player-height) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border: 0;
+  background: var(--raised);
+}
+html.shelled body > :not(.shell, .player) { display: none !important; }
+html.shelled body { padding-bottom: 0; overflow: hidden; }
+iframe.shell { display: none; }
+html.shelled iframe.shell {
+  display: block;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--ground);
+}
+html.shelled body.playing iframe.shell { height: calc(100% - var(--player-height) - env(safe-area-inset-bottom, 0px)); }
 dialog form { display: flex; flex-direction: column; gap: 0.75rem; padding: 1.1rem 1.25rem; width: min(50rem, calc(100vw - 2rem)); }
 dialog h2 { margin: 0; font-size: 1rem; }
 dialog p { margin: 0; color: var(--faint); font-size: 0.85rem; overflow-wrap: anywhere; }

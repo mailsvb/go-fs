@@ -41,7 +41,7 @@
     {{if and .User .Trash}}<a href="{{.Trash}}"><svg class="ic"><use href="#i-trash"/></svg>Trash</a>{{end}}
     {{if and .User .Admin}}<a href="{{.Admin}}"><svg class="ic"><use href="#i-gear"/></svg>Admin</a>{{end}}
     {{if .User}}
-    <form class="inline" method="post" action="{{.Logout}}"><button type="submit"><svg class="ic"><use href="#i-logout"/></svg>Log out {{.User}}</button></form>
+    <form class="inline" method="post" action="{{.Logout}}" target="_top"><button type="submit"><svg class="ic"><use href="#i-logout"/></svg>Log out {{.User}}</button></form>
     {{else if .CanLogin}}
     <a href="{{.Login}}"><svg class="ic"><use href="#i-login"/></svg>Log in</a>
     {{end}}

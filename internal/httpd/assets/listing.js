@@ -140,6 +140,17 @@
     } catch (ignored) {
       // the reload shows the new file, which says it as well
     }
+    reload();
+  }
+
+  // reload shows the folder again as it is now. While the bar below plays,
+  // the page is not left: the folder is shown in its shell instead, so that
+  // the music goes on.
+  function reload() {
+    if (audio && audio.keepsPlaying()) {
+      audio.enterShell(window.location.href, true);
+      return;
+    }
     window.location.reload();
   }
 
@@ -225,7 +236,7 @@
   }
 
   function done() {
-    window.location.reload();
+    reload();
   }
 
   function failed(err) {
@@ -481,16 +492,20 @@
   // has changed its size and time, which a reload of the listing shows.
   var viewer = document.getElementById("viewer");
   var openViewer = null;
+  var audio = null;
   if (viewer) {
     var viewerFrame = viewer.querySelector("iframe");
     var viewerOpener = null;
     var viewerSaved = false;
-    openViewer = function (opener, name, source, kind, mode) {
+    openViewer = function (opener, name, source, kind, mode, type) {
       // the frame is at a path of its own, so the file is named from the root
       var src = new URL(source, location.href);
       var query = new URLSearchParams({ src: src.pathname + src.search, name: name, kind: kind });
       if (mode) {
         query.set("mode", mode);
+      }
+      if (type) {
+        query.set("type", type);
       }
       viewerOpener = opener;
       viewerSaved = false;
@@ -505,7 +520,17 @@
         return;
       }
       event.preventDefault();
-      openViewer(link, link.closest("tr").dataset.name, link.dataset.viewerSrc, link.dataset.viewer, "");
+      if (link.dataset.viewer === "audio") {
+        if (audio) {
+          audio.play(link);
+        }
+        return;
+      }
+      if (link.dataset.viewer === "video" && audio) {
+        audio.pause();
+      }
+      openViewer(link, link.closest("tr").dataset.name, link.dataset.viewerSrc, link.dataset.viewer, "",
+        link.dataset.viewerType || "");
     });
     // the viewer closes itself on Escape or its Close button, which it says
     // from its frame, and says when it has saved a file; nothing else that
@@ -545,6 +570,287 @@
         viewerOpener = null;
       }
     });
+  }
+
+  // --- playing audio ---------------------------------------------------
+  //
+  // Video opens in the viewer as a document does; audio plays in a bar at the
+  // bottom of the window instead, which goes on playing as one browses. The
+  // bar is a page of the viewer in a frame of its own, so that the player in
+  // it runs under the viewer's policy rather than this page's. A file is only
+  // offered to be played when the browser says it may play it, since nothing
+  // is converted: anything else stays a download.
+  //
+  // A page that is left takes its frames with it, so while the bar plays,
+  // the page is not left: the first time it would be, by a link to another
+  // page or by a reload, it becomes a shell instead. It hides what it shows
+  // and opens the page it was going to in a frame that fills the window above
+  // the bar, where everything after happens; the address bar and the title
+  // follow that frame, and the history of the browser walks it, back to the
+  // page as it was before the shell. The listing in the shell hands what it
+  // plays up to the shell.
+  if (viewer && viewer.dataset.player) {
+    audio = (function (page) {
+      var message = "go-fs-player";
+      var root = document.documentElement;
+
+      // alike are types a browser plays as another it knows better: a .mov
+      // is the container an .mp4 grew out of, and the browsers that play the
+      // usual ones, H.264 in it, still say they know nothing of QuickTime
+      var alike = { "video/quicktime": "video/mp4" };
+
+      // playableAs is the type the browser says it can play a file as, ""
+      // for none; "maybe" is as good as it ever says
+      function playableAs(kind, type) {
+        var probe = document.createElement(kind);
+        if (!type || typeof probe.canPlayType !== "function") {
+          return "";
+        }
+        if (probe.canPlayType(type) !== "") {
+          return type;
+        }
+        if (alike[type] && probe.canPlayType(alike[type]) !== "") {
+          return alike[type];
+        }
+        return "";
+      }
+      Array.prototype.forEach.call(body.querySelectorAll("a[data-viewer='audio'], a[data-viewer='video']"), function (link) {
+        var type = playableAs(link.dataset.viewer, link.dataset.viewerType);
+        if (type) {
+          link.dataset.viewerType = type;
+        } else {
+          delete link.dataset.viewer;
+        }
+      });
+
+      // queueOf is the audio of this folder as the listing shows it now,
+      // and where in it the link is
+      function queueOf(link) {
+        var queue = [];
+        var index = 0;
+        rows().forEach(function (row) {
+          var item = row.querySelector("a[data-viewer='audio']");
+          if (!item || (row.classList.contains("gone") && item !== link)) {
+            return;
+          }
+          if (item === link) {
+            index = queue.length;
+          }
+          var src = new URL(item.dataset.viewerSrc, location.href);
+          queue.push({ src: src.pathname + src.search, name: row.dataset.name, type: item.dataset.viewerType || "" });
+        });
+        return { queue: queue, index: index };
+      }
+
+      // shellOf is the page whose shell this listing is shown in, null when
+      // it is not in one
+      function shellOf() {
+        if (window.parent === window) {
+          return null;
+        }
+        try {
+          if (window.parent.location.origin === location.origin &&
+            window.parent.document.documentElement.hasAttribute("data-go-fs-shell")) {
+            return window.parent;
+          }
+        } catch (ignored) {
+          // a page of another origin frames this one, which plays nothing
+        }
+        return null;
+      }
+
+      var host = shellOf();
+      if (host) {
+        return {
+          play: function (link) {
+            var wanted = queueOf(link);
+            host.postMessage({ type: message, action: "play", queue: wanted.queue, index: wanted.index }, location.origin);
+          },
+          pause: function () {
+            host.postMessage({ type: message, action: "pause" }, location.origin);
+          },
+          keepsPlaying: function () {
+            return false;
+          },
+          enterShell: function () {},
+        };
+      }
+
+      // --- the bar, in the page at the top -------------------------------
+
+      var bar = null;
+      var ready = false;
+      // pending is what the bar is told once it is ready
+      var pending = null;
+
+      function toBar(data) {
+        data.type = message;
+        if (ready) {
+          bar.contentWindow.postMessage(data, location.origin);
+        } else {
+          pending = data;
+        }
+      }
+
+      function play(queue, index) {
+        if (!bar) {
+          bar = document.createElement("iframe");
+          bar.className = "player";
+          bar.title = "Player";
+          bar.src = page;
+          ready = false;
+          document.body.append(bar);
+          document.body.classList.add("playing");
+        }
+        toBar({ action: "play", queue: queue, index: index });
+      }
+
+      function pause() {
+        if (bar && ready) {
+          toBar({ action: "pause" });
+        }
+      }
+
+      function closeBar() {
+        if (!bar) {
+          return;
+        }
+        bar.remove();
+        bar = null;
+        ready = false;
+        pending = null;
+        document.body.classList.remove("playing");
+      }
+
+      // --- the shell -----------------------------------------------------
+
+      var shell = null;
+      var title = document.title;
+
+      function shelled() {
+        return root.classList.contains("shelled");
+      }
+
+      // synced makes the address bar and the title say what the shell shows
+      function synced() {
+        if (!shell || !shelled()) {
+          return;
+        }
+        try {
+          var inside = shell.contentWindow.location;
+          if (inside.origin !== location.origin) {
+            return;
+          }
+          window.history.replaceState(window.history.state, "", inside.href);
+          document.title = shell.contentDocument.title || title;
+        } catch (ignored) {
+          // nothing of this server, which is never framed here
+        }
+      }
+
+      // enterShell opens a page in the shell; replace says it takes the
+      // place of this one in the history, as a reload does, rather than
+      // coming after it
+      function enterShell(href, replace) {
+        if (!shell) {
+          shell = document.createElement("iframe");
+          shell.className = "shell";
+          shell.title = "Files";
+          shell.addEventListener("load", synced);
+          root.setAttribute("data-go-fs-shell", "");
+          document.body.append(shell);
+          shell.src = href;
+        } else {
+          shell.contentWindow.location.replace(href);
+        }
+        if (replace) {
+          window.history.replaceState({ goFsShell: true }, "", href);
+        } else {
+          window.history.pushState({ goFsShell: true }, "", href);
+        }
+        root.classList.add("shelled");
+      }
+
+      // back past the first page of the shell is this page again, and
+      // forward is the shell again
+      window.addEventListener("popstate", function (event) {
+        if (!shell) {
+          return;
+        }
+        var inShell = !!(event.state && event.state.goFsShell);
+        root.classList.toggle("shelled", inShell);
+        if (inShell) {
+          synced();
+        } else {
+          document.title = title;
+        }
+      });
+
+      // a link to another page of this server is followed in the shell while
+      // the bar plays; a file is not a page, and a download does not leave
+      // the page anyway
+      document.addEventListener("click", function (event) {
+        if (!bar || shelled() || event.defaultPrevented || event.button !== 0 ||
+          event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+          return;
+        }
+        var link = event.target.closest("a[href]");
+        if (!link || link.hasAttribute("download") || (link.target && link.target !== "_self")) {
+          return;
+        }
+        var row = link.closest("tr[data-name]");
+        if (row && row.dataset.dir !== "1") {
+          return;
+        }
+        var target = new URL(link.href, location.href);
+        if (target.origin !== location.origin ||
+          (target.pathname === location.pathname && target.search === location.search && target.hash)) {
+          return;
+        }
+        event.preventDefault();
+        enterShell(target.href, false);
+      });
+
+      // the bar says when it is ready and when it was closed; the listing in
+      // the shell asks to play and to pause; nothing else is listened to
+      window.addEventListener("message", function (event) {
+        if (event.origin !== location.origin || !event.data || event.data.type !== message) {
+          return;
+        }
+        if (bar && event.source === bar.contentWindow) {
+          if (event.data.action === "ready") {
+            ready = true;
+            if (pending) {
+              var data = pending;
+              pending = null;
+              toBar(data);
+            }
+          } else if (event.data.action === "closed") {
+            closeBar();
+          }
+          return;
+        }
+        if (shell && event.source === shell.contentWindow) {
+          if (event.data.action === "play" && Array.isArray(event.data.queue)) {
+            play(event.data.queue, event.data.index);
+          } else if (event.data.action === "pause") {
+            pause();
+          }
+        }
+      });
+
+      return {
+        play: function (link) {
+          var wanted = queueOf(link);
+          play(wanted.queue, wanted.index);
+        },
+        pause: pause,
+        keepsPlaying: function () {
+          return !!bar;
+        },
+        enterShell: enterShell,
+      };
+    })(viewer.dataset.player);
   }
 
   // --- actions ---------------------------------------------------------

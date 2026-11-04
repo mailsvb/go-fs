@@ -1,12 +1,15 @@
 // Command viewer fetches the libraries the document viewer of the web interface
-// is built from, pdf.js, the viewer of Office Open XML and the editor Ace,
-// from npm at the versions internal/httpd/viewer/libraries.lock pins, and puts
+// is built from, pdf.js, the viewer of Office Open XML, the editor Ace and the
+// player Video.js, from npm at the versions internal/httpd/viewer/libraries.lock pins, and puts
 // the files the viewer needs into internal/httpd/viewer/libs, where the binary
 // embeds them.
 //
 //	go run ./tools/viewer          fetch what the lock file pins, unless it is there already
 //	go run ./tools/viewer -check   fail unless what is there is what the lock file pins
 //	go run ./tools/viewer -update  pin the latest version of each library, then fetch it
+//
+// The latest version is the one npm tags latest, or the tag a library names
+// instead, which is how Video.js stays on the line of version 8.
 //
 // Only the lock file is committed; what is fetched is not. Every tarball is
 // checked against the sha512 the lock file pins, the one npm published, each
@@ -67,10 +70,20 @@ const maxTarball = 256 << 20
 // library is what the viewer takes from the tarball of a package: the folder
 // it goes to below the output, and where each file it keeps goes in that
 // folder, "" for a file it leaves out. A path is relative to package/ in the
-// tarball, with forward slashes.
+// tarball, with forward slashes. tag is the dist-tag of npm an update follows,
+// "" for latest.
 type library struct {
 	folder string
+	tag    string
 	place  func(name string) string
+}
+
+// tagOf is the dist-tag an update of a library follows.
+func (lib library) tagOf() string {
+	if lib.tag == "" {
+		return "latest"
+	}
+	return lib.tag
 }
 
 // libraries are the packages the lock file may pin. A package it pins that is
@@ -148,6 +161,21 @@ var libraries = map[string]library{
 			return ""
 		}
 		return rest
+	}},
+	// Video.js, which plays audio and video: the core of the line of version
+	// 8, without the streaming of HLS and DASH (a file is played as it is),
+	// and its style. The name video.js tags latest is a stub of version 10,
+	// which only throws, so an update follows latest-8.
+	"video.js": {folder: "videojs", tag: "latest-8", place: func(name string) string {
+		switch name {
+		case "LICENSE":
+			return name
+		case "dist/alt/video.core.min.js":
+			return "video.core.min.js"
+		case "dist/video-js.min.css":
+			return "video-js.min.css"
+		}
+		return ""
 	}},
 }
 
@@ -483,7 +511,7 @@ func writeVersions(out, stamp string, pins []pin) error {
 }
 
 // pinLatest rewrites the lock file with the version npm tags latest for each
-// library, and the integrity of its tarball, keeping its comments, and says
+// library, or the tag it names instead, and the integrity of its tarball, keeping its comments, and says
 // what changed.
 func pinLatest(client *http.Client, registry, lockPath string) error {
 	lock, err := os.ReadFile(lockPath)
@@ -496,13 +524,13 @@ func pinLatest(client *http.Client, registry, lockPath string) error {
 	}
 	latest := map[string]pin{}
 	for _, p := range pins {
-		next, err := latestOf(client, registry, p.name)
+		next, err := latestOf(client, registry, p.name, libraries[p.name].tagOf())
 		if err != nil {
 			return fmt.Errorf("%s: %w", p.name, err)
 		}
 		latest[p.name] = next
 		if next.version == p.version {
-			fmt.Printf("viewer: %s %s is the latest\n", p.name, p.version)
+			fmt.Printf("viewer: %s %s is the %s\n", p.name, p.version, libraries[p.name].tagOf())
 		} else {
 			fmt.Printf("viewer: %s %s -> %s\n", p.name, p.version, next.version)
 		}
@@ -520,8 +548,8 @@ func pinLatest(client *http.Client, registry, lockPath string) error {
 	return os.WriteFile(lockPath, []byte(b.String()), 0o644)
 }
 
-// latestOf asks the registry for the version of a package it tags latest.
-func latestOf(client *http.Client, registry, name string) (pin, error) {
+// latestOf asks the registry for the version of a package it gives the tag.
+func latestOf(client *http.Client, registry, name, tag string) (pin, error) {
 	body, err := get(client, registry+"/"+name)
 	if err != nil {
 		return pin{}, err
@@ -537,10 +565,10 @@ func latestOf(client *http.Client, registry, name string) (pin, error) {
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return pin{}, err
 	}
-	version := doc.Tags["latest"]
+	version := doc.Tags[tag]
 	integrity := doc.Versions[version].Dist.Integrity
 	if version == "" {
-		return pin{}, errors.New("the registry tags no version latest")
+		return pin{}, fmt.Errorf("the registry tags no version %s", tag)
 	}
 	if _, err := digestOf(integrity); err != nil {
 		return pin{}, fmt.Errorf("%s: %w", version, err)

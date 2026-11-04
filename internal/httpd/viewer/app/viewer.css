@@ -226,3 +226,12 @@ body {
   .fit { display: none; }
   .status { inset: 5.6rem 0 0; }
 }
+
+/* --- a video, filling the stage ----------------------------------------- */
+
+/* the style of Video.js comes after this one, so what is changed of it says
+   more than it does */
+.scroller.video { overflow: hidden; background: #000; }
+.scroller.video .video-js { outline: none; }
+.scroller.video .video-js .vjs-play-progress,
+.scroller.video .video-js .vjs-volume-level { background-color: var(--accent); }

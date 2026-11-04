@@ -331,6 +331,9 @@ type listingRow struct {
 	// marker whatever the type, so that the log says it was viewed.
 	Viewer    string
 	ViewerSrc string
+	// ViewerType is the media type of audio and video, which the script asks
+	// the browser whether it plays before it offers to play it.
+	ViewerType string
 	// EditSrc is where the viewer reads a file it opens to be edited, as
 	// ViewerSrc; "" for a file it cannot edit or the account may not replace.
 	EditSrc  string
@@ -430,6 +433,9 @@ type listingData struct {
 	// Viewer is the page of the document viewer the script opens a file in,
 	// "" in a binary without one.
 	Viewer string
+	// Player is the page of the bar the script plays audio in, "" in a
+	// binary without the viewer.
+	Player string
 }
 
 // listingPlace is what a listing is of: a folder of the served tree, or one
@@ -501,6 +507,9 @@ func listingPage(place listingPlace, entries []entry, order sortOrder, allowed r
 			if kind := viewer.Kind(item.Name); kind != "" && place.view != "" {
 				row.Viewer = kind
 				row.ViewerSrc = row.Link + place.view
+				if kind == "audio" || kind == "video" {
+					row.ViewerType = typeOf(item.Name).Media
+				}
 			}
 			if allowed.Download && allowed.Overwrite && place.view != "" && viewer.Editable(item.Name) {
 				row.EditSrc = row.Link + place.view
@@ -534,6 +543,7 @@ func listingPage(place listingPlace, entries []entry, order sortOrder, allowed r
 
 		MaxChunkSize: maxChunkSize,
 		Viewer:       viewer.Page(),
+		Player:       viewer.Player(),
 	}
 	var page bytes.Buffer
 	if err := listingTemplate.Execute(&page, data); err != nil {

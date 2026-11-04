@@ -9,6 +9,10 @@
 // through ui: pages(count, label), page(index), sheets(names, index),
 // scale(factor), fits(mode), fitting(offered) and notice(text).
 //
+// A video is not read into the page as the other kinds are but streamed by
+// the browser from the file, which the server answers a range of: its
+// backend is handed source.src and source.type in place of source.bytes.
+//
 // A file opened with mode=edit is opened to be edited, which only the text
 // backend does. Where it can, it says so with ui.editing(true), tells of
 // changes with ui.changed(dirty), and asks for a save with ui.save(); its
@@ -19,7 +23,10 @@
 
 import { Failure } from "./backends/common.js";
 
-const kinds = ["pdf", "docx", "xlsx", "pptx", "sheet", "text", "image"];
+const kinds = ["pdf", "docx", "xlsx", "pptx", "sheet", "text", "image", "video"];
+
+// the kinds the browser streams rather than the page reading them whole
+const streamed = ["video"];
 
 // what the text backend shows of a file at most; the rest is left to the
 // download, since a browser does not lay out a log of gigabytes
@@ -31,6 +38,7 @@ const params = new URLSearchParams(location.search);
 const src = params.get("src") || "";
 const name = params.get("name") || src.split("/").pop() || "file";
 const kind = params.get("kind") || "";
+const type = params.get("type") || "";
 const editing = params.get("mode") === "edit" && kind === "text";
 
 // the frame is only ever pointed at a path of the server that served it
@@ -505,11 +513,19 @@ async function open() {
   }
   show("busy");
   const backend = await import("./backends/" + kind + ".js");
+  const stage = $("stage");
+  if (streamed.includes(kind)) {
+    $("progress").textContent = "Opening…";
+    $("meter").parentElement.classList.add("unknown");
+    controller = await backend.open(stage, { name, src: url.pathname + url.search, type }, ui);
+    show("");
+    call("focus");
+    return;
+  }
   const read = await fetchBytes(url.pathname + url.search, kind === "text" ? textLimit : 0);
   lastModified = read.lastModified;
   $("progress").textContent = "Opening…";
   $("meter").parentElement.classList.add("unknown");
-  const stage = $("stage");
   controller = await backend.open(stage, { name, bytes: read.bytes, truncated: read.truncated, editable: editing }, ui);
   show("");
   if (typeof controller.focus === "function") {

@@ -46,7 +46,7 @@ func TestServeThePageWithItsPolicy(t *testing.T) {
 		t.Errorf("Content-Type = %q", got)
 	}
 	policy := res.Header.Get("Content-Security-Policy")
-	for _, want := range []string{"default-src 'none'", "script-src 'self' 'wasm-unsafe-eval'", "frame-ancestors 'self'", "connect-src 'self'"} {
+	for _, want := range []string{"default-src 'none'", "script-src 'self' 'wasm-unsafe-eval'", "frame-ancestors 'self'", "connect-src 'self'", "media-src 'self'"} {
 		if !strings.Contains(policy, want) {
 			t.Errorf("the policy %q lacks %q", policy, want)
 		}
@@ -65,6 +65,34 @@ func TestServeThePageWithItsPolicy(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	if !strings.Contains(string(body), `src="viewer.js"`) {
 		t.Error("the page does not load its script")
+	}
+}
+
+// The bar that plays audio is a page of the viewer, with its policy, which
+// lets it play the files of the server and nothing else.
+func TestServeThePlayerWithItsPolicy(t *testing.T) {
+	requireLibraries(t)
+	if !strings.HasPrefix(Player(), Prefix()) {
+		t.Fatalf("Player() = %q is not below %q", Player(), Prefix())
+	}
+	res := serve(t, http.MethodGet, Player(), "")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if got := res.Header.Get("Content-Security-Policy"); got != pagePolicy {
+		t.Errorf("Content-Security-Policy = %q", got)
+	}
+	if got := res.Header.Get("X-Frame-Options"); got != "SAMEORIGIN" {
+		t.Errorf("X-Frame-Options = %q", got)
+	}
+	body, _ := io.ReadAll(res.Body)
+	if !strings.Contains(string(body), `src="player.js"`) {
+		t.Error("the player does not load its script")
+	}
+	for _, name := range []string{"videojs/video.core.min.js", "videojs/video-js.min.css"} {
+		if res := serve(t, http.MethodGet, Prefix()+name, "gzip"); res.StatusCode != http.StatusOK {
+			t.Errorf("%s: status %d", name, res.StatusCode)
+		}
 	}
 }
 
@@ -173,6 +201,17 @@ func TestKind(t *testing.T) {
 		".env":           "text",
 		"sub/.gitignore": "text",
 		"photo.JPEG":     "image",
+		"clip.MP4":       "video",
+		"clip.webm":      "video",
+		"movie.mkv":      "video",
+		"phone.mov":      "video",
+		"song.mp3":       "audio",
+		"track.flac":     "audio",
+		"voice.opus":     "audio",
+		"tape.wav":       "audio",
+		"old.avi":        "",
+		"old.wmv":        "",
+		"script.ts":      "text",
 		"drawing.svg":    "",
 		"archive.zip":    "",
 		"old.doc":        "",
@@ -212,7 +251,8 @@ func TestNothingIsOfferedWithoutTheLibraries(t *testing.T) {
 	saved := available
 	t.Cleanup(func() { available = saved })
 	available = false
-	if Kind("report.pdf") != "" || Editable("notes.txt") || Page() != "" || Prefix() != "" {
+	if Kind("report.pdf") != "" || Kind("song.mp3") != "" || Editable("notes.txt") || Page() != "" ||
+		Player() != "" || Prefix() != "" {
 		t.Error("a binary without the libraries offers the viewer")
 	}
 	if res := serve(t, http.MethodGet, prefix+"index.html", ""); res.StatusCode != http.StatusNotFound {

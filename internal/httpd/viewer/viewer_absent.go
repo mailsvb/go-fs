@@ -18,6 +18,8 @@ func Prefix() string { return "" }
 
 func Page() string { return "" }
 
+func Player() string { return "" }
+
 func Kind(string) string { return "" }
 
 func Editable(string) bool { return false }
