@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mailsvb/go-fs/internal/features"
+	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
 // Repository is a package repository go-fs keeps in a folder it serves over
@@ -238,7 +239,22 @@ func RepositoryFolder(raw string) (string, error) {
 	if clean == "/" {
 		return "", errors.New("the repository needs a folder of its own, not the top of the served folder")
 	}
+	if err := notReserved(raw, clean); err != nil {
+		return "", err
+	}
 	return clean, nil
+}
+
+// notReserved refuses a folder of the served tree in the folder go-fs keeps
+// for itself at its top, which no protocol reaches. The name is matched
+// ignoring case, as it is wherever the filesystem does: a folder that only
+// differs in case is too close to be worth telling apart in a setting.
+func notReserved(raw, clean string) error {
+	first, _, _ := strings.Cut(strings.TrimPrefix(clean, "/"), "/")
+	if strings.EqualFold(first, vfs.ReservedName) {
+		return fmt.Errorf("%q is in /%s, which go-fs keeps for itself", raw, vfs.ReservedName)
+	}
+	return nil
 }
 
 // RepositoryPath is where the folder of the repository is on disk, inside

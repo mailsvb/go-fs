@@ -30,7 +30,11 @@ deviation from it that crosses a trust boundary as a finding.
   created between check and use), case folding, Unicode normalisation, Windows
   separators, drive letters and reserved names, NUL bytes, and archive entries
   (folder download, registry imports). The base folder itself must not be
-  renamed or removed.
+  renamed or removed. The folder `.go-fs` at the top of
+  `general.baseFolderFiles` is reserved (`vfs.ReservedName`): no protocol may
+  create, reach or list it, in any case spelling a case-folding filesystem
+  takes for it, nor through a symlink to it, so that nothing uploaded can sit
+  where HTTP serves its own code.
 - **Authentication and authorisation** on every server: passwords (FTP `USER`/
   `PASS`, SFTP, HTTP Basic and Digest), SSH public keys, browser sessions (JWT
   signed with `httpSessionTokenSecret`), bearer tokens, S3 Signature V4 (header,
@@ -56,6 +60,17 @@ deviation from it that crosses a trust boundary as a finding.
 - **Browser interface**: XSS (file names, listings, registry pages, error
   messages), CSRF against state-changing endpoints (`?go-fs=…` actions, the
   admin config editor), open redirects, and session fixation.
+- **Document viewer** (`internal/httpd/viewer`): the listing opens a file in a
+  frame of the same origin, where pdf.js and the Office Open XML Viewer parse
+  the bytes of uploaded PDF, Word, Excel and PowerPoint files, and the browser
+  decodes images. The libraries are fetched at build time by `tools/viewer`
+  and must match the sha512 `internal/httpd/viewer/libraries.lock` pins. The
+  page is served below `/.go-fs/viewer/` under `Content-Security-Policy`
+  allowing script from this origin only, with `'wasm-unsafe-eval'`, no inline
+  script and no other host for anything. A crafted document that runs script
+  in that frame, which would act with the session of whoever opened it, reaches
+  another host, opens a `javascript:` or same-origin link, or a page of the
+  served tree that is rendered as HTML or SVG anywhere, is a finding.
 - **Secrets at rest**: stored server passwords and Cryptomator vaults
   (`internal/cryptomator`, in go-fs only) must not be readable without their keys; secrets in
   the configuration must not leak into logs, listings or API answers.

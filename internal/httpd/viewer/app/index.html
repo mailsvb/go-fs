@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>Viewer</title>
+<link rel="stylesheet" href="viewer.css">
+<script type="module" src="viewer.js"></script>
+</head>
+<body>
+<svg class="icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></symbol>
+  <symbol id="i-fit-width" viewBox="0 0 24 24"><path d="M4 5v14M20 5v14"/><path d="M8 12h8m-5.5-2.5L8 12l2.5 2.5m3-5L16 12l-2.5 2.5"/></symbol>
+  <symbol id="i-fit-page" viewBox="0 0 24 24"><path d="M7 3.5h10v17H7z"/><path d="M10 8h4m-4 4h4"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M4 16v4h16v-4"/><path d="M12 4v11m-4-4 4 4 4-4"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><path d="M6 11h12v9H6z"/><path d="M8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></symbol>
+</svg>
+
+<header class="bar">
+  <span class="name"><svg class="ic"><use href="#i-file"/></svg><span id="name"></span></span>
+  <span class="group" id="pages" hidden>
+    <button class="plain icon" id="prev" type="button" title="Previous page"><svg class="ic"><use href="#i-prev"/></svg></button>
+    <label class="page"><input id="page" type="text" inputmode="numeric" autocomplete="off" aria-label="Page"><span id="count"></span></label>
+    <button class="plain icon" id="next" type="button" title="Next page"><svg class="ic"><use href="#i-next"/></svg></button>
+  </span>
+  <span class="group" id="sheets-group" hidden>
+    <select id="sheets" aria-label="Sheet"></select>
+  </span>
+  <span class="group" id="zoom" hidden>
+    <button class="plain icon" id="zoom-out" type="button" title="Zoom out (−)"><svg class="ic"><use href="#i-minus"/></svg></button>
+    <span class="scale" id="scale">100%</span>
+    <button class="plain icon" id="zoom-in" type="button" title="Zoom in (+)"><svg class="ic"><use href="#i-plus"/></svg></button>
+    <button class="plain icon fit" id="fit-width" type="button" title="Fit to width (0)"><svg class="ic"><use href="#i-fit-width"/></svg></button>
+    <button class="plain icon fit" id="fit-page" type="button" title="Fit the page"><svg class="ic"><use href="#i-fit-page"/></svg></button>
+  </span>
+  <span class="group end">
+    <a class="plain" id="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>
+    <button class="plain icon" id="close" type="button" title="Close (Esc)"><svg class="ic"><use href="#i-close"/></svg></button>
+  </span>
+</header>
+
+<main id="stage" tabindex="-1"></main>
+
+<div class="status" id="status">
+  <div class="panel" id="busy">
+    <div class="spinner" aria-hidden="true"></div>
+    <p id="progress" aria-live="polite">Opening…</p>
+    <div class="meter" aria-hidden="true"><span id="meter"></span></div>
+  </div>
+  <form class="panel" id="password" hidden>
+    <svg class="ic big"><use href="#i-lock"/></svg>
+    <p id="password-text">This file is protected with a password.</p>
+    <input id="password-input" type="password" autocomplete="off" aria-label="Password">
+    <div class="row">
+      <button class="plain go" type="submit">Open</button>
+      <button class="plain" id="password-cancel" type="button">Cancel</button>
+    </div>
+  </form>
+  <div class="panel" id="failed" hidden>
+    <p class="reason" id="reason"></p>
+    <p class="detail" id="detail"></p>
+    <a class="plain go" id="failed-download" download><svg class="ic"><use href="#i-download"/></svg><span>Download instead</span></a>
+  </div>
+</div>
+</body>
+</html>

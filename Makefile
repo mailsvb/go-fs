@@ -82,23 +82,36 @@ LINUX_TRASH    := baseFolderTrash = "/var/lib/go-fs/trash"
 WINDOWS_TRASH  := baseFolderTrash = "C:/ProgramData/go-fs/trash"
 
 .PHONY: all build test race cover fuzz vet fmt lint clean release sign checksums version \
-	packages rpm msi-inputs
+	packages rpm msi-inputs viewer-deps viewer-update
 
 all: vet test build
 
+# viewer-deps fetches the libraries of the document viewer from npm into
+# internal/httpd/viewer/libs, where the binary embeds them, at the versions
+# internal/httpd/viewer/libraries.lock pins and checked against the sha512 it
+# pins. Only the lock file is committed; a fetch that is already there costs
+# nothing. Every target that builds or tests the binary runs it first, so
+# that no build is made without the viewer by mistake.
+viewer-deps:
+	go run ./tools/viewer
+
+# viewer-update pins the latest version of each library, then fetches it.
+viewer-update:
+	go run ./tools/viewer -update
+
 # build produces the same set of binaries as release, stamped with the dev
 # version so a local build always says when it was made.
-build: clean
+build: clean viewer-deps
 	$(call crosscompile,$(DEV_VERSION))
 
-test:
+test: viewer-deps
 	go test ./... -count=1
 
-race:
+race: viewer-deps
 	go test ./... -race -count=1
 
 # cover is race with a coverage profile, whose total is printed last.
-cover:
+cover: viewer-deps
 	go test ./... -race -count=1 -coverprofile=coverage.out
 	@go tool cover -func=coverage.out | tail -1
 
@@ -115,7 +128,7 @@ fuzz:
 		done; \
 	done
 
-vet:
+vet: viewer-deps
 	go vet ./...
 
 fmt:
@@ -135,7 +148,7 @@ clean:
 # writes the signed .update files and keeps only those: a release ships
 # packages and updates, not the plain binaries. Without the keys the binaries
 # stay; the release workflow insists on both.
-release: clean
+release: clean viewer-deps
 	$(call crosscompile,$(VERSION))
 	@if [ -n "$$GOFS_SIGNING_KEY" ] && [ -n "$$GOFS_LIGHT_SIGNING_KEY" ]; then \
 		$(MAKE) --no-print-directory sign; \
@@ -206,7 +219,7 @@ RPM_LIGHT_SERVES := HTTP, HTTPS, an S3 compatible API and an OCI registry
 # and conflict with each other: they install the same files. With
 # SIGNING_KEY_FILE naming an armored PGP private key, and NFPM_RPM_PASSPHRASE
 # unlocking it, the rpms are signed, as the package repository needs them to be.
-rpm:
+rpm: viewer-deps
 	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml,$(LINUX_REGISTRY),$(LINUX_TEMP),$(LINUX_TRASH))
 	@mkdir -p $(DIST)
 	@for product in $(BINARY) $(LIGHT); do \
@@ -227,7 +240,7 @@ rpm:
 	done
 
 # both msi install the same configuration, each its own product's binary
-msi-inputs:
+msi-inputs: viewer-deps
 	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml,$(WINDOWS_REGISTRY),$(WINDOWS_TEMP),$(WINDOWS_TRASH))
 	@for product in $(BINARY) $(LIGHT); do \
 		for arch in amd64; do \

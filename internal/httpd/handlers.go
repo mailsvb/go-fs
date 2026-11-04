@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/httpd/viewer"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -50,7 +51,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 			http.Redirect(w, r, redirect.RequestURI(), http.StatusMovedPermanently)
 			return
 		}
-		entries, err := readDirectory(target.Path)
+		entries, err := readDirectory(s.root, target.Path)
 		if err != nil {
 			s.log.Error("http cannot read the folder", "path", target.Virtual, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
@@ -115,7 +116,10 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 
 	name := filepath.Base(target.Path)
 	event := "http download"
-	if fileHeaders(w, name, r.URL.Query().Get(sessionParam) == actionView) {
+	asked := r.URL.Query().Get(sessionParam) == actionView
+	if fileHeaders(w, name, asked) || (asked && viewer.Kind(name) != "") {
+		// what the document viewer shows it reads as a download, a Word file
+		// for one, which is still a view
 		event = "http view"
 	}
 	// ServeContent adds Content-Length and, unlike the Node implementation,
@@ -1008,8 +1012,12 @@ func pageNonce() (string, error) {
 // form-action is deliberately not set, because the dialogs submit to
 // method="dialog", which some browsers check against it even though it never
 // leaves the page.
+//
+// frame-src lets in the frame of the document viewer, which is a page of this
+// origin with a policy of its own.
 func contentPolicy(nonce string) string {
 	return "default-src 'none'; " +
+		"frame-src 'self'; " +
 		"style-src 'nonce-" + nonce + "'; " +
 		"script-src 'nonce-" + nonce + "'; " +
 		"img-src 'self' data:; " +
@@ -1088,7 +1096,7 @@ func (s *Server) handleDirectoryReader(set *settings, w http.ResponseWriter, r *
 		return
 	}
 
-	entries, err := readDirectory(listed.Path)
+	entries, err := readDirectory(s.root, listed.Path)
 	if err != nil {
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return

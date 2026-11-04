@@ -1,0 +1,7 @@
+# The libraries the document viewer is built from, fetched from npm at build
+# time by go run ./tools/viewer (make viewer-deps) into libs/, which is not
+# committed. Each line is a package, its version and the integrity npm
+# publishes for its tarball; a tarball that does not match is refused.
+# go run ./tools/viewer -update pins the latest versions.
+@silurus/ooxml 0.89.7 sha512-GZGQRiPjOqlWjqPv4DE1etTgdHt9walWvuONn0eWcdgMDEMSBA/SV/tPOFoIWTTcMxPb7JnYGkg66Z64lu4p9w==
+pdfjs-dist 6.5.438 sha512-vg8Pw1x+AFKy4AMDvhuWl5cOYV8d698UoEANoFFhc79hqXDnZQqnOXoxw3HG907WHOg1JYOvLhP756boddFxpA==

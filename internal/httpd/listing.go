@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/httpd/viewer"
+	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
 // entry is one line of a directory listing.
@@ -38,13 +40,19 @@ func (e entry) bare() string {
 	return strings.TrimSuffix(e.Name, "/")
 }
 
-// readDirectory lists a folder: the folders first in the order the filesystem
-// reports them, then the files newest first.
+// readDirectory lists a folder of root: the folders first in the order the
+// filesystem reports them, then the files newest first. What the root hides,
+// its reserved folder, is not listed; a nil root is a folder outside the
+// served tree, the trash, which hides nothing.
 //
 // This order is the one the legacy dls_directory_reader endpoint answers with,
 // so it is left as it was; the browsable page sorts the result itself.
-func readDirectory(folder string) ([]entry, error) {
-	items, err := os.ReadDir(folder)
+func readDirectory(root *vfs.Root, folder string) ([]entry, error) {
+	read := os.ReadDir
+	if root != nil {
+		read = root.ReadFolder
+	}
+	items, err := read(folder)
 	if err != nil {
 		return nil, err
 	}
@@ -313,14 +321,19 @@ type listingRow struct {
 	Link  string
 	// View says Link shows the file rather than downloads it, which opens it
 	// in a tab of its own.
-	View     bool
-	IsDir    bool
-	Group    string
-	Bytes    int64
-	Unix     int64
-	Kind     string
-	Size     string
-	Modified string
+	View bool
+	// Viewer is how the document viewer shows the file, "" for a file it does
+	// not; ViewerSrc is where it reads the file from, the link with the view
+	// marker whatever the type, so that the log says it was viewed.
+	Viewer    string
+	ViewerSrc string
+	IsDir     bool
+	Group     string
+	Bytes     int64
+	Unix      int64
+	Kind      string
+	Size      string
+	Modified  string
 }
 
 // sessionView is what the page says about who is looking at it.
@@ -407,6 +420,9 @@ type listingData struct {
 	// means chunked upload is off and a large file is sent as one request, as
 	// before.
 	MaxChunkSize int64
+	// Viewer is the page of the document viewer the script opens a file in,
+	// "" in a binary without one.
+	Viewer string
 }
 
 // listingPlace is what a listing is of: a folder of the served tree, or one
@@ -474,9 +490,15 @@ func listingPage(place listingPlace, entries []entry, order sortOrder, allowed r
 			// a folder has no size worth showing, but it does have a date, and
 			// without it the date column could not be sorted on
 			row.Size = "—"
-		} else if _, ok := viewTypeOf(item.Name); ok {
-			row.Link += place.view
-			row.View = true
+		} else {
+			if kind := viewer.Kind(item.Name); kind != "" && place.view != "" {
+				row.Viewer = kind
+				row.ViewerSrc = row.Link + place.view
+			}
+			if _, ok := viewTypeOf(item.Name); ok {
+				row.Link += place.view
+				row.View = true
+			}
 		}
 		rows = append(rows, row)
 	}
@@ -501,6 +523,7 @@ func listingPage(place listingPlace, entries []entry, order sortOrder, allowed r
 		Script:  listingScript,
 
 		MaxChunkSize: maxChunkSize,
+		Viewer:       viewer.Page(),
 	}
 	var page bytes.Buffer
 	if err := listingTemplate.Execute(&page, data); err != nil {

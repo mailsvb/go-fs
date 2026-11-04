@@ -8,3 +8,7 @@
 
 # test output
 coverage.out
+
+# the libraries of the document viewer, fetched at build time by make viewer-deps
+/internal/httpd/viewer/libs/*
+!/internal/httpd/viewer/libs/README.md

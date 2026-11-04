@@ -181,7 +181,7 @@ func (s *Server) trashPage(set *settings, w http.ResponseWriter, r *http.Request
 			http.StatusMovedPermanently)
 		return
 	}
-	entries, err := readDirectory(folder.Path)
+	entries, err := readDirectory(nil, folder.Path)
 	if err != nil {
 		s.log.Error("http cannot read the trash", "path", folder.Virtual, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)

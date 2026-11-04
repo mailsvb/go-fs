@@ -338,3 +338,32 @@ func TestTheXAliases(t *testing.T) {
 	c.send("XRMD xdir")
 	c.expect("250 Folder deleted successfully")
 }
+
+// The folder go-fs keeps for itself at the top of the served tree is in no
+// listing, and can be neither entered nor created, while one of that name
+// further down is an ordinary folder.
+func TestReservedFolderIsNeitherListedNorReached(t *testing.T) {
+	server := newServer(t, nil)
+	seed(t, server)
+	server.write(t, ".go-fs/secret.txt", "planted\n")
+	server.write(t, "sub/.go-fs/kept.txt", "kept\n")
+	c := connect(t, server)
+	c.login()
+
+	for _, command := range []string{"NLST", "LIST -la", "MLSD"} {
+		if listing, _ := c.download(command); strings.Contains(listing, ".go-fs") {
+			t.Errorf("%s lists the reserved folder: %q", command, listing)
+		}
+	}
+	if listing, _ := c.download("NLST sub"); !strings.Contains(listing, ".go-fs") {
+		t.Errorf("a .go-fs further down is not listed: %q", listing)
+	}
+	// refused as a path out of the served folder is
+	c.send("CWD /.go-fs")
+	c.expect("530 CWD not successful")
+	c.send("MKD /.go-fs/new")
+	c.expectCode("550")
+	if _, err := os.Stat(filepath.Join(server.base, ".go-fs", "new")); err == nil {
+		t.Error("MKD created a folder in the reserved folder")
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/httpd/viewer"
 	"github.com/mailsvb/go-fs/internal/remote"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -406,7 +407,8 @@ func (s *Server) remoteDownload(set *settings, w http.ResponseWriter, r *http.Re
 	defer func() { _ = file.Close() }()
 	name := path.Base(q.path)
 	event := "http remote download"
-	if fileHeaders(w, name, r.URL.Query().Get(remoteViewParam) != "") {
+	asked := r.URL.Query().Get(remoteViewParam) != ""
+	if fileHeaders(w, name, asked) || (asked && viewer.Kind(name) != "") {
 		event = "http remote view"
 	}
 	started := time.Now()

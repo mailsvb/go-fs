@@ -41,8 +41,9 @@ func TestDirectoryListing(t *testing.T) {
 		`<a href="/">..</a>`,            // the way back up
 		`<a href="deeper/">deeper/</a>`, // folders carry a trailing slash
 		`<a href="new.iso">new.iso</a>`, //
-		// a file the browser can show opens in a tab of its own
-		`<a href="old.txt?go-fs=view" target="_blank" rel="noopener">old.txt</a>`,
+		// a file the browser can show opens in a tab of its own, whatever
+		// the document viewer adds for the script
+		`<a href="old.txt?go-fs=view" target="_blank" rel="noopener"`,
 		"Folder",              // the folder's Type cell
 		"ISO",                 // from the extension table
 		"Document",            //
@@ -284,7 +285,7 @@ func TestReaderPageBytesAreUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := readDirectory(folder)
+	entries, err := readDirectory(nil, folder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +314,7 @@ func TestReadDirectoryKeepsTheLegacyOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := readDirectory(folder)
+	entries, err := readDirectory(nil, folder)
 	if err != nil {
 		t.Fatal(err)
 	}

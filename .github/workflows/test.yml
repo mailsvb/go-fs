@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# a test of the document viewer that finds its libraries missing fails here
+# rather than skipping, as it does in a checkout that never fetched them
+env:
+  GOFS_REQUIRE_VIEWER: "1"
+
 # a newer push to the same branch or pull request makes the older run moot
 concurrency:
   group: test-${{ github.ref }}
@@ -24,6 +29,18 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+
+      # the libraries of the document viewer, fetched from npm at the versions
+      # internal/httpd/viewer/libraries.lock pins and checked against the
+      # sha512 it pins; the cache asks npm again only when the lock changes
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/go-fs-npm
+          key: viewer-${{ hashFiles('internal/httpd/viewer/libraries.lock') }}
+      - name: fetch the viewer libraries
+        env:
+          GOFS_NPM_CACHE: ${{ runner.temp }}/go-fs-npm
+        run: go run ./tools/viewer
 
       - name: vet and gofmt
         run: make lint
@@ -58,6 +75,18 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # the libraries of the document viewer, fetched from npm at the versions
+      # internal/httpd/viewer/libraries.lock pins and checked against the
+      # sha512 it pins; the cache asks npm again only when the lock changes
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/go-fs-npm
+          key: viewer-${{ hashFiles('internal/httpd/viewer/libraries.lock') }}
+      - name: fetch the viewer libraries
+        env:
+          GOFS_NPM_CACHE: ${{ runner.temp }}/go-fs-npm
+        run: go run ./tools/viewer
+
       # the race detector runs where it is cheapest; every server here is
       # concurrent, so it runs on every change all the same
       - name: test with race detector and coverage
@@ -89,6 +118,18 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+
+      # the libraries of the document viewer, fetched from npm at the versions
+      # internal/httpd/viewer/libraries.lock pins and checked against the
+      # sha512 it pins; the cache asks npm again only when the lock changes
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/go-fs-npm
+          key: viewer-${{ hashFiles('internal/httpd/viewer/libraries.lock') }}
+      - name: fetch the viewer libraries
+        env:
+          GOFS_NPM_CACHE: ${{ runner.temp }}/go-fs-npm
+        run: go run ./tools/viewer
 
       # every release target still cross compiles
       - name: make build
@@ -124,6 +165,18 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+
+      # the libraries of the document viewer, fetched from npm at the versions
+      # internal/httpd/viewer/libraries.lock pins and checked against the
+      # sha512 it pins; the cache asks npm again only when the lock changes
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/go-fs-npm
+          key: viewer-${{ hashFiles('internal/httpd/viewer/libraries.lock') }}
+      - name: fetch the viewer libraries
+        env:
+          GOFS_NPM_CACHE: ${{ runner.temp }}/go-fs-npm
+        run: go run ./tools/viewer
 
       # a second, higher version as well, for the upgrade below
       - name: make packages

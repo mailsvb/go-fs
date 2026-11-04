@@ -2,6 +2,10 @@
 
 What each server speaks and how to set it up: FTP, SFTP, HTTP, WebDAV, S3 and TFTP.
 
+Every server serves the same tree, and none of them shows or reaches a folder
+`.go-fs` at its top, which go-fs keeps for the fixed content it serves over
+HTTP, the document viewer for one; see [The folder `/.go-fs`](BROWSER.md#the-folder-go-fs).
+
 ## The FTP data channel
 
 FTP carries its data on a second connection, and which end opens it is the

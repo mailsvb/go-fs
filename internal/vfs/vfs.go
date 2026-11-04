@@ -8,6 +8,7 @@ package vfs
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,32 +23,67 @@ type Root struct {
 	// folds says the filesystem under base ignores case, so that two
 	// spellings of a path which differ only in case name the same file.
 	folds bool
+	// reserved is the resolved folder ReservedName at the top of the served
+	// tree, which no path of the root reaches.
+	reserved string
+}
+
+// ReservedName is the folder at the top of the served tree that go-fs keeps
+// for itself. HTTP answers its fixed content, the document viewer for one,
+// below /.go-fs/, so a folder of that name in the tree could never be reached
+// over HTTP anyway; every protocol refuses it and leaves it out of listings,
+// so that nobody puts files where only some clients would see them.
+const ReservedName = ".go-fs"
+
+// Option adjusts a Root.
+type Option func(*Root)
+
+// Served says which folder is the top of the served tree, when it is not the
+// base of the root: an account of FTP or SFTP that sees a folder of its own
+// still must not reach the reserved folder of the tree, wherever it sits
+// below its base.
+func Served(folder string) Option {
+	return func(r *Root) {
+		if resolved, err := resolveFolder(folder); err == nil {
+			r.reserved = filepath.Join(resolved, ReservedName)
+		}
+	}
 }
 
 // New resolves base, following symbolic links, and returns a Root for it. The
-// folder must exist, otherwise nothing can be confined to it.
-func New(base string) (*Root, error) {
+// folder must exist, otherwise nothing can be confined to it. The base is the
+// top of the served tree unless Served says otherwise.
+func New(base string, options ...Option) (*Root, error) {
 	if base == "" {
 		return nil, errors.New("base folder is not set")
 	}
-	absolute, err := filepath.Abs(base)
+	resolved, err := resolveFolder(base)
 	if err != nil {
 		return nil, err
+	}
+	root := &Root{base: resolved, folds: foldsCase(resolved), reserved: filepath.Join(resolved, ReservedName)}
+	for _, option := range options {
+		option(root)
+	}
+	return root, nil
+}
+
+// resolveFolder makes folder absolute and follows its symbolic links, once, so
+// that a symlinked base (/tmp and /var are symlinks on macOS) still compares
+// equal to the resolved targets below it.
+func resolveFolder(folder string) (string, error) {
+	absolute, err := filepath.Abs(folder)
+	if err != nil {
+		return "", err
 	}
 	info, err := os.Stat(absolute)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if !info.IsDir() {
-		return nil, errors.New(absolute + " is not a folder")
+		return "", errors.New(absolute + " is not a folder")
 	}
-	// resolve the base once, so that a symlinked base (/tmp and /var are
-	// symlinks on macOS) still compares equal to the resolved targets below it
-	resolved, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
-		return nil, err
-	}
-	return &Root{base: resolved, folds: foldsCase(resolved)}, nil
+	return filepath.EvalSymlinks(absolute)
 }
 
 // Base returns the resolved base folder.
@@ -113,10 +149,12 @@ type Target struct {
 func (r *Root) Resolve(cwd, arg string) Target {
 	virtual, escaped := Normalize(cwd, arg)
 	osPath := filepath.Join(r.base, filepath.FromSlash(virtual))
+	resolved := resolveReal(osPath)
 	return Target{
 		Virtual: virtual,
 		Path:    osPath,
-		Valid:   !escaped && segmentsAllowed(virtual) && r.Contains(osPath),
+		Valid: !escaped && segmentsAllowed(virtual) && r.within(resolved) &&
+			!r.spellsReserved(virtual) && !r.isReserved(resolved),
 	}
 }
 
@@ -152,11 +190,84 @@ func segmentAllowed(segment string, windows bool) bool {
 // links have been resolved. A link inside the base folder that points out of it
 // is therefore rejected.
 func (r *Root) Contains(osPath string) bool {
-	resolved := resolveReal(osPath)
+	return r.within(resolveReal(osPath))
+}
+
+func (r *Root) within(resolved string) bool {
 	if resolved == r.base {
 		return true
 	}
 	return strings.HasPrefix(resolved, r.base+string(filepath.Separator))
+}
+
+// Reserved reports whether osPath is the reserved folder of the served tree or
+// below it, once symbolic links have been resolved, so that neither a link to
+// it nor another spelling of it on a filesystem that ignores case gets there.
+func (r *Root) Reserved(osPath string) bool {
+	return r.isReserved(resolveReal(osPath))
+}
+
+func (r *Root) isReserved(resolved string) bool {
+	if r.reserved == "" || len(resolved) < len(r.reserved) {
+		return false
+	}
+	head, rest := resolved[:len(r.reserved)], resolved[len(r.reserved):]
+	if rest != "" && rest[0] != filepath.Separator {
+		return false
+	}
+	if r.folds {
+		return strings.EqualFold(head, r.reserved)
+	}
+	return head == r.reserved
+}
+
+// spellsReserved catches the reserved folder by the name a client wrote, at
+// the top of a root that is the served tree, before anything is resolved.
+func (r *Root) spellsReserved(virtual string) bool {
+	if r.reserved != filepath.Join(r.base, ReservedName) {
+		return false
+	}
+	first, _, _ := strings.Cut(strings.TrimPrefix(virtual, "/"), "/")
+	return r.sameName(first, ReservedName)
+}
+
+func (r *Root) sameName(a, b string) bool {
+	if r.folds {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// Hides reports whether entry, listed in the folder dir, is to be left out of
+// what a client is shown: the reserved folder, or a link to it or into it.
+// Only an entry of the reserved name or a link costs a resolve, so a large
+// folder lists as fast as before.
+func (r *Root) Hides(dir string, entry fs.DirEntry) bool {
+	if r.reserved == "" {
+		return false
+	}
+	if entry.Type()&fs.ModeSymlink == 0 && !r.sameName(entry.Name(), ReservedName) {
+		return false
+	}
+	return r.Reserved(filepath.Join(dir, entry.Name()))
+}
+
+// ReadDir lists the folder of a target as os.ReadDir does, less what Hides
+// leaves out.
+func (r *Root) ReadDir(t Target) ([]os.DirEntry, error) {
+	return r.ReadFolder(t.Path)
+}
+
+// ReadFolder is ReadDir for a folder given by its path on the filesystem.
+func (r *Root) ReadFolder(dir string) ([]os.DirEntry, error) {
+	entries, err := os.ReadDir(dir)
+	shown := entries[:0]
+	for _, entry := range entries {
+		if !r.Hides(dir, entry) {
+			shown = append(shown, entry)
+		}
+	}
+	return shown, err
 }
 
 // Normalize resolves "." and ".." segments of a client supplied path against

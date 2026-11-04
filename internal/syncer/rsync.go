@@ -10,6 +10,7 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/store"
+	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
 // job is everything a run of a sync needs, so that a sync whose job did not
@@ -96,6 +97,15 @@ func runRsync(ctx context.Context, j job, log *slog.Logger) (result, error) {
 	var last map[string]entry
 	if j.sync.Direction == config.SyncBoth {
 		last = j.readSnapshot(log)
+	}
+	if atTop(j.sync.LocalFolder) {
+		// a sync of the whole tree leaves its reserved folder alone on both
+		// sides, and in what it synced before, so that it neither pulls
+		// into the folder nor takes the folder no longer being listed for
+		// files that were removed
+		for _, files := range []map[string]entry{localFiles, remoteFiles, last} {
+			dropReserved(files)
+		}
 	}
 	if j.sync.Delete {
 		switch j.sync.Direction {
@@ -295,4 +305,23 @@ func (j job) writeSnapshot(insync, last map[string]entry, res result) error {
 	}
 	return j.snapshots.Put(j.sync.Name, snapshot{Server: j.sync.Server, RemoteFolder: j.sync.RemoteFolder,
 		LocalFolder: j.sync.LocalFolder, Taken: time.Now(), Files: files})
+}
+
+// atTop reports whether a local folder is the top of the served tree, the
+// one folder the reserved folder is in.
+func atTop(folder string) bool {
+	return strings.Trim(folder, "/") == ""
+}
+
+// dropReserved removes the reserved folder of the served tree, and all that
+// is below it, from files. The name is matched ignoring case: either side may
+// be a filesystem that does, and what is left out by mistake is only a folder
+// not synced, where what is let in could be written where no client sees it.
+func dropReserved(files map[string]entry) {
+	for rel := range files {
+		first, _, _ := strings.Cut(rel, "/")
+		if strings.EqualFold(first, vfs.ReservedName) {
+			delete(files, rel)
+		}
+	}
 }

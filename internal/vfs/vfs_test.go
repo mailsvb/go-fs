@@ -183,3 +183,122 @@ func TestCaseInsensitiveMatchesTheFilesystem(t *testing.T) {
 		t.Errorf("CaseInsensitive() = %v, the filesystem says %v", root.CaseInsensitive(), want)
 	}
 }
+
+// The folder ReservedName at the top of the served tree is go-fs's own: no
+// spelling of it, and no link to it, is a valid path, while the same name
+// further down is an ordinary folder.
+func TestResolveRefusesTheReservedFolder(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, ReservedName, "inside"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range []string{"/.go-fs", "/.go-fs/", "/.go-fs/inside", "/.go-fs/new.txt", "/sub/../.go-fs/x", ".go-fs"} {
+		if target := root.Resolve("/", arg); target.Valid {
+			t.Errorf("Resolve(%q) is valid, want the reserved folder refused", arg)
+		}
+	}
+	for _, arg := range []string{"/sub/.go-fs", "/sub/.go-fs/x", "/.go-fs-other", "/.go-fsx/y", "/go-fs"} {
+		if target := root.Resolve("/", arg); !target.Valid {
+			t.Errorf("Resolve(%q) is refused, want it valid", arg)
+		}
+	}
+	// another case is the same folder exactly where the filesystem says so
+	upper := root.Resolve("/", "/.GO-FS/inside")
+	if want := !root.CaseInsensitive(); upper.Valid != want {
+		t.Errorf("Resolve(/.GO-FS/inside).Valid = %v, want %v on a filesystem that folds case: %v",
+			upper.Valid, want, root.CaseInsensitive())
+	}
+}
+
+func TestResolveRefusesALinkIntoTheReservedFolder(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, ReservedName, "inside"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, ReservedName), filepath.Join(base, "door")); err != nil {
+		t.Skipf("symlinks are not available: %v", err)
+	}
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range []string{"/door", "/door/inside", "/door/planted.txt"} {
+		if target := root.Resolve("/", arg); target.Valid {
+			t.Errorf("Resolve(%q) is valid through a link into the reserved folder", arg)
+		}
+	}
+}
+
+// A symlinked base, as /tmp is on macOS, reserves the folder of the resolved
+// base and still refuses it by the name the client wrote.
+func TestResolveRefusesTheReservedFolderOfALinkedBase(t *testing.T) {
+	real := t.TempDir()
+	linked := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(real, linked); err != nil {
+		t.Skipf("symlinks are not available: %v", err)
+	}
+	root, err := New(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target := root.Resolve("/", "/.go-fs/x"); target.Valid {
+		t.Error("the reserved folder of a linked base is valid")
+	}
+}
+
+// An account of FTP or SFTP may see a folder above the served tree; the
+// reserved folder of the tree is refused to it all the same, by the path it
+// has there, while a folder of that name at the top of its own base is not
+// the tree's and stays its own.
+func TestServedReservesTheFolderOfTheTreeForAnAccountRoot(t *testing.T) {
+	account := t.TempDir()
+	served := filepath.Join(account, "served")
+	if err := os.MkdirAll(filepath.Join(served, ReservedName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := New(account, Served(served))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target := root.Resolve("/", "/served/.go-fs/x"); target.Valid {
+		t.Error("the reserved folder of the served tree is valid from an account root above it")
+	}
+	if target := root.Resolve("/", "/.go-fs/x"); !target.Valid {
+		t.Error("a .go-fs at the top of an account root that is not the served tree is refused")
+	}
+}
+
+func TestReadDirHidesTheReservedFolder(t *testing.T) {
+	base := t.TempDir()
+	for _, folder := range []string{ReservedName, "kept", filepath.Join("kept", ReservedName)} {
+		if err := os.Mkdir(filepath.Join(base, folder), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	links := os.Symlink(filepath.Join(base, ReservedName), filepath.Join(base, "door")) == nil
+	root, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := func(arg string) []string {
+		entries, err := root.ReadDir(root.Resolve("/", arg))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, entry := range entries {
+			got = append(got, entry.Name())
+		}
+		return got
+	}
+	if got := names("/"); len(got) != 1 || got[0] != "kept" {
+		t.Errorf("the top of the tree lists %v, want only kept (links: %v)", got, links)
+	}
+	if got := names("/kept"); len(got) != 1 || got[0] != ReservedName {
+		t.Errorf("a folder below lists %v, want its own %s", got, ReservedName)
+	}
+}

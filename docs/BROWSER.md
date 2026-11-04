@@ -128,25 +128,80 @@ deleted on the page. When each path was deleted is kept in
 
 ## Viewing a file
 
-Clicking the name of a PDF or a plain-text file in the listing opens it in a
-new tab instead of downloading it: `.pdf`, `.txt`, `.log`, `.md`, `.csv`, `.tsv`,
-`.ini`, `.conf`, `.cfg`, `.yaml`, `.yml`, `.toml`, `.json`, `.xml`, `.sh` and
-`.properties`. Any other file is downloaded when its name is clicked, as before,
-and **Download** in a row's menu always downloads, whatever the type.
+Clicking the name of a file the document viewer can show opens it over the
+listing, in a window that fills the browser, instead of downloading it. The
+viewer draws the file in the browser itself, with libraries go-fs carries in its
+binary, so nothing is fetched from anywhere but go-fs:
 
-The endpoint is `?go-fs=view` on the file (`&view=1` in the listing of a stored
-server). It needs the right a download needs, answers ranges the way a download
-does, and is logged as `http view`. Without it a `GET` is the download it always
-was, so programs see no difference. A type not in the list is downloaded even
-when a view is asked for.
+| Files | Shown with |
+|---|---|
+| `.pdf` | [pdf.js](https://mozilla.github.io/pdf.js/) |
+| `.docx`, `.docm`, `.xlsx`, `.xlsm`, `.pptx`, `.pptm`, `.ppsx` | [Office Open XML Viewer](https://github.com/yukiyokotani/office-open-xml-viewer) |
+| `.csv`, `.tsv` | the same, as a sheet whose every field is the text it is |
+| `.txt`, `.log`, `.md`, `.ini`, `.conf`, `.cfg`, `.yaml`, `.yml`, `.toml`, `.json`, `.xml`, `.sh`, `.properties` | the browser, as plain text |
+| `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp` | the browser |
+
+Whatever draws it, the window looks the same: the name, the page or slide it is
+at, or the sheet, the zoom with *Fit to width* and *Fit the page*, **Download**
+and **Close**. ←/→ go a page back and forth where the file does not scroll
+sideways, `+`, `-` and `0` zoom, and Escape closes it. A PDF or an Office file
+that needs a password asks for it. The viewer only reads: nothing is changed,
+a script in a PDF never runs, and a link in a document opens the web or a mail
+in a tab of its own, never anything else.
+
+An older Office file, `.doc`, `.xls` or `.ppt`, is not shown, nor is an SVG,
+which is a page that can run script. Of a text file the first 10 MB are shown.
+A click with Ctrl, Cmd or Shift, or with the middle button, does what the link
+does without the viewer.
+
+Without JavaScript, or in a binary without the viewer, the name of a PDF or a
+text file opens it in a new tab instead, and any other file is downloaded when
+its name is clicked, as before. **Download** in a row's menu always downloads,
+whatever the type.
+
+The viewer reads the file from `?go-fs=view` on it (`&view=1` in the listing of
+a stored server), which needs the right a download needs, answers ranges the
+way a download does, and is logged as `http view`. Without the marker a `GET` is
+the download it always was, so programs see no difference. A PDF or a text file
+asked for with it is sent to be shown in the tab; any other type is sent as a
+download, which the viewer reads all the same.
 
 A file is shown from the listing's own origin, which carries the session. So
 what is shown must never run script there: an uploaded `.html` or `.svg` that
-did would act as whoever opened it. Text is therefore always sent as
-`text/plain; charset=utf-8`, even `.json` and `.xml`, and markup is not viewed at
-all. Every view also carries `X-Content-Type-Options: nosniff` and
+did would act as whoever opened it. Text opened in a tab is therefore always
+sent as `text/plain; charset=utf-8`, even `.json` and `.xml`, and markup is not
+viewed at all. Every view also carries `X-Content-Type-Options: nosniff` and
 `Content-Security-Policy: sandbox; default-src 'none'`, which gives the document
 an origin of its own. Browsers show a PDF in that sandbox as they do without it.
+
+The viewer itself is a page of go-fs in a frame of the listing, with a policy of
+its own: script only from go-fs, with WebAssembly for the parsers of the
+libraries, and no fetch, image or font from any other host. A document that
+got a library to write markup still could not run script, and it reaches
+nothing outside go-fs.
+
+### The folder `/.go-fs`
+
+The viewer and its libraries are served below `/.go-fs/viewer/`, under a name
+that changes with every build, so that a browser keeps them for as long as it
+likes. They load their parts by paths relative to their own, which a query on
+a path of the served folder, as every other endpoint is, cannot give them.
+
+So a folder `.go-fs` at the top of `general.baseFolderFiles` is go-fs's own, on
+every protocol: HTTP, WebDAV and S3, FTP, SFTP and TFTP neither show it nor let
+anyone create, read, change or remove anything in it, in any spelling the
+filesystem takes for it, nor through a link to it. A sync of the whole served
+folder leaves it out on both sides. A folder of that name further down is an
+ordinary folder. A served folder that has one at its top already, from before
+go-fs reserved it, keeps it as it is; go-fs says so in its log when it starts.
+
+The libraries go-fs embeds are [pdf.js](https://github.com/mozilla/pdf.js)
+under the Apache License 2.0 and the
+[Office Open XML Viewer](https://github.com/yukiyokotani/office-open-xml-viewer)
+under the MIT License, with the fonts and parsers they bring. Their licenses are
+served beside them, at `/.go-fs/viewer/<build>/pdfjs/LICENSE` and
+`/.go-fs/viewer/<build>/ooxml/LICENSE` with `THIRD_PARTY_NOTICES.md`, and
+`/.go-fs/viewer/<build>/VERSIONS` says which versions the build has.
 
 ## Downloading a folder
 

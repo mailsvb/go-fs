@@ -123,7 +123,7 @@ func (s *Server) localBrowse(set *settings, w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	entries, err := readDirectory(target.Path)
+	entries, err := readDirectory(s.root, target.Path)
 	if err != nil {
 		s.log.Error("http cannot read the folder", "path", target.Virtual, "error", err)
 		http.Error(w, "The folder cannot be read.", http.StatusInternalServerError)

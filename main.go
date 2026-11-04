@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -20,10 +21,12 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/features"
+	"github.com/mailsvb/go-fs/internal/httpd/viewer"
 	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/selfupdate"
 	"github.com/mailsvb/go-fs/internal/store"
 	"github.com/mailsvb/go-fs/internal/supervisor"
+	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
 // baseVersion is the released version of the tool and the one place it is
@@ -153,6 +156,13 @@ func run(stop <-chan struct{}) error {
 		"logLevel", cfg.General.LogLevel,
 		"logFormat", cfg.General.LogFormat)
 	warnAboutSecrets(logger.Logger, *configPath, cfg)
+	warnAboutReserved(logger.Logger, cfg)
+	if viewer.Compiled && !viewer.Available() {
+		// a plain go build before the fetch makes a binary that works, but
+		// shows no file in the browser; whoever built it should know why
+		logger.Warn("built without the libraries of the document viewer, so no file " +
+			"is shown in the browser; run make viewer-deps before building")
+	}
 
 	// a file written for an older version names the folders by keys that
 	// have since been renamed; it was read through them, and is given the
@@ -299,6 +309,18 @@ func restart(logger *slog.Logger, updater *selfupdate.Updater) error {
 		return fmt.Errorf("the new version could not be started: %w", err)
 	}
 	return nil
+}
+
+// warnAboutReserved says that the served folder has a folder of the name go-fs
+// keeps for itself at its top, which no protocol serves or lists any more. It
+// is left as it is: what is in it is the owner's, and only they know where it
+// should go.
+func warnAboutReserved(logger *slog.Logger, cfg config.Config) {
+	folder := filepath.Join(cfg.General.BaseFolderFiles, vfs.ReservedName)
+	if _, err := os.Lstat(folder); err == nil {
+		logger.Warn("the served folder has a folder go-fs keeps for itself, which is "+
+			"neither served nor listed; move what is in it elsewhere", "path", folder)
+	}
 }
 
 // warnAboutSecrets says what is worth knowing about the file before the

@@ -82,10 +82,20 @@ jobs:
             git push
           fi
 
+      # the libraries of the document viewer, fetched from npm at the versions
+      # the lock file pins and checked against the sha512 it pins; a release
+      # without them stops here rather than ship without the viewer
+      - name: fetch the viewer libraries
+        run: |
+          go run ./tools/viewer
+          go run ./tools/viewer -check
+
       # A release that fails its own tests is not one to publish, so they run
       # here rather than being trusted to have run somewhere earlier. The race
       # detector is included: every server here is concurrent.
       - name: vet and test
+        env:
+          GOFS_REQUIRE_VIEWER: "1"
         run: make lint race
 
       - name: make release

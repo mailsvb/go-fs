@@ -47,7 +47,9 @@ func buildAccounts(users []config.User, serverRoot *vfs.Root) (map[string]*accou
 			root:     serverRoot,
 		}
 		if user.Basefolder != "" {
-			root, err := vfs.New(user.Basefolder)
+			// the folder of the account may hold the served tree, whose
+			// reserved folder it must not reach either
+			root, err := vfs.New(user.Basefolder, vfs.Served(serverRoot.Base()))
 			if err != nil {
 				return nil, fmt.Errorf("users %q basefolder: %w", user.Username, err)
 			}

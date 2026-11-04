@@ -23,12 +23,14 @@ import (
 	"net/netip"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/admin"
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/httpd/viewer"
 	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/service"
 	"github.com/mailsvb/go-fs/internal/store"
@@ -585,6 +587,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /.go-fs/ is go-fs's own and never a folder of the served tree (see
+	// vfs.ReservedName): the document viewer is served below it, to anyone,
+	// since it holds nothing but the code of the page, and every other path
+	// in it is not there
+	if s.reservedPath(r.URL.Path) {
+		if strings.HasPrefix(r.URL.Path, viewer.Root) {
+			viewer.Serve(w, r)
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+
 	target := s.root.Resolve("/", r.URL.Path)
 	if !target.Valid {
 		// a path that leaves the served folder is answered as a path that is
@@ -835,4 +850,16 @@ func addressOf(r *http.Request) string {
 		return host
 	}
 	return r.RemoteAddr
+}
+
+// reservedPath reports whether a request path is in the folder at the top of
+// the served tree that go-fs keeps for itself, spelled in whatever case the
+// filesystem would take for it.
+func (s *Server) reservedPath(requestPath string) bool {
+	virtual, _ := vfs.Normalize("/", requestPath)
+	first, _, _ := strings.Cut(strings.TrimPrefix(virtual, "/"), "/")
+	if s.root.CaseInsensitive() {
+		return strings.EqualFold(first, vfs.ReservedName)
+	}
+	return first == vfs.ReservedName
 }

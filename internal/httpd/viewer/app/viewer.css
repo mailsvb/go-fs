@@ -1,0 +1,232 @@
+/* The viewer is one frame for every kind of file: the bar, the backdrop the
+   pages sit on and the pages themselves look the same whichever library draws
+   them, so the palette is the listing's, and the page, its gap and its shadow
+   are tokens the libraries are handed too. */
+:root {
+  color-scheme: light dark;
+  --ground: #ffffff;
+  --raised: #f5f6f8;
+  --line: #d8dbe0;
+  --ink: #1b1f24;
+  --faint: #626b76;
+  --accent: #2f6f4f;
+  --bad: #a3352b;
+  --backdrop: #e7e9ec;
+  --page: #ffffff;
+  --page-ink: #1b1f24;
+  --page-gap: 16px;
+  --page-shadow: 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #16191d;
+    --raised: #1e2228;
+    --line: #333941;
+    --ink: #e6e9ed;
+    --faint: #9aa4b0;
+    --accent: #6fbf8f;
+    --bad: #e08b82;
+    --backdrop: #0e1013;
+    --page-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--backdrop);
+  color: var(--ink);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+[hidden] { display: none !important; }
+
+.ic { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor;
+      stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.ic.big { font-size: 2rem; color: var(--faint); }
+.icons { display: none; }
+
+/* --- the bar ------------------------------------------------------------ */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  flex: none;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--ground);
+}
+.name {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+}
+.name .ic { font-size: 1.1rem; color: var(--faint); }
+.name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group { display: inline-flex; align-items: center; gap: 0.35rem; }
+
+.plain {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 2rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.plain:hover { border-color: var(--faint); }
+.plain:disabled { opacity: 0.45; cursor: default; }
+.plain:disabled:hover { border-color: var(--line); }
+.plain .ic { font-size: 1rem; }
+.plain.icon { width: 2rem; padding: 0; }
+.plain.fit.active { border-color: var(--accent); color: var(--accent); }
+.plain.go { border-color: var(--accent); background: var(--accent); color: var(--ground); }
+
+.page { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--faint); font-size: 0.85rem;
+        font-variant-numeric: tabular-nums; }
+.page input, .group select {
+  height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+}
+.page input { width: 3.2rem; padding: 0 0.4rem; text-align: right; }
+.group select { max-width: 14rem; padding: 0 0.4rem; }
+.scale { min-width: 3.4rem; text-align: center; color: var(--faint); font-size: 0.85rem;
+         font-variant-numeric: tabular-nums; }
+
+/* --- the stage, where a backend puts what it draws ---------------------- */
+
+#stage { position: relative; flex: 1; min-height: 0; outline: none; }
+.scroller { position: absolute; inset: 0; overflow: auto; }
+
+/* pdf.js: its pages take the gap and the shadow every other page has, rather
+   than the border image of its own viewer. It lays them out inline, for the
+   modes that put them side by side; the one mode here has them one under the
+   other, centred. */
+.scroller.pdf .pdfViewer { padding: var(--page-gap) 0; }
+.scroller.pdf .pdfViewer.removePageBorders .page {
+  display: block;
+  margin: 0 auto var(--page-gap);
+  box-shadow: var(--page-shadow);
+}
+
+/* text and images are put on a page of their own */
+.sheet-of-paper {
+  margin: var(--page-gap) auto;
+  background: var(--page);
+  color: var(--page-ink);
+  box-shadow: var(--page-shadow);
+}
+.text .sheet-of-paper {
+  width: max-content;
+  min-width: min(52rem, calc(100% - 2 * var(--page-gap)));
+  max-width: none;
+  padding: 1.5rem 2rem;
+}
+.text pre {
+  margin: 0;
+  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: calc(13px * var(--zoom, 1));
+  white-space: pre;
+  tab-size: 4;
+}
+.text .cut {
+  margin: 0 auto var(--page-gap);
+  max-width: 52rem;
+  color: var(--faint);
+  font-size: 0.85rem;
+  text-align: center;
+}
+.image { display: grid; place-items: center; }
+.image img {
+  display: block;
+  margin: var(--page-gap);
+  box-shadow: var(--page-shadow);
+  /* a checkerboard under a picture that has transparent parts */
+  background: repeating-conic-gradient(#e3e5e8 0% 25%, #ffffff 0% 50%) 50% / 16px 16px;
+  image-rendering: auto;
+}
+.grid { overflow: hidden; }
+.grid canvas { display: block; width: 100%; height: 100%; }
+
+/* --- what is said over the stage: loading, a password, a failure ------- */
+
+.status {
+  position: fixed;
+  inset: 3.3rem 0 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.status[hidden] { display: none; }
+.panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  width: min(26rem, calc(100vw - 2rem));
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--ground);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  text-align: center;
+  pointer-events: auto;
+}
+.panel p { margin: 0; overflow-wrap: anywhere; }
+.panel .detail { color: var(--faint); font-size: 0.8rem; }
+.panel .detail:empty { display: none; }
+.panel input[type="password"] {
+  width: 100%;
+  height: 2rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+}
+.panel .row { display: flex; gap: 0.5rem; }
+.panel .bad { color: var(--bad); }
+.spinner {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 2.5px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+.meter { width: 100%; height: 4px; border-radius: 2px; background: var(--raised); overflow: hidden; }
+.meter span { display: block; width: 0; height: 100%; background: var(--accent); transition: width 0.15s; }
+.meter.unknown { visibility: hidden; }
+
+@media (max-width: 40rem) {
+  .bar { gap: 0.5rem; padding: 0.5rem 0.6rem; }
+  .name { flex-basis: 100%; }
+  .plain span { display: none; }
+  .fit { display: none; }
+  .status { inset: 5.6rem 0 0; }
+}

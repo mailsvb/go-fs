@@ -19,7 +19,8 @@ HTTP server serves to its admins.
 - **More than a file server.** An OCI container registry, rpm and F-Droid
   repositories that update themselves, and a music library that Jellyfin
   clients can play from.
-- **A real browser UI.** PDF and text previews, share links, a trash, folder
+- **A real browser UI.** A built-in viewer for PDF, Word, Excel, PowerPoint,
+  text and images that needs nothing from the web, share links, a trash, folder
   downloads, fetch from a URL, send to SFTP, SMB or Artifactory (in a
   Cryptomator vault if you like), and scheduled two-way sync.
 - **Safe by default.** Listens on `127.0.0.1` only, generates its own
@@ -74,7 +75,7 @@ or on the admin page. Every key is explained in
 | [Protocols](docs/PROTOCOLS.md) | FTP, SFTP, HTTP, WebDAV, bearer tokens, S3, TFTP, supported standards |
 | [Container registry](docs/REGISTRY.md) | pushing and pulling images, multi-platform tags |
 | [Repositories](docs/REPOSITORIES.md) | rpm and F-Droid repositories, Jellyfin music library |
-| [Browser](docs/BROWSER.md) | browser login, file view, trash, folder download, share links, fetch from URL |
+| [Browser](docs/BROWSER.md) | browser login, document viewer, trash, folder download, share links, fetch from URL |
 | [Remote servers](docs/REMOTE-SERVERS.md) | send to SFTP, SMB or Artifactory, Cryptomator vaults, sync |
 | [Logging](docs/LOGGING.md) | log levels and format, reading the log |
 | [Development](docs/DEVELOPMENT.md) | building, versioning, releases, go-fs-light |

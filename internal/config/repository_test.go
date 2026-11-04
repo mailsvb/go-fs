@@ -245,3 +245,42 @@ func TestJARKeyMaterial(t *testing.T) {
 		t.Error("the kinds of signing key")
 	}
 }
+
+// The folder go-fs keeps for itself at the top of the served tree is never a
+// folder a sync or a repository works in, whatever its case.
+func TestFoldersRefuseTheReservedFolder(t *testing.T) {
+	for _, raw := range []string{"/.go-fs", ".go-fs/x", "/.GO-FS/y", "/a/../.go-fs"} {
+		if _, err := RepositoryFolder(raw); err == nil {
+			t.Errorf("RepositoryFolder(%q) is accepted", raw)
+		}
+		if _, err := SyncFolder(raw); err == nil {
+			t.Errorf("SyncFolder(%q) is accepted", raw)
+		}
+	}
+	for _, raw := range []string{"/sub/.go-fs", "/.go-fs-other"} {
+		if _, err := RepositoryFolder(raw); err != nil {
+			t.Errorf("RepositoryFolder(%q): %v", raw, err)
+		}
+		if _, err := SyncFolder(raw); err != nil {
+			t.Errorf("SyncFolder(%q): %v", raw, err)
+		}
+	}
+}
+
+func TestReservesFolderOfTheServedTree(t *testing.T) {
+	base := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(base, ".go-fs", "inside"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(base, "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var c Config
+	c.General.BaseFolderFiles = base
+	if !c.reservesFolder(filepath.Join(base, ".go-fs", "inside")) {
+		t.Error("a folder inside the reserved folder is not reserved")
+	}
+	if c.reservesFolder(filepath.Join(base, "other")) || c.reservesFolder(t.TempDir()) {
+		t.Error("an ordinary folder is reserved")
+	}
+}

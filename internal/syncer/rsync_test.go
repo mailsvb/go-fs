@@ -320,3 +320,28 @@ func TestPushIntoAVault(t *testing.T) {
 		t.Error("the vault holds the cleartext")
 	}
 }
+
+// A sync of the whole tree never sees the reserved folder, on either side
+// and in whatever spelling, while the same name further down is synced.
+func TestDropReservedLeavesTheReservedFolderOut(t *testing.T) {
+	files := map[string]entry{
+		".go-fs":         {},
+		".go-fs/x.txt":   {},
+		".GO-FS/y.txt":   {},
+		"sub/.go-fs/z":   {},
+		".go-fs-other/w": {},
+		"plain.txt":      {},
+	}
+	dropReserved(files)
+	for _, kept := range []string{"sub/.go-fs/z", ".go-fs-other/w", "plain.txt"} {
+		if _, ok := files[kept]; !ok {
+			t.Errorf("%s was dropped", kept)
+		}
+	}
+	if len(files) != 3 {
+		t.Errorf("left %d entries, want 3: %v", len(files), files)
+	}
+	if !atTop("/") || !atTop("") || atTop("/sub") {
+		t.Error("atTop does not tell the top of the tree from a folder in it")
+	}
+}

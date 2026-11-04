@@ -40,7 +40,7 @@ func FuzzNormalize(f *testing.F) {
 }
 
 func FuzzResolve(f *testing.F) {
-	for _, seed := range []string{"file.txt", "../escape", "/a/../../b", "a/./b", `a\..\..\b`, "x::$DATA"} {
+	for _, seed := range []string{"file.txt", "../escape", "/a/../../b", "a/./b", `a\..\..\b`, "x::$DATA", ".go-fs/x", "/.GO-FS"} {
 		f.Add(seed)
 	}
 	root, err := New(f.TempDir())
@@ -59,6 +59,9 @@ func FuzzResolve(f *testing.F) {
 		}
 		if !root.Contains(target.Path) {
 			t.Fatalf("Resolve(%q) is valid, but %q is outside the base", arg, target.Path)
+		}
+		if root.Reserved(target.Path) {
+			t.Fatalf("Resolve(%q) is valid, but %q is the reserved folder", arg, target.Path)
 		}
 		if target.Path != root.Base() && !strings.HasPrefix(target.Path, root.Base()+string(filepath.Separator)) {
 			t.Fatalf("Resolve(%q).Path = %q does not start with the base %q", arg, target.Path, root.Base())

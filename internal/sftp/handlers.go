@@ -338,7 +338,7 @@ func (s *session) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 
 	switch r.Method {
 	case "List":
-		entries, err := os.ReadDir(target.Path)
+		entries, err := user.root.ReadDir(target)
 		if err != nil {
 			return nil, s.failed(r, err)
 		}

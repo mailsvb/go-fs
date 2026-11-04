@@ -27,6 +27,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/mailsvb/go-fs/internal/features"
+	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
 //go:embed template.toml
@@ -1403,6 +1404,10 @@ func (c Config) validateUsers() error {
 			if err := checkFolder(where+".basefolder", user.Basefolder); err != nil {
 				return err
 			}
+			if c.reservesFolder(user.Basefolder) {
+				return fmt.Errorf("%s %q is in the folder %s of general.baseFolderFiles, which go-fs keeps for itself",
+					where+".basefolder", user.Basefolder, vfs.ReservedName)
+			}
 		}
 		if sftp {
 			// the keys are parsed here as well as at startup, so that -check
@@ -1965,6 +1970,18 @@ func checkPort(name string, port int) error {
 		return fmt.Errorf("%s %d is out of range", name, port)
 	}
 	return nil
+}
+
+// reservesFolder reports whether folder, a folder on disk, is the reserved
+// folder at the top of general.baseFolderFiles or below it, where an account
+// that saw it as its own could reach nothing at all.
+func (c Config) reservesFolder(folder string) bool {
+	root, err := vfs.New(c.General.BaseFolderFiles)
+	if err != nil {
+		return false
+	}
+	absolute, err := filepath.Abs(folder)
+	return err == nil && root.Reserved(absolute)
 }
 
 func checkFolder(name, folder string) error {

@@ -13,6 +13,11 @@ on:
 permissions:
   contents: read
 
+# go-fs-light has the document viewer, so its tests need the libraries; a
+# build with no_viewer has none to need
+env:
+  GOFS_REQUIRE_VIEWER: "1"
+
 concurrency:
   group: features-${{ github.ref }}
   cancel-in-progress: true
@@ -25,6 +30,18 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+
+      # the libraries of the document viewer, fetched from npm at the versions
+      # internal/httpd/viewer/libraries.lock pins and checked against the
+      # sha512 it pins; the cache asks npm again only when the lock changes
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/go-fs-npm
+          key: viewer-${{ hashFiles('internal/httpd/viewer/libraries.lock') }}
+      - name: fetch the viewer libraries
+        env:
+          GOFS_NPM_CACHE: ${{ runner.temp }}/go-fs-npm
+        run: go run ./tools/viewer
 
       - name: vet go-fs-light
         run: |
@@ -51,13 +68,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        tags: [no_tftp, no_ftp, no_sftpd, no_sftp_remote, no_smb, no_rpm, no_fdroid, no_jellyfin, no_cryptomator, no_webdav, "no_sftpd,no_sftp_remote"]
+        tags: [no_tftp, no_ftp, no_sftpd, no_sftp_remote, no_smb, no_rpm, no_fdroid, no_jellyfin, no_cryptomator, no_webdav, no_viewer, "no_sftpd,no_sftp_remote"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+
+      # the libraries of the document viewer, as in the light job; a build
+      # without the viewer is built without them, which shows that it needs
+      # nothing of them
+      - uses: actions/cache@v6
+        if: matrix.tags != 'no_viewer'
+        with:
+          path: ${{ runner.temp }}/go-fs-npm
+          key: viewer-${{ hashFiles('internal/httpd/viewer/libraries.lock') }}
+      - name: fetch the viewer libraries
+        if: matrix.tags != 'no_viewer'
+        env:
+          GOFS_NPM_CACHE: ${{ runner.temp }}/go-fs-npm
+        run: go run ./tools/viewer
 
       - name: vet
         run: go vet -tags "${{ matrix.tags }}" ./...

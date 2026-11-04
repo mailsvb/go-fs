@@ -32,7 +32,9 @@ listens on `127.0.0.1` alone, and the ports are 8021 for FTP, 8990 for FTPS,
 listens on every interface.
 
 `general.baseFolderFiles` is the folder every server serves: FTP, SFTP, HTTP,
-S3, WebDAV and TFTP all see the same tree. `general.baseFolderRegistry` is the
+S3, WebDAV and TFTP all see the same tree, all but a folder `.go-fs` at its top,
+which go-fs keeps for itself (see [The folder `/.go-fs`](BROWSER.md#the-folder-go-fs))
+and which no sync, repository or account folder may be in. `general.baseFolderRegistry` is the
 folder of the [container registry](REGISTRY.md#container-registry), which is off while it
 is empty. `general.baseFolderTemp` is where an upload to the HTTP server is
 staged until it is whole — a chunked upload, an S3 object, a WebDAV file or a

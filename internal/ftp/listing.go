@@ -96,7 +96,7 @@ func (c *conn) buildListing(format listFormat, osPath string) (string, bool) {
 	folder := osPath
 	var names []string
 	if info.IsDir() {
-		entries, err := os.ReadDir(osPath)
+		entries, err := c.root.ReadFolder(osPath)
 		if err != nil {
 			// a folder that exists but cannot be read is a permission problem
 			// on the server, which the client's 550 does not say

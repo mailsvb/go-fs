@@ -1,0 +1,140 @@
+package httpd
+
+import (
+	"net/http"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mailsvb/go-fs/internal/httpd/viewer"
+)
+
+// requireViewer skips a test of the document viewer in a binary without its
+// libraries, unless GOFS_REQUIRE_VIEWER says they must be there, as CI does
+// for every build that has the viewer.
+func requireViewer(t *testing.T) {
+	t.Helper()
+	if viewer.Available() {
+		return
+	}
+	if viewer.Compiled && os.Getenv("GOFS_REQUIRE_VIEWER") != "" {
+		t.Fatal("the libraries of the document viewer are not embedded; run make viewer-deps")
+	}
+	t.Skip("the libraries of the document viewer are not fetched; run make viewer-deps")
+}
+
+// /.go-fs/ is go-fs's own: nothing in it is a file of the served tree, even
+// one that is on disk there, and the listing of the top does not show it.
+func TestReservedFolderIsNeverServed(t *testing.T) {
+	server := newServer(t, publicServer)
+	server.write(t, ".go-fs/secret.txt", "planted")
+	server.write(t, "sub/.go-fs/kept.txt", "kept")
+	server.write(t, "visible.txt", "visible")
+
+	for _, path := range []string{"/.go-fs/secret.txt", "/.go-fs/", "/.go-fs", "/.go-fs/viewer/x", "/sub/../.go-fs/secret.txt"} {
+		res, body := get(t, server, path)
+		if res.StatusCode != http.StatusNotFound || strings.Contains(body, "planted") {
+			t.Errorf("GET %s: status %d, body %q", path, res.StatusCode, body)
+		}
+	}
+	if res, body := get(t, server, "/sub/.go-fs/kept.txt"); res.StatusCode != http.StatusOK || body != "kept" {
+		t.Errorf("a .go-fs further down is not served: status %d, body %q", res.StatusCode, body)
+	}
+	res, body := get(t, server, "/")
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "visible.txt") {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	if strings.Contains(body, `data-name=".go-fs"`) {
+		t.Error("the listing of the top shows the reserved folder")
+	}
+
+	put := basic(t, server, http.MethodPut, "/.go-fs/new.txt", "john", "doe", strings.NewReader("x"))
+	if put.StatusCode < 400 {
+		t.Errorf("PUT into the reserved folder: status %d", put.StatusCode)
+	}
+	if _, err := os.Stat(server.base + "/.go-fs/new.txt"); err == nil {
+		t.Error("a PUT wrote into the reserved folder")
+	}
+}
+
+func TestViewerIsServedBelowTheReservedFolder(t *testing.T) {
+	requireViewer(t)
+	server := newServer(t, nil)
+	// public, as the code of a page is: nobody signs in to fetch it
+	res, body := get(t, server, viewer.Page())
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "viewer.js") {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	if got := res.Header.Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'self'") {
+		t.Errorf("Content-Security-Policy = %q", got)
+	}
+}
+
+// The listing marks the names the viewer shows with how it shows them and
+// where it reads them from: the view of the file, whatever its type, so that
+// the log says it was viewed.
+func TestListingOffersTheViewer(t *testing.T) {
+	requireViewer(t)
+	server := newServer(t, publicServer)
+	server.write(t, "sub/report.pdf", "%PDF")
+	server.write(t, "sub/letter.docx", "PK")
+	server.write(t, "sub/photo.png", "png")
+	server.write(t, "sub/bundle.zip", "zip")
+	server.write(t, "sub/drawing.svg", "<svg/>")
+
+	res, body := get(t, server, "/sub/")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	for _, want := range []string{
+		`data-viewer="pdf" data-viewer-src="report.pdf?go-fs=view"`,
+		`<a href="letter.docx" data-viewer="docx" data-viewer-src="letter.docx?go-fs=view">`,
+		`data-viewer="image" data-viewer-src="photo.png?go-fs=view"`,
+		`<a href="bundle.zip">bundle.zip</a>`,
+		`<a href="drawing.svg">drawing.svg</a>`,
+		`<dialog id="viewer" class="viewer" data-page="` + viewer.Page() + `"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+	if got := res.Header.Get("Content-Security-Policy"); !strings.Contains(got, "frame-src 'self'") {
+		t.Errorf("the listing does not let in the frame of the viewer: %q", got)
+	}
+}
+
+// A stored server's listing reads a file through its own download, with its
+// own view marker.
+func TestRemoteListingOffersTheViewer(t *testing.T) {
+	requireViewer(t)
+	entries := []entry{{Name: "deck.pptx", IsFile: true, ModTime: time.Now()}}
+	page, err := listingPage(remotePlace("share", "/docs/"), entries, sortOrder{}, rights{Download: true},
+		sendView{}, sessionView{}, "nonce", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `data-viewer="pptx" data-viewer-src="` + strings.ReplaceAll(remoteURL("share", "/docs/deck.pptx"), "&", "&amp;") +
+		"&amp;" + remoteViewParam + `=1"`
+	if !strings.Contains(string(page), want) {
+		t.Errorf("the page is missing %q", want)
+	}
+}
+
+// What the viewer reads of a file it shows and the browser could not, a Word
+// file for one, is still sent as a download, and logged as a view.
+func TestViewOfAnOfficeFileIsLoggedAsAView(t *testing.T) {
+	requireViewer(t)
+	server := newServer(t, publicServer)
+	server.write(t, "letter.docx", "PK pretend")
+	res, body := get(t, server, "/letter.docx?go-fs=view")
+	if res.StatusCode != http.StatusOK || body != "PK pretend" {
+		t.Fatalf("status %d body %q", res.StatusCode, body)
+	}
+	if got := res.Header.Get("Content-Disposition"); !strings.HasPrefix(got, "attachment") {
+		t.Errorf("Content-Disposition = %q, want the download it always was", got)
+	}
+	if server.logs.find("http view") == nil {
+		t.Error("the view was not logged as one")
+	}
+}

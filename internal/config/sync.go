@@ -211,7 +211,11 @@ func SyncFolder(raw string) (string, error) {
 			return "", fmt.Errorf("%q leaves the served folder", raw)
 		}
 	}
-	return path.Clean("/" + raw), nil
+	clean := path.Clean("/" + raw)
+	if err := notReserved(raw, clean); err != nil {
+		return "", err
+	}
+	return clean, nil
 }
 
 // SyncRemoteFolder reads the remote folder of a sync: clean, "" for where

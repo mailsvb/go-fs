@@ -105,7 +105,9 @@ func (c *conn) applyPermissions(permissions config.Permissions) {
 		c.root = c.server.root
 		return
 	}
-	root, err := vfs.New(permissions.Basefolder)
+	// the folder of the account may hold the served tree, whose reserved
+	// folder it must not reach either
+	root, err := vfs.New(permissions.Basefolder, vfs.Served(c.server.root.Base()))
 	if err != nil {
 		c.log.Error("ftp cannot use the base folder of the user",
 			"user", c.username, "basefolder", permissions.Basefolder, "error", err)

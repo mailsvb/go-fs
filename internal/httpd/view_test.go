@@ -132,7 +132,7 @@ func TestListingLinksViewableFilesToTheirView(t *testing.T) {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
 	for _, want := range []string{
-		`<a href="report.pdf?go-fs=view" target="_blank" rel="noopener">report.pdf</a>`,
+		`<a href="report.pdf?go-fs=view" target="_blank" rel="noopener"`,
 		`<a href="bundle.zip">bundle.zip</a>`,
 		`<a href="page.html">page.html</a>`,
 	} {
