@@ -2,9 +2,9 @@
 
 // Package viewer is the document viewer of the web interface: the page the
 // listing opens over itself to show a file in the browser, and the libraries
-// it draws them with, pdf.js for PDF and the viewer of Office Open XML for
-// Word, Excel and PowerPoint, which the binary embeds, so that nothing is
-// fetched from anywhere but go-fs.
+// it draws them with, pdf.js for PDF, the viewer of Office Open XML for Word,
+// Excel and PowerPoint and Ace for text, which it also edits in, which the
+// binary embeds, so that nothing is fetched from anywhere but go-fs.
 //
 // The libraries load their parts by paths relative to their own, so they are
 // served below a path of their own, Prefix, in the folder /.go-fs/ that the
@@ -107,10 +107,12 @@ func Page() string {
 	return prefix + "index.html"
 }
 
-// kinds says how the viewer shows a file, by its extension. Text is the text
-// the listing would otherwise show in a tab of its own, less the delimited
-// text, which is shown as a sheet. An SVG is never shown: it is a page that
-// can run script, which no other kind here is.
+// kinds says how the viewer shows a file, by its extension. Text is shown in
+// the editor, read only unless it is opened to be edited: every kind of text
+// and source code the listing is likely to hold, less the delimited text,
+// which is shown as a sheet. Markup is text here too, its source and never
+// the page it would make; an SVG is still never shown, since the browser
+// would draw it as an image anywhere else the listing links it.
 var kinds = map[string]string{
 	".pdf": "pdf",
 
@@ -125,20 +127,6 @@ var kinds = map[string]string{
 	".csv": "sheet",
 	".tsv": "sheet",
 
-	".txt":        "text",
-	".log":        "text",
-	".md":         "text",
-	".ini":        "text",
-	".conf":       "text",
-	".cfg":        "text",
-	".yaml":       "text",
-	".yml":        "text",
-	".toml":       "text",
-	".json":       "text",
-	".xml":        "text",
-	".sh":         "text",
-	".properties": "text",
-
 	".png":  "image",
 	".jpg":  "image",
 	".jpeg": "image",
@@ -148,13 +136,81 @@ var kinds = map[string]string{
 	".bmp":  "image",
 }
 
+// textExtensions are the extensions of text, which kinds takes as "text".
+var textExtensions = []string{
+	// notes, logs and settings
+	".txt", ".text", ".log", ".md", ".markdown", ".rst", ".adoc", ".tex",
+	".ini", ".conf", ".cfg", ".cnf", ".config", ".properties", ".env",
+	".yaml", ".yml", ".toml", ".json", ".jsonc", ".json5", ".xml", ".xsd",
+	".xsl", ".plist", ".service", ".desktop", ".reg", ".csr", ".pem", ".crt",
+	".gitignore", ".gitattributes", ".gitmodules", ".dockerignore",
+	".editorconfig", ".npmrc", ".htaccess", ".diff", ".patch", ".srt", ".vtt",
+	// markup and style
+	".html", ".htm", ".xhtml", ".css", ".scss", ".sass", ".less", ".vue",
+	".svelte",
+	// scripts and source
+	".sh", ".bash", ".zsh", ".fish", ".bat", ".cmd", ".ps1", ".psm1",
+	".go", ".mod", ".sum", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts",
+	".cts", ".tsx", ".py", ".pyi", ".rb", ".pl", ".pm", ".php", ".lua", ".r",
+	".java", ".kt", ".kts", ".gradle", ".groovy", ".scala", ".clj", ".c",
+	".h", ".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx", ".m", ".mm", ".cs",
+	".fs", ".vb", ".rs", ".swift", ".dart", ".zig", ".nim", ".ex", ".exs",
+	".erl", ".hrl", ".hs", ".ml", ".elm", ".jl", ".sql", ".graphql", ".proto",
+	".tf", ".tfvars", ".hcl", ".nix", ".cmake", ".mk", ".make", ".csproj",
+	".vbproj", ".sln", ".props", ".targets", ".dockerfile", ".asm", ".s",
+	".vim", ".awk", ".sed", ".tcl", ".lisp", ".el", ".scm", ".rkt", ".cl",
+}
+
+// textNames are files of text known by their name rather than an extension,
+// which they do not have, lower case.
+var textNames = map[string]bool{
+	"makefile": true, "gnumakefile": true, "dockerfile": true,
+	"containerfile": true, "jenkinsfile": true, "vagrantfile": true,
+	"gemfile": true, "rakefile": true, "procfile": true, "brewfile": true,
+	"readme": true, "license": true, "licence": true, "copying": true,
+	"authors": true, "changelog": true, "changes": true, "notice": true,
+	"todo": true, "version": true, "codeowners": true,
+}
+
+func init() {
+	for _, ext := range textExtensions {
+		if _, taken := kinds[ext]; taken {
+			panic("viewer: " + ext + " has a kind already")
+		}
+		kinds[ext] = "text"
+	}
+}
+
 // Kind is how the viewer shows a file by its name, "" for a file it does not
 // show, and for every file without the libraries.
 func Kind(name string) string {
 	if !available {
 		return ""
 	}
-	return kinds[strings.ToLower(path.Ext(name))]
+	return kindOf(name)
+}
+
+func kindOf(name string) string {
+	base := strings.ToLower(path.Base(name))
+	ext := path.Ext(base)
+	// a name that is only an extension, .env or .gitignore, is one as well
+	if ext == "" || ext == base {
+		if textNames[base] {
+			return "text"
+		}
+	}
+	return kinds[ext]
+}
+
+// Editable reports whether the viewer can open a file to be edited: text,
+// and the delimited text it otherwise shows as a sheet. Whether the account
+// may write it is for the caller to decide.
+func Editable(name string) bool {
+	switch Kind(name) {
+	case "text", "sheet":
+		return true
+	}
+	return false
 }
 
 // pagePolicy is the Content-Security-Policy of the page and of the scripts,

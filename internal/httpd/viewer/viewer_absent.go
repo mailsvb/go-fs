@@ -20,4 +20,6 @@ func Page() string { return "" }
 
 func Kind(string) string { return "" }
 
+func Editable(string) bool { return false }
+
 func Serve(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }

@@ -249,6 +249,10 @@ type rights struct {
 	DeleteFolder bool
 	Mkdir        bool
 	Rename       bool
+	// Overwrite is replacing a file that is there, which Edit on a file of
+	// text does when it saves. A stored server's page leaves it out: what
+	// it saves to is the served tree alone.
+	Overwrite bool
 	// Fetch is the Fetch button, which downloads a URL into the folder. It
 	// is offered to a session only; see mayFetch.
 	Fetch bool
@@ -327,13 +331,16 @@ type listingRow struct {
 	// marker whatever the type, so that the log says it was viewed.
 	Viewer    string
 	ViewerSrc string
-	IsDir     bool
-	Group     string
-	Bytes     int64
-	Unix      int64
-	Kind      string
-	Size      string
-	Modified  string
+	// EditSrc is where the viewer reads a file it opens to be edited, as
+	// ViewerSrc; "" for a file it cannot edit or the account may not replace.
+	EditSrc  string
+	IsDir    bool
+	Group    string
+	Bytes    int64
+	Unix     int64
+	Kind     string
+	Size     string
+	Modified string
 }
 
 // sessionView is what the page says about who is looking at it.
@@ -494,6 +501,9 @@ func listingPage(place listingPlace, entries []entry, order sortOrder, allowed r
 			if kind := viewer.Kind(item.Name); kind != "" && place.view != "" {
 				row.Viewer = kind
 				row.ViewerSrc = row.Link + place.view
+			}
+			if allowed.Download && allowed.Overwrite && place.view != "" && viewer.Editable(item.Name) {
+				row.EditSrc = row.Link + place.view
 			}
 			if _, ok := viewTypeOf(item.Name); ok {
 				row.Link += place.view

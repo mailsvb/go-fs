@@ -134,10 +134,14 @@ func TestListingLinksViewableFilesToTheirView(t *testing.T) {
 	for _, want := range []string{
 		`<a href="report.pdf?go-fs=view" target="_blank" rel="noopener"`,
 		`<a href="bundle.zip">bundle.zip</a>`,
-		`<a href="page.html">page.html</a>`,
+		// markup is never shown in a tab; the viewer may show its source
+		`<a href="page.html"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page is missing %q", want)
 		}
+	}
+	if strings.Contains(body, `href="page.html?go-fs=view"`) {
+		t.Error("a page of markup is linked to its view")
 	}
 }

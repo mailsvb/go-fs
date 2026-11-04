@@ -138,19 +138,21 @@ binary, so nothing is fetched from anywhere but go-fs:
 | `.pdf` | [pdf.js](https://mozilla.github.io/pdf.js/) |
 | `.docx`, `.docm`, `.xlsx`, `.xlsm`, `.pptx`, `.pptm`, `.ppsx` | [Office Open XML Viewer](https://github.com/yukiyokotani/office-open-xml-viewer) |
 | `.csv`, `.tsv` | the same, as a sheet whose every field is the text it is |
-| `.txt`, `.log`, `.md`, `.ini`, `.conf`, `.cfg`, `.yaml`, `.yml`, `.toml`, `.json`, `.xml`, `.sh`, `.properties` | the browser, as plain text |
+| text and source code: `.txt`, `.log`, `.md`, `.ini`, `.conf`, `.yaml`, `.json`, `.xml`, `.html`, `.css`, `.sh`, `.go`, `.js`, `.ts`, `.py`, `.java`, `.c`, `.cs`, `.rs`, `.sql` and many more, and `Makefile`, `Dockerfile`, `README`, `LICENSE` and the like | [Ace](https://ace.c9.io), read only, coloured by the type of the file |
 | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.bmp` | the browser |
 
 Whatever draws it, the window looks the same: the name, the page or slide it is
 at, or the sheet, the zoom with *Fit to width* and *Fit the page*, **Download**
 and **Close**. ←/→ go a page back and forth where the file does not scroll
 sideways, `+`, `-` and `0` zoom, and Escape closes it. A PDF or an Office file
-that needs a password asks for it. The viewer only reads: nothing is changed,
-a script in a PDF never runs, and a link in a document opens the web or a mail
-in a tab of its own, never anything else.
+that needs a password asks for it. Opened from its name, the viewer only reads:
+nothing is changed (see [Editing a text file](#editing-a-text-file) for the
+one way it writes), a script in a PDF never runs, and a link in a document
+opens the web or a mail in a tab of its own, never anything else.
 
 An older Office file, `.doc`, `.xls` or `.ppt`, is not shown, nor is an SVG,
 which is a page that can run script. Of a text file the first 10 MB are shown.
+Markup such as `.html` is shown as its source, never as the page it makes.
 A click with Ctrl, Cmd or Shift, or with the middle button, does what the link
 does without the viewer.
 
@@ -166,17 +168,51 @@ the download it always was, so programs see no difference. A PDF or a text file
 asked for with it is sent to be shown in the tab; any other type is sent as a
 download, which the viewer reads all the same.
 
+### Editing a text file
+
+**Edit…** in the menu of a row opens a text file, or a `.csv` or `.tsv`, in the
+same window with the editor writable. It is offered on the files the viewer
+shows as text, to an account that may both read the file and replace it
+(`allowUserFileOverwrite`), and only on the served folder, not on the page of a
+stored server.
+
+**Save**, or Ctrl+S (Cmd+S on a Mac), writes the file back with a `PUT`, as an
+upload that replaces it does: the same right, the same `maxUploadSize`, the
+same log record and the same respect for a lock a WebDAV client holds. A dot
+beside the name says there are changes not saved; closing the window, or
+Escape, with such changes asks whether to save them, discard them or keep
+editing. Once a file was saved, closing the window reloads the listing so that
+its size and time are current.
+
+The file is saved as it was read: UTF-8, or UTF-16 when it began with the mark
+that says so, with a byte order mark where it had one, and with the line
+endings it had. A file that is not valid text in its encoding, or that is
+larger than the 10 MB the viewer reads, is shown but not editable, and the
+window says why.
+
+The save is made on the condition that nobody changed the file since it was
+opened: the `PUT` carries `If-Unmodified-Since` with the `Last-Modified` the
+file was read with, and the server refuses it with `412 Precondition Failed`
+when the file is newer. The editor then asks before saving over the other
+change. Every `PUT` that replaces a file honours the header, and answers with
+the `Last-Modified` of what it wrote; a client that does not send it is not
+affected. The time is to the second, so two saves within the same second are
+not told apart.
+
+### What runs where
+
 A file is shown from the listing's own origin, which carries the session. So
 what is shown must never run script there: an uploaded `.html` or `.svg` that
 did would act as whoever opened it. Text opened in a tab is therefore always
 sent as `text/plain; charset=utf-8`, even `.json` and `.xml`, and markup is not
-viewed at all. Every view also carries `X-Content-Type-Options: nosniff` and
+opened in a tab at all; the viewer shows it only as text in the editor. Every view also carries `X-Content-Type-Options: nosniff` and
 `Content-Security-Policy: sandbox; default-src 'none'`, which gives the document
 an origin of its own. Browsers show a PDF in that sandbox as they do without it.
 
 The viewer itself is a page of go-fs in a frame of the listing, with a policy of
 its own: script only from go-fs, with WebAssembly for the parsers of the
-libraries, and no fetch, image or font from any other host. A document that
+libraries, and no fetch, image or font from any other host. The editor runs no
+workers and lays out text as text. A document that
 got a library to write markup still could not run script, and it reaches
 nothing outside go-fs.
 
@@ -198,9 +234,11 @@ go-fs reserved it, keeps it as it is; go-fs says so in its log when it starts.
 The libraries go-fs embeds are [pdf.js](https://github.com/mozilla/pdf.js)
 under the Apache License 2.0 and the
 [Office Open XML Viewer](https://github.com/yukiyokotani/office-open-xml-viewer)
-under the MIT License, with the fonts and parsers they bring. Their licenses are
-served beside them, at `/.go-fs/viewer/<build>/pdfjs/LICENSE` and
-`/.go-fs/viewer/<build>/ooxml/LICENSE` with `THIRD_PARTY_NOTICES.md`, and
+under the MIT License, with the fonts and parsers they bring, and
+[Ace](https://github.com/ajaxorg/ace) under the BSD 3-Clause License. Their
+licenses are served beside them, at `/.go-fs/viewer/<build>/pdfjs/LICENSE`,
+`/.go-fs/viewer/<build>/ooxml/LICENSE` with `THIRD_PARTY_NOTICES.md` and
+`/.go-fs/viewer/<build>/ace/LICENSE`, and
 `/.go-fs/viewer/<build>/VERSIONS` says which versions the build has.
 
 ## Downloading a folder

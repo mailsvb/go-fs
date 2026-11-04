@@ -1,7 +1,8 @@
 // Command viewer fetches the libraries the document viewer of the web interface
-// is built from, pdf.js and the viewer of Office Open XML, from npm at the
-// versions internal/httpd/viewer/libraries.lock pins, and puts the files the
-// viewer needs into internal/httpd/viewer/libs, where the binary embeds them.
+// is built from, pdf.js, the viewer of Office Open XML and the editor Ace,
+// from npm at the versions internal/httpd/viewer/libraries.lock pins, and puts
+// the files the viewer needs into internal/httpd/viewer/libs, where the binary
+// embeds them.
 //
 //	go run ./tools/viewer          fetch what the lock file pins, unless it is there already
 //	go run ./tools/viewer -check   fail unless what is there is what the lock file pins
@@ -99,6 +100,32 @@ var libraries = map[string]library{
 				return ""
 			}
 			return name
+		}
+		return ""
+	}},
+	// Ace, the editor text is shown and edited in: its minified build without
+	// the module loader of its own, every mode, which load one another, the
+	// list that picks a mode by the name of a file, the search box, and the
+	// two themes the page uses, light and dark. Left out are the workers
+	// (the page runs none; they only check syntax as one types), the
+	// snippets, the key bindings of other editors, the other extensions and
+	// themes, and the builds that are not minified.
+	"ace-builds": {folder: "ace", place: func(name string) string {
+		if name == "LICENSE" {
+			return name
+		}
+		rest, ok := strings.CutPrefix(name, "src-min-noconflict/")
+		if !ok || strings.Contains(rest, "/") {
+			return ""
+		}
+		switch {
+		case rest == "ace.js",
+			rest == "ext-modelist.js",
+			rest == "ext-searchbox.js",
+			rest == "theme-tomorrow.js",
+			rest == "theme-tomorrow_night.js",
+			strings.HasPrefix(rest, "mode-") && strings.HasSuffix(rest, ".js"):
+			return rest
 		}
 		return ""
 	}},

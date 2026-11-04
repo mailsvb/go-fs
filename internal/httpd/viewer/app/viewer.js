@@ -4,10 +4,18 @@
 // module per kind in backends/, which is only loaded for a file of its kind.
 //
 // A backend exports open(host, source, ui) and resolves to what the bar
-// drives: goTo(index), zoomIn(), zoomOut(), fit("width" | "page") and
-// destroy(), any of which it may leave out. It tells the bar what it has
+// drives: goTo(index), zoomIn(), zoomOut(), fit("width" | "page"), focus()
+// and destroy(), any of which it may leave out. It tells the bar what it has
 // through ui: pages(count, label), page(index), sheets(names, index),
-// scale(factor), fits(mode) and fitting(offered).
+// scale(factor), fits(mode), fitting(offered) and notice(text).
+//
+// A file opened with mode=edit is opened to be edited, which only the text
+// backend does. Where it can, it says so with ui.editing(true), tells of
+// changes with ui.changed(dirty), and asks for a save with ui.save(); its
+// controller then also has dirty() and contents(), which is the bytes to
+// write and a saved() to call once they are written. Saving is a PUT of the
+// file, as an upload that replaces it is, made on the condition that nobody
+// changed it since it was read.
 
 import { Failure } from "./backends/common.js";
 
@@ -23,6 +31,7 @@ const params = new URLSearchParams(location.search);
 const src = params.get("src") || "";
 const name = params.get("name") || src.split("/").pop() || "file";
 const kind = params.get("kind") || "";
+const editing = params.get("mode") === "edit" && kind === "text";
 
 // the frame is only ever pointed at a path of the server that served it
 const local = src.startsWith("/") && !src.startsWith("//") && !src.startsWith("/\\");
@@ -32,15 +41,18 @@ document.title = name;
 $("name").textContent = name;
 $("name").title = name;
 
-// the download is the file without the marker the listing adds to view it
+// the download is the file without the marker the listing adds to view it,
+// and so is where a file that is edited is saved to
+let plainUrl = "";
 if (url) {
   const plain = new URL(url);
   if (plain.searchParams.get("go-fs") === "view") {
     plain.searchParams.delete("go-fs");
   }
   plain.searchParams.delete("view");
+  plainUrl = plain.pathname + plain.search;
   for (const link of [$("download"), $("failed-download")]) {
-    link.href = plain.pathname + plain.search;
+    link.href = plainUrl;
   }
 }
 
@@ -102,6 +114,29 @@ const ui = {
       : "Loading " + readable(done);
   },
   askPassword,
+  // notice says something about the file above it, bad for what went wrong
+  notice(text, bad) {
+    delete $("notice").dataset.saved;
+    $("notice").textContent = text || "";
+    $("notice").classList.toggle("bad", !!bad);
+    $("notice").hidden = !text;
+  },
+  // editing offers Save, for a file the backend can edit
+  editing(on) {
+    $("save").hidden = !on;
+  },
+  // changed says whether there is anything to save
+  changed(dirty) {
+    // that it was saved is no longer so once it changes again
+    if (dirty && $("notice").dataset.saved) {
+      ui.notice("");
+    }
+    $("dirty").hidden = !dirty;
+    $("save").disabled = !dirty || saving;
+  },
+  save() {
+    save(false);
+  },
 };
 
 function readable(bytes) {
@@ -141,10 +176,55 @@ $("zoom-out").addEventListener("click", () => call("zoomOut"));
 $("fit-width").addEventListener("click", () => call("fit", "width"));
 $("fit-page").addEventListener("click", () => call("fit", "page"));
 $("close").addEventListener("click", close);
+$("save").addEventListener("click", () => save(false));
 
-// close hands the frame back to the listing, which removes it; a viewer
-// opened on its own goes back to where it was opened from
+function dirty() {
+  return !!(controller && typeof controller.dirty === "function" && controller.dirty());
+}
+
+// close asks first when there are changes that are not saved, and otherwise
+// leaves
 function close() {
+  // Escape on a question is its way out
+  if (!$("unsaved").hidden) {
+    $("unsaved-keep").click();
+    return;
+  }
+  if (!$("conflict").hidden) {
+    $("conflict-cancel").click();
+    return;
+  }
+  if (dirty()) {
+    show("unsaved");
+    $("unsaved-save").focus();
+    return;
+  }
+  leave();
+}
+
+$("unsaved-save").addEventListener("click", async () => {
+  show("");
+  if (await save(false)) {
+    leave();
+  }
+});
+$("unsaved-discard").addEventListener("click", () => {
+  show("");
+  leave();
+});
+$("unsaved-keep").addEventListener("click", () => {
+  show("");
+  call("focus");
+});
+
+// leaving is set once the viewer has been told to go, so that it is not
+// asked about what is unsaved a second time as its frame is emptied
+let leaving = false;
+
+// leave hands the frame back to the listing, which removes it; a viewer
+// opened on its own goes back to where it was opened from
+function leave() {
+  leaving = true;
   if (window.parent !== window) {
     window.parent.postMessage({ type: "go-fs-viewer", action: "close" }, location.origin);
     return;
@@ -156,11 +236,38 @@ function close() {
   }
 }
 
+// a page that is about to go away with changes unsaved, reloaded or closed
+// with its tab, has the browser ask first
+window.addEventListener("beforeunload", (event) => {
+  if (!leaving && dirty()) {
+    event.preventDefault();
+  }
+});
+
+// the listing passes on Escape when it has the focus rather than the frame;
+// nothing else that posts a message is listened to
+window.addEventListener("message", (event) => {
+  if (event.origin !== location.origin || event.source !== window.parent || window.parent === window) {
+    return;
+  }
+  if (event.data && event.data.type === "go-fs-viewer" && event.data.action === "close-request") {
+    close();
+  }
+});
+
 document.addEventListener("keydown", (event) => {
+  if (editing && (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    save(false);
+    return;
+  }
   if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) {
     return;
   }
-  const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement;
+  // the editor types into a text area, which only keeps the keys when it is
+  // there to be typed in, not when the file is only shown
+  const typing = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement ||
+    (event.target instanceof HTMLTextAreaElement && !event.target.closest(".read-only"));
   if (event.key === "Escape") {
     event.preventDefault();
     close();
@@ -206,7 +313,7 @@ document.addEventListener("keydown", (event) => {
 // --- loading, a password, a failure -------------------------------------------
 
 function show(panel) {
-  for (const id of ["busy", "password", "failed"]) {
+  for (const id of ["busy", "password", "failed", "unsaved", "conflict"]) {
     $(id).hidden = id !== panel;
   }
   $("status").hidden = panel === "";
@@ -302,7 +409,94 @@ async function fetchBytes(target, limit) {
     bytes.set(part, at);
     at += part.length;
   }
-  return { bytes: bytes.buffer, truncated };
+  return { bytes: bytes.buffer, truncated, lastModified: res.headers.get("Last-Modified") || "" };
+}
+
+// --- saving -------------------------------------------------------------------
+
+// lastModified is the time of the file as it was read, or last saved, which a
+// save is made on the condition of
+let lastModified = "";
+let saving = false;
+
+// save writes what the backend has back to the file, and resolves to whether
+// it did. force saves over a file someone else changed meanwhile, which is
+// only done once the person has said so.
+async function save(force) {
+  if (!editing || saving || !controller || typeof controller.contents !== "function" || !plainUrl) {
+    return false;
+  }
+  if (!force && !dirty()) {
+    return true;
+  }
+  const { bytes, saved } = controller.contents();
+  const headers = { "Content-Type": "application/octet-stream" };
+  if (lastModified && !force) {
+    headers["If-Unmodified-Since"] = lastModified;
+  }
+  saving = true;
+  $("save").disabled = true;
+  let res;
+  try {
+    res = await fetch(plainUrl, { method: "PUT", headers, body: bytes, credentials: "same-origin", cache: "no-store" });
+  } catch (err) {
+    ui.notice("The file could not be saved: the server could not be reached.", true);
+    return false;
+  } finally {
+    saving = false;
+    ui.changed(dirty());
+  }
+  if (res.status === 412) {
+    return (await askOverwrite()) ? save(true) : false;
+  }
+  if (!res.ok) {
+    const text = (await res.text().catch(() => "")).trim();
+    ui.notice(saveFailure(res.status, text), true);
+    return false;
+  }
+  lastModified = res.headers.get("Last-Modified") || lastModified;
+  saved();
+  ui.notice("Saved.", false);
+  $("notice").dataset.saved = "1";
+  if (window.parent !== window) {
+    window.parent.postMessage({ type: "go-fs-viewer", action: "saved" }, location.origin);
+  }
+  return true;
+}
+
+function saveFailure(status, text) {
+  switch (status) {
+    case 401:
+    case 403:
+      return "The file could not be saved: you may not change it.";
+    case 413:
+      return "The file could not be saved: it is larger than this server accepts.";
+    case 423:
+      return "The file could not be saved: another program has locked it.";
+  }
+  return "The file could not be saved: the server answered " + status + (text && text.length < 200 ? " (" + text + ")." : ".");
+}
+
+// askOverwrite asks whether to save over a file that someone else changed
+// since it was read, and resolves to the answer
+function askOverwrite() {
+  return new Promise((resolve) => {
+    show("conflict");
+    $("conflict-cancel").focus();
+    const answer = (overwrite) => () => {
+      $("conflict-overwrite").removeEventListener("click", yes);
+      $("conflict-cancel").removeEventListener("click", no);
+      show("");
+      if (!overwrite) {
+        call("focus");
+      }
+      resolve(overwrite);
+    };
+    const yes = answer(true);
+    const no = answer(false);
+    $("conflict-overwrite").addEventListener("click", yes);
+    $("conflict-cancel").addEventListener("click", no);
+  });
 }
 
 async function open() {
@@ -311,13 +505,18 @@ async function open() {
   }
   show("busy");
   const backend = await import("./backends/" + kind + ".js");
-  const { bytes, truncated } = await fetchBytes(url.pathname + url.search, kind === "text" ? textLimit : 0);
+  const read = await fetchBytes(url.pathname + url.search, kind === "text" ? textLimit : 0);
+  lastModified = read.lastModified;
   $("progress").textContent = "Opening…";
   $("meter").parentElement.classList.add("unknown");
   const stage = $("stage");
-  controller = await backend.open(stage, { name, bytes, truncated }, ui);
+  controller = await backend.open(stage, { name, bytes: read.bytes, truncated: read.truncated, editable: editing }, ui);
   show("");
-  stage.focus({ preventScroll: true });
+  if (typeof controller.focus === "function") {
+    controller.focus();
+  } else {
+    stage.focus({ preventScroll: true });
+  }
 }
 
 // a backend that fails after it has opened, a page that does not render,

@@ -62,8 +62,9 @@ deviation from it that crosses a trust boundary as a finding.
   admin config editor), open redirects, and session fixation.
 - **Document viewer** (`internal/httpd/viewer`): the listing opens a file in a
   frame of the same origin, where pdf.js and the Office Open XML Viewer parse
-  the bytes of uploaded PDF, Word, Excel and PowerPoint files, and the browser
-  decodes images. The libraries are fetched at build time by `tools/viewer`
+  the bytes of uploaded PDF, Word, Excel and PowerPoint files, Ace shows and
+  edits text (saving it with a `PUT` the overwrite right governs), and the
+  browser decodes images. The libraries are fetched at build time by `tools/viewer`
   and must match the sha512 `internal/httpd/viewer/libraries.lock` pins. The
   page is served below `/.go-fs/viewer/` under `Content-Security-Policy`
   allowing script from this origin only, with `'wasm-unsafe-eval'`, no inline

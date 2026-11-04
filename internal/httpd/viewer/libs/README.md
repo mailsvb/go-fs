@@ -1,7 +1,8 @@
 # libs
 
-The libraries of the document viewer, pdf.js and the viewer of Office Open XML,
-are fetched into this folder at build time and are not committed:
+The libraries of the document viewer, pdf.js, the viewer of Office Open XML
+and the editor Ace, are fetched into this folder at build time and are not
+committed:
 
 ```shell
 make viewer-deps    # or: go run ./tools/viewer

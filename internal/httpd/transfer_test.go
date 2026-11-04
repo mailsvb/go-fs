@@ -529,3 +529,45 @@ func TestUploadSizeLimitCountsTheFileNotTheEnvelope(t *testing.T) {
 		t.Errorf("stored %d bytes, want %d", len(got), len(content))
 	}
 }
+
+// A PUT made on the condition that the file was not changed after a time is
+// refused when it was, which is how the editor of the viewer finds that
+// someone else saved the file it has open; the answer to one that is made
+// names the time of what it wrote.
+func TestUploadOnConditionOfTime(t *testing.T) {
+	server := newServer(t, nil)
+	server.write(t, "private/notes.txt", "original")
+	read := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	touch(t, server, "private/notes.txt", read.Add(500*time.Millisecond))
+	put := func(t *testing.T, since time.Time) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPut, server.url("/private/notes.txt"), strings.NewReader("edited"))
+		req.SetBasicAuth("john", "doe")
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.Header.Set("If-Unmodified-Since", since.Format(http.TimeFormat))
+		return do(t, req)
+	}
+
+	if res := put(t, read.Add(-time.Minute)); res.StatusCode != http.StatusPreconditionFailed {
+		t.Errorf("status = %d, want 412", res.StatusCode)
+	}
+	if got := server.read(t, "private/notes.txt"); got != "original" {
+		t.Fatalf("the file was changed to %q", got)
+	}
+
+	// the time as Last-Modified gave it, to the second, is the file's
+	res := put(t, read)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if got := server.read(t, "private/notes.txt"); got != "edited" {
+		t.Errorf("the file holds %q, want it replaced", got)
+	}
+	modified, err := http.ParseTime(res.Header.Get("Last-Modified"))
+	if err != nil {
+		t.Fatalf("Last-Modified %q: %v", res.Header.Get("Last-Modified"), err)
+	}
+	if modified.Before(read) {
+		t.Errorf("Last-Modified = %v, before the file was written", modified)
+	}
+}

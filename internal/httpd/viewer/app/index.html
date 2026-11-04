@@ -20,11 +20,12 @@
   <symbol id="i-fit-page" viewBox="0 0 24 24"><path d="M7 3.5h10v17H7z"/><path d="M10 8h4m-4 4h4"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M4 16v4h16v-4"/><path d="M12 4v11m-4-4 4 4 4-4"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><path d="M6 11h12v9H6z"/><path d="M8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></symbol>
 </svg>
 
 <header class="bar">
-  <span class="name"><svg class="ic"><use href="#i-file"/></svg><span id="name"></span></span>
+  <span class="name"><svg class="ic"><use href="#i-file"/></svg><span id="name"></span><span class="dirty" id="dirty" title="Unsaved changes" hidden></span></span>
   <span class="group" id="pages" hidden>
     <button class="plain icon" id="prev" type="button" title="Previous page"><svg class="ic"><use href="#i-prev"/></svg></button>
     <label class="page"><input id="page" type="text" inputmode="numeric" autocomplete="off" aria-label="Page"><span id="count"></span></label>
@@ -41,10 +42,13 @@
     <button class="plain icon fit" id="fit-page" type="button" title="Fit the page"><svg class="ic"><use href="#i-fit-page"/></svg></button>
   </span>
   <span class="group end">
+    <button class="plain go" id="save" type="button" title="Save (Ctrl+S)" hidden disabled><svg class="ic"><use href="#i-save"/></svg><span>Save</span></button>
     <a class="plain" id="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>
     <button class="plain icon" id="close" type="button" title="Close (Esc)"><svg class="ic"><use href="#i-close"/></svg></button>
   </span>
 </header>
+
+<p class="notice" id="notice" role="status" hidden></p>
 
 <main id="stage" tabindex="-1"></main>
 
@@ -63,6 +67,22 @@
       <button class="plain" id="password-cancel" type="button">Cancel</button>
     </div>
   </form>
+  <div class="panel" id="unsaved" role="alertdialog" aria-labelledby="unsaved-text" hidden>
+    <p id="unsaved-text">This file has changes that are not saved.</p>
+    <div class="row">
+      <button class="plain go" id="unsaved-save" type="button">Save</button>
+      <button class="plain" id="unsaved-discard" type="button">Discard</button>
+      <button class="plain" id="unsaved-keep" type="button">Keep editing</button>
+    </div>
+  </div>
+  <div class="panel" id="conflict" role="alertdialog" aria-labelledby="conflict-text" hidden>
+    <p id="conflict-text">The file was changed by someone else since you opened it.</p>
+    <p class="detail">Saving replaces their changes with yours.</p>
+    <div class="row">
+      <button class="plain go" id="conflict-overwrite" type="button">Save anyway</button>
+      <button class="plain" id="conflict-cancel" type="button">Cancel</button>
+    </div>
+  </div>
   <div class="panel" id="failed" hidden>
     <p class="reason" id="reason"></p>
     <p class="detail" id="detail"></p>

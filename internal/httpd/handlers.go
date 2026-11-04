@@ -187,10 +187,18 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 		s.handleChunkedPut(set, w, r, target, user, rangeHeader, replace)
 		return
 	}
-	if info, err := os.Stat(target.Path); err == nil && (!replace || !info.Mode().IsRegular()) {
+	info, statErr := os.Stat(target.Path)
+	if statErr == nil && (!replace || !info.Mode().IsRegular()) {
 		// the original falls through to its not-found handler here
 		s.log.Debug("http upload refused, the name is taken", "file", target.Virtual)
 		http.NotFound(w, r)
+		return
+	}
+	if statErr == nil && changedSince(r, info.ModTime()) {
+		// the editor of the viewer saves on the condition that nobody
+		// changed the file since it read it, and is told when someone did
+		s.log.Debug("http upload refused, the file changed since the client read it", "file", target.Virtual)
+		http.Error(w, "Precondition Failed", http.StatusPreconditionFailed)
 		return
 	}
 
@@ -319,7 +327,29 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 	s.log.Info("http upload", "user", nameOf(user), "file", target.Virtual,
 		"bytes", written, "replaced", replace, "address", clientAddress(set, r),
 		"took", time.Since(started).Round(time.Millisecond))
+	// the time of what was written, which a client that saves again names
+	// as the version it is changing
+	if stored, err := os.Stat(target.Path); err == nil {
+		w.Header().Set("Last-Modified", stored.ModTime().UTC().Format(http.TimeFormat))
+	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// changedSince reports whether a request is made on the condition that the
+// file was not changed after a time, If-Unmodified-Since, and it was. The
+// header has whole seconds, and so is compared with the time of the file to
+// the second, as the Last-Modified it was taken from was.
+func changedSince(r *http.Request, modified time.Time) bool {
+	header := r.Header.Get("If-Unmodified-Since")
+	if header == "" {
+		return false
+	}
+	since, err := http.ParseTime(header)
+	if err != nil {
+		// a date that cannot be read is ignored, as RFC 9110 has it
+		return false
+	}
+	return modified.Truncate(time.Second).After(since)
 }
 
 // contentRange is a parsed "Content-Range: bytes <start>-<end>/<total>"

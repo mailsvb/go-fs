@@ -535,6 +535,7 @@ func (s *Server) rightsFor(set *settings, user *account, virtual string) rights 
 		DeleteFile:   s.permits(set, user, http.MethodDelete, virtual, actDeleteFile),
 		DeleteFolder: s.permits(set, user, http.MethodDelete, virtual, actDeleteFolder),
 		Rename:       s.permits(set, user, methodMove, virtual, actRename),
+		Overwrite:    s.permits(set, user, http.MethodPut, virtual, actOverwrite),
 	}
 }
 

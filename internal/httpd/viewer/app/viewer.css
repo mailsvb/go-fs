@@ -131,32 +131,28 @@ body {
   box-shadow: var(--page-shadow);
 }
 
-/* text and images are put on a page of their own */
-.sheet-of-paper {
-  margin: var(--page-gap) auto;
-  background: var(--page);
-  color: var(--page-ink);
-  box-shadow: var(--page-shadow);
-}
-.text .sheet-of-paper {
-  width: max-content;
-  min-width: min(52rem, calc(100% - 2 * var(--page-gap)));
-  max-width: none;
-  padding: 1.5rem 2rem;
-}
-.text pre {
+/* text fills the stage in the editor, which scrolls it itself; shown read
+   only it has no cursor */
+.scroller.text { overflow: hidden; }
+.scroller.text.read-only .ace_cursor-layer { display: none; }
+
+/* what the editor has to say: why a file is only shown, whether it saved */
+.notice {
+  flex: none;
   margin: 0;
-  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: calc(13px * var(--zoom, 1));
-  white-space: pre;
-  tab-size: 4;
-}
-.text .cut {
-  margin: 0 auto var(--page-gap);
-  max-width: 52rem;
+  padding: 0.4rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--raised);
   color: var(--faint);
   font-size: 0.85rem;
-  text-align: center;
+}
+.notice.bad { color: var(--bad); }
+.dirty {
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--accent);
 }
 .image { display: grid; place-items: center; }
 .image img {

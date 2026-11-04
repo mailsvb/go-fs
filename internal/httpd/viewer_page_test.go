@@ -1,6 +1,7 @@
 package httpd
 
 import (
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -104,11 +105,67 @@ func TestListingOffersTheViewer(t *testing.T) {
 	}
 }
 
+// Edit is offered on a file of text, and on delimited text, to an account
+// that may replace it, and to nobody else; it reads the file as the viewer
+// does.
+func TestListingOffersEditToWhoMayReplace(t *testing.T) {
+	requireViewer(t)
+	page := func(t *testing.T, server *testServer, user string) string {
+		t.Helper()
+		var res *http.Response
+		if user == "" {
+			res, _ = get(t, server, "/sub/")
+		} else {
+			res = basic(t, server, http.MethodGet, "/sub/", user, "doe", nil)
+		}
+		body, _ := io.ReadAll(res.Body)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d", res.StatusCode)
+		}
+		return string(body)
+	}
+	server := newServer(t, func(cfg *httpConfig) {
+		publicServer(cfg)
+		reader := fullUser("kim", "doe")
+		reader.AllowUserFileOverwrite = new(false)
+		cfg.Users = append(cfg.Users, reader)
+	})
+	server.write(t, "sub/notes.txt", "hello")
+	server.write(t, "sub/main.go", "package main")
+	server.write(t, "sub/export.csv", "a,b")
+	server.write(t, "sub/report.pdf", "%PDF")
+
+	body := page(t, server, "john")
+	for _, want := range []string{
+		`data-edit="notes.txt?go-fs=view"`,
+		`data-edit="main.go?go-fs=view"`,
+		`data-edit="export.csv?go-fs=view"`,
+		`data-viewer="text" data-viewer-src="main.go?go-fs=view"`,
+		`data-do="edit"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page is missing %q", want)
+		}
+	}
+	if strings.Contains(body, `data-edit="report.pdf`) {
+		t.Error("a PDF is offered to be edited")
+	}
+	for _, user := range []string{"", "kim"} {
+		body := page(t, server, user)
+		if strings.Contains(body, "data-edit=") || strings.Contains(body, `data-do="edit"`) {
+			t.Errorf("Edit is offered to %q, who may not replace a file", user)
+		}
+	}
+}
+
 // A stored server's listing reads a file through its own download, with its
 // own view marker.
 func TestRemoteListingOffersTheViewer(t *testing.T) {
 	requireViewer(t)
-	entries := []entry{{Name: "deck.pptx", IsFile: true, ModTime: time.Now()}}
+	entries := []entry{
+		{Name: "deck.pptx", IsFile: true, ModTime: time.Now()},
+		{Name: "notes.txt", IsFile: true, ModTime: time.Now()},
+	}
 	page, err := listingPage(remotePlace("share", "/docs/"), entries, sortOrder{}, rights{Download: true},
 		sendView{}, sessionView{}, "nonce", 0)
 	if err != nil {
@@ -118,6 +175,10 @@ func TestRemoteListingOffersTheViewer(t *testing.T) {
 		"&amp;" + remoteViewParam + `=1"`
 	if !strings.Contains(string(page), want) {
 		t.Errorf("the page is missing %q", want)
+	}
+	// what the editor saves goes to the served tree alone
+	if strings.Contains(string(page), "data-edit=") {
+		t.Error("a file of a stored server is offered to be edited")
 	}
 }
 

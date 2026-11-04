@@ -475,40 +475,71 @@
 
   // A name the document viewer shows opens it over the page rather than in a
   // tab: a click with a modifier, or with the middle button, still does what
-  // the link does. The frame is emptied when the dialog closes, which ends
-  // whatever the libraries in it were doing.
+  // the link does. Edit in the menu of a file of text opens it there too, in
+  // the editor. The frame is emptied when the dialog closes, which ends
+  // whatever the libraries in it were doing; a file saved in it meanwhile
+  // has changed its size and time, which a reload of the listing shows.
   var viewer = document.getElementById("viewer");
+  var openViewer = null;
   if (viewer) {
     var viewerFrame = viewer.querySelector("iframe");
     var viewerOpener = null;
+    var viewerSaved = false;
+    openViewer = function (opener, name, source, kind, mode) {
+      // the frame is at a path of its own, so the file is named from the root
+      var src = new URL(source, location.href);
+      var query = new URLSearchParams({ src: src.pathname + src.search, name: name, kind: kind });
+      if (mode) {
+        query.set("mode", mode);
+      }
+      viewerOpener = opener;
+      viewerSaved = false;
+      viewerFrame.title = name;
+      viewerFrame.src = viewer.dataset.page + "?" + query.toString();
+      viewer.showModal();
+      viewerFrame.focus();
+    };
     body.addEventListener("click", function (event) {
       var link = event.target.closest("a[data-viewer]");
       if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
         return;
       }
       event.preventDefault();
-      var name = link.closest("tr").dataset.name;
-      // the frame is at a path of its own, so the file is named from the root
-      var src = new URL(link.dataset.viewerSrc, location.href);
-      var query = new URLSearchParams({ src: src.pathname + src.search, name: name, kind: link.dataset.viewer });
-      viewerOpener = link;
-      viewerFrame.title = name;
-      viewerFrame.src = viewer.dataset.page + "?" + query.toString();
-      viewer.showModal();
-      viewerFrame.focus();
+      openViewer(link, link.closest("tr").dataset.name, link.dataset.viewerSrc, link.dataset.viewer, "");
     });
     // the viewer closes itself on Escape or its Close button, which it says
-    // from its frame; nothing else that posts a message is listened to
+    // from its frame, and says when it has saved a file; nothing else that
+    // posts a message is listened to
     window.addEventListener("message", function (event) {
       if (event.origin !== location.origin || event.source !== viewerFrame.contentWindow) {
         return;
       }
-      if (event.data && event.data.type === "go-fs-viewer" && event.data.action === "close") {
+      if (!event.data || event.data.type !== "go-fs-viewer") {
+        return;
+      }
+      if (event.data.action === "close") {
         viewer.close();
+      } else if (event.data.action === "saved") {
+        viewerSaved = true;
       }
     });
+    // Escape while the page has the focus rather than the frame is left to
+    // the viewer as well, which asks first when there is something unsaved
+    viewer.addEventListener("cancel", function (event) {
+      event.preventDefault();
+      viewerFrame.contentWindow.postMessage({ type: "go-fs-viewer", action: "close-request" }, location.origin);
+    });
     viewer.addEventListener("close", function () {
+      // the event comes a moment after the dialog closed, by which time it
+      // may have been opened again on another file
+      if (viewer.open) {
+        return;
+      }
       viewerFrame.src = "about:blank";
+      if (viewerSaved) {
+        done();
+        return;
+      }
       if (viewerOpener) {
         viewerOpener.focus();
         viewerOpener = null;
@@ -549,6 +580,9 @@
   // Import into registry is there for a file whose name an image archive has;
   // it opens the registry page's Import dialog with that file
   var importing = menu.querySelector("[data-do='import']");
+  // Edit is there for a file of text the account may replace, which the
+  // server marks; it opens the file in the viewer's editor
+  var editing = menu.querySelector("[data-do='edit']");
   var archiveName = /\.(tar|tgz|tzst|txz|tbz2?|tar\.(gz|zst|xz|bz2))$/i;
   var opener = null;
 
@@ -578,6 +612,9 @@
     }
     if (remoteFetchItem) {
       remoteFetchItem.hidden = isFolder && !remoteFetchItem.dataset.folders;
+    }
+    if (editing) {
+      editing.hidden = isFolder || !row.dataset.edit || !openViewer;
     }
     if (importing) {
       importing.hidden = isFolder || !archiveName.test(row.dataset.name);
@@ -688,6 +725,8 @@
       sending.open(row);
     } else if (item.dataset.do === "remote-fetch") {
       remoteFetching.open(row);
+    } else if (item.dataset.do === "edit" && openViewer) {
+      openViewer(row.querySelector("a") || row, row.dataset.name, row.dataset.edit, "text", "edit");
     }
   });
 

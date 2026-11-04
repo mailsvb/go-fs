@@ -25,7 +25,8 @@ platform Go supports builds with a plain `GOOS=… GOARCH=… go build .`.
 ## The libraries of the document viewer
 
 The document viewer of the web interface (see [Viewing a file](BROWSER.md#viewing-a-file))
-draws files with pdf.js and the Office Open XML Viewer, which the binary embeds.
+draws files with pdf.js, the Office Open XML Viewer and Ace, the editor text is
+shown and edited in, which the binary embeds.
 They are not committed: `go run ./tools/viewer`, which `make viewer-deps` runs and
 every build and test target of the Makefile runs first, fetches them from npm
 into `internal/httpd/viewer/libs/`. Only `internal/httpd/viewer/libraries.lock` is

@@ -159,23 +159,50 @@ func TestServeOnlyWhatIsThere(t *testing.T) {
 func TestKind(t *testing.T) {
 	requireLibraries(t)
 	cases := map[string]string{
-		"report.PDF":   "pdf",
-		"letter.docx":  "docx",
-		"budget.xlsm":  "xlsx",
-		"deck.pptx":    "pptx",
-		"show.ppsx":    "pptx",
-		"export.csv":   "sheet",
-		"server.log":   "text",
-		"photo.JPEG":   "image",
-		"drawing.svg":  "",
-		"page.html":    "",
-		"archive.zip":  "",
-		"old.doc":      "",
-		"no-extension": "",
+		"report.PDF":     "pdf",
+		"letter.docx":    "docx",
+		"budget.xlsm":    "xlsx",
+		"deck.pptx":      "pptx",
+		"show.ppsx":      "pptx",
+		"export.csv":     "sheet",
+		"server.log":     "text",
+		"main.go":        "text",
+		"page.html":      "text",
+		"Makefile":       "text",
+		"README":         "text",
+		".env":           "text",
+		"sub/.gitignore": "text",
+		"photo.JPEG":     "image",
+		"drawing.svg":    "",
+		"archive.zip":    "",
+		"old.doc":        "",
+		"no-extension":   "",
+		"makefile.bak":   "",
 	}
 	for name, want := range cases {
 		if got := Kind(name); got != want {
 			t.Errorf("Kind(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestEditable(t *testing.T) {
+	requireLibraries(t)
+	cases := map[string]bool{
+		"notes.txt":   true,
+		"main.go":     true,
+		"Dockerfile":  true,
+		"export.csv":  true,
+		"table.TSV":   true,
+		"report.pdf":  false,
+		"letter.docx": false,
+		"photo.png":   false,
+		"drawing.svg": false,
+		"bundle.zip":  false,
+	}
+	for name, want := range cases {
+		if got := Editable(name); got != want {
+			t.Errorf("Editable(%q) = %v, want %v", name, got, want)
 		}
 	}
 }
@@ -185,7 +212,7 @@ func TestNothingIsOfferedWithoutTheLibraries(t *testing.T) {
 	saved := available
 	t.Cleanup(func() { available = saved })
 	available = false
-	if Kind("report.pdf") != "" || Page() != "" || Prefix() != "" {
+	if Kind("report.pdf") != "" || Editable("notes.txt") || Page() != "" || Prefix() != "" {
 		t.Error("a binary without the libraries offers the viewer")
 	}
 	if res := serve(t, http.MethodGet, prefix+"index.html", ""); res.StatusCode != http.StatusNotFound {
