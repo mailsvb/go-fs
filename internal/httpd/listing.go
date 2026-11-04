@@ -436,6 +436,11 @@ type listingData struct {
 	// Player is the page of the bar the script plays audio in, "" in a
 	// binary without the viewer.
 	Player string
+	// ShareInternal and ShareExternal are general.internalAddress and
+	// general.externalAddress, the addresses the Share dialog builds its link
+	// on; "" for one that is not set.
+	ShareInternal string
+	ShareExternal string
 }
 
 // listingPlace is what a listing is of: a folder of the served tree, or one
@@ -480,7 +485,7 @@ func localPlace(virtual string) listingPlace {
 }
 
 // listingPage renders the browsable directory page.
-func listingPage(place listingPlace, entries []entry, order sortOrder, allowed rights, send sendView, who sessionView, nonce string, maxChunkSize int64) ([]byte, error) {
+func listingPage(place listingPlace, entries []entry, order sortOrder, allowed rights, send sendView, who sessionView, nonce string, cfg config.HTTP) ([]byte, error) {
 	if who.Page == "" {
 		who.Page = "Files"
 	}
@@ -541,9 +546,11 @@ func listingPage(place listingPlace, entries []entry, order sortOrder, allowed r
 		Style:   listingStyle,
 		Script:  listingScript,
 
-		MaxChunkSize: maxChunkSize,
-		Viewer:       viewer.Page(),
-		Player:       viewer.Player(),
+		MaxChunkSize:  cfg.MaxChunkSize,
+		ShareInternal: cfg.ShareInternalAddress,
+		ShareExternal: cfg.ShareExternalAddress,
+		Viewer:        viewer.Page(),
+		Player:        viewer.Player(),
 	}
 	var page bytes.Buffer
 	if err := listingTemplate.Execute(&page, data); err != nil {

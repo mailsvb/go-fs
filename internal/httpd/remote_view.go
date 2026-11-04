@@ -383,7 +383,7 @@ func (s *Server) remotePage(set *settings, w http.ResponseWriter, r *http.Reques
 	}
 	who.Servers = others
 	page, err := listingPage(place, entries, parseSort(r.URL.Query()), remoteRights(cred, q.server), sendView{},
-		who, nonce, set.cfg.MaxChunkSize)
+		who, nonce, set.cfg)
 	if err != nil {
 		s.log.Error("http cannot render the remote listing", "server", q.server.Name, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)

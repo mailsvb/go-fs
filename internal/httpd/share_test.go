@@ -250,3 +250,48 @@ func TestListingOffersShareToAnAccountOnly(t *testing.T) {
 		t.Fatalf("share path = %q", view.Path)
 	}
 }
+
+// The Share dialog carries the configured addresses, and has a choice between
+// them only when there are two.
+func TestShareDialogCarriesTheConfiguredAddresses(t *testing.T) {
+	cases := []struct {
+		name               string
+		internal, external string
+		want, wantNot      []string
+	}{
+		{"neither", "", "", nil,
+			[]string{"data-internal=", "data-external=", `id="share-base"`}},
+		{"internal only", "http://files.lan:8080", "",
+			[]string{`data-internal="http://files.lan:8080"`},
+			[]string{"data-external=", `id="share-base"`}},
+		{"external only", "", "https://files.example.com",
+			[]string{`data-external="https://files.example.com"`},
+			[]string{"data-internal=", `id="share-base"`}},
+		{"both", "http://files.lan:8080", "https://files.example.com",
+			[]string{`data-internal="http://files.lan:8080"`, `data-external="https://files.example.com"`,
+				`id="share-base"`, `<option value="internal"`, `<option value="external"`},
+			nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newServer(t, func(cfg *httpConfig) {
+				publicServer(cfg)
+				cfg.ShareInternalAddress = tc.internal
+				cfg.ShareExternalAddress = tc.external
+			})
+			server.write(t, "file.txt", "content")
+			session := login(t, server, "/", "john", "doe")
+			page := bodyOf(t, withSession(t, server, http.MethodGet, "/", session))
+			for _, want := range tc.want {
+				if !strings.Contains(page, want) {
+					t.Errorf("the page lacks %s", want)
+				}
+			}
+			for _, unwanted := range tc.wantNot {
+				if strings.Contains(page, unwanted) {
+					t.Errorf("the page has %s", unwanted)
+				}
+			}
+		})
+	}
+}

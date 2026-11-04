@@ -247,11 +247,20 @@
 {{end}}
 
 {{if .Rights.Share}}
-<dialog id="share-dialog" aria-labelledby="share-title">
+<dialog id="share-dialog" aria-labelledby="share-title"{{with .ShareInternal}} data-internal="{{.}}"{{end}}{{with .ShareExternal}} data-external="{{.}}"{{end}}>
   <form method="dialog">
     <h2 id="share-title">Share file</h2>
     <p></p>
     <div class="share-lines">
+      {{- if and .ShareInternal .ShareExternal}}
+      <label for="share-base">Address</label>
+      <div class="share-line">
+        <select id="share-base">
+          <option value="internal" title="{{.ShareInternal}}">Internal &#8212; {{.ShareInternal}}</option>
+          <option value="external" title="{{.ShareExternal}}">External &#8212; {{.ShareExternal}}</option>
+        </select>
+      </div>
+      {{- end}}
       <label for="share-link">Link</label>
       <div class="share-line">
         <input id="share-link" class="link" data-kind="link" type="text" readonly spellcheck="false">

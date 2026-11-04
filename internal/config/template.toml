@@ -50,6 +50,17 @@ baseFolderTrash = "/var/lib/go-fs/trash"
 # every hour. 0 keeps it until it is deleted on the Trash page.
 trashRetentionDays = 30
 
+# The addresses this host is reached at from inside the network and from
+# outside it, which a share link is built on: http or https, the host, a port
+# when it is not the scheme's own, and a path when a proxy serves go-fs under
+# one, such as https://files.example.com. With both set, the Share dialog has
+# a dropdown that switches its link, curl and wget lines between the two, and
+# starts on the one the page was opened at, or on the external address when
+# it was opened at neither. With one set, every share link uses that one.
+# Empty uses the address the page was opened at.
+internalAddress = ""
+externalAddress = ""
+
 # Watch this file and apply what changes in it without a restart. Accounts,
 # permissions and limits are swapped without disturbing anything in flight; a
 # port, a folder or a certificate needs the listener rebound, so that one server

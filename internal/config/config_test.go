@@ -428,6 +428,11 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		}, "overlaps users[0].basefolder"},
 		{"negative trash retention", func(c *Config) { c.General.TrashRetentionDays = -1 },
 			"general.trashRetentionDays"},
+		{"internal address without a scheme", func(c *Config) { c.General.InternalAddress = "files.lan" },
+			"general.internalAddress"},
+		{"external address with a query", func(c *Config) {
+			c.General.ExternalAddress = "https://files.example.com/?x=1"
+		}, "general.externalAddress"},
 		{"tftp block size", func(c *Config) { c.TFTP.MaxBlockSize = 4 }, "tftp.maxBlockSize"},
 		{"tftp maxTimeout below timeout", func(c *Config) { c.TFTP.Timeout = 30; c.TFTP.MaxTimeout = 10 }, "maxTimeout"},
 		{"unknown cipher", func(c *Config) { c.General.SSH.Ciphers = []string{"aes128-gmc"} },
@@ -1038,6 +1043,47 @@ func TestArtifactoryURL(t *testing.T) {
 		if got, err := ArtifactoryURL(raw); err == nil {
 			t.Errorf("ArtifactoryURL(%q) was read as %q", raw, got)
 		}
+	}
+}
+
+func TestShareAddress(t *testing.T) {
+	for raw, want := range map[string]string{
+		"":                                "",
+		"   ":                             "",
+		"https://files.example.com":       "https://files.example.com",
+		" HTTPS://Files.Example.com/ ":    "https://files.example.com",
+		"http://10.0.0.5:8080":            "http://10.0.0.5:8080",
+		"https://proxy.example.com/fs/":   "https://proxy.example.com/fs",
+		"http://[2001:db8::1]:8443/":      "http://[2001:db8::1]:8443",
+		"https://files.example.com/a%20b": "https://files.example.com/a%20b",
+	} {
+		if got, err := ShareAddress(raw); err != nil || got != want {
+			t.Errorf("ShareAddress(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{
+		"files.example.com", "ftp://files.example.com", "https://", "https://alice:pw@files.example.com",
+		"https://files.example.com/?x=1", "https://files.example.com/#top", "https://files.example.com/?",
+	} {
+		if got, err := ShareAddress(raw); err == nil {
+			t.Errorf("ShareAddress(%q) was read as %q", raw, got)
+		}
+	}
+}
+
+// The http server builds share links on the two addresses, normalised.
+func TestResolvedHandsTheShareAddressesToHTTP(t *testing.T) {
+	cfg := Default()
+	cfg.General.InternalAddress = "http://Files.lan:8080/"
+	cfg.General.ExternalAddress = "https://files.example.com"
+	resolved := cfg.Resolved()
+	if resolved.HTTP.ShareInternalAddress != "http://files.lan:8080" ||
+		resolved.HTTP.ShareExternalAddress != "https://files.example.com" {
+		t.Errorf("http has %q and %q", resolved.HTTP.ShareInternalAddress, resolved.HTTP.ShareExternalAddress)
+	}
+	// and the file keeps what was written
+	if resolved.General.InternalAddress != "http://Files.lan:8080/" {
+		t.Errorf("general.internalAddress became %q", resolved.General.InternalAddress)
 	}
 }
 

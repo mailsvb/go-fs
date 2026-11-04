@@ -99,6 +99,16 @@ type General struct {
 	// before it is deleted for good. 0 keeps it until it is deleted by hand.
 	TrashRetentionDays int `toml:"trashRetentionDays"`
 
+	// InternalAddress and ExternalAddress are the addresses this host is
+	// reached at from inside the network and from outside it: http or https,
+	// a host, an optional port and an optional path, without a slash at the
+	// end. A share link is built on them rather than on the address the page
+	// was opened at. With both set the Share dialog offers a choice between
+	// the two; with one set that one is always used; with neither the page's
+	// own address is.
+	InternalAddress string `toml:"internalAddress"`
+	ExternalAddress string `toml:"externalAddress"`
+
 	// ReloadConfig watches the configuration file and applies what changes in
 	// it without a restart. A file that does not parse or does not validate is
 	// reported and ignored, so a half-written save cannot take a server down.
@@ -647,6 +657,43 @@ func ArtifactoryURL(raw string) (string, error) {
 	return u.Scheme + "://" + strings.ToLower(u.Host) + p, nil
 }
 
+// ShareAddress reads general.internalAddress or general.externalAddress: http
+// or https, a host, an optional port and an optional path, which a share link
+// appends the file's path to. The scheme and the host are lowered and a slash
+// at the end is dropped, so that https://Files.example.com/ and
+// https://files.example.com are the same address. Empty stays empty: the key
+// is not set.
+func ShareAddress(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("%q is not an address", raw)
+	case u.Scheme != "http" && u.Scheme != "https":
+		return "", fmt.Errorf("%q has to begin with https:// or http://", raw)
+	case u.Host == "" || u.Hostname() == "":
+		return "", fmt.Errorf("%q names no host", raw)
+	case u.User != nil:
+		return "", fmt.Errorf("%q cannot hold a login", raw)
+	case u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
+		return "", fmt.Errorf("%q has to be the address alone, without a query", raw)
+	}
+	return u.Scheme + "://" + strings.ToLower(u.Host) +
+		strings.TrimRight(u.EscapedPath(), "/"), nil
+}
+
+// shareAddressOr is ShareAddress for a value that has been validated: the
+// normalised address, or the value as it is should it not read.
+func shareAddressOr(raw string) string {
+	if address, err := ShareAddress(raw); err == nil {
+		return address
+	}
+	return raw
+}
+
 // FindServer finds a server of a list by its name, whatever its case.
 func FindServer(servers []Server, name string) (Server, bool) {
 	for _, server := range servers {
@@ -854,6 +901,11 @@ type HTTP struct {
 	// general.trashRetentionDays, which Resolved hands the server.
 	TrashFolder        string `toml:"-"`
 	TrashRetentionDays int    `toml:"-"`
+	// ShareInternalAddress and ShareExternalAddress are
+	// general.internalAddress and general.externalAddress, normalised, which
+	// Resolved hands the server for the Share dialog.
+	ShareInternalAddress string `toml:"-"`
+	ShareExternalAddress string `toml:"-"`
 	// JellyfinFolders are the folders of the jellyfin repositories, which
 	// Resolved hands the server: only an account reads them, and Jellyfin
 	// clients are answered while there is one.
@@ -1216,6 +1268,10 @@ func (c Config) Resolved() Config {
 	c.HTTP.UploadStagingFolder = c.General.BaseFolderTemp
 	c.HTTP.TrashFolder = c.General.BaseFolderTrash
 	c.HTTP.TrashRetentionDays = c.General.TrashRetentionDays
+	// Validate has accepted both, so an error here cannot happen; the raw
+	// value is kept should it ever
+	c.HTTP.ShareInternalAddress = shareAddressOr(c.General.InternalAddress)
+	c.HTTP.ShareExternalAddress = shareAddressOr(c.General.ExternalAddress)
 	c.HTTP.JellyfinFolders = c.JellyfinFolders()
 	c.HTTP.JellyfinName, c.HTTP.JellyfinURL = c.JellyfinServer()
 	return c
@@ -1313,6 +1369,12 @@ func (c Config) Validate() error {
 	}
 	if err := c.validateTrash(); err != nil {
 		return err
+	}
+	if _, err := ShareAddress(c.General.InternalAddress); err != nil {
+		return fmt.Errorf("general.internalAddress: %w", err)
+	}
+	if _, err := ShareAddress(c.General.ExternalAddress); err != nil {
+		return fmt.Errorf("general.externalAddress: %w", err)
 	}
 	for i, entry := range c.General.Cleanup {
 		if entry.Path == "" {

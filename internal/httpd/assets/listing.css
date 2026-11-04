@@ -372,6 +372,9 @@ dialog .share-lines label { margin-top: 0.35rem; color: var(--faint); font-size:
 dialog .share-lines label:first-child { margin-top: 0; }
 dialog .share-line { display: flex; gap: 0.5rem; }
 dialog .share-line button.go { flex: none; }
+/* the address the lines are built on, when both an internal and an external
+   one are configured */
+dialog .share-lines select { min-width: 0; max-width: 100%; font-size: 0.8rem; }
 dialog input.link { box-sizing: border-box; flex: 1; min-width: 0; color: var(--faint);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
 dialog button.go .ic { margin-right: 0.35rem; vertical-align: -0.15em; }

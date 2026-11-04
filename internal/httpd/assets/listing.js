@@ -1061,12 +1061,24 @@
   // --- sharing a file --------------------------------------------------
   //
   // The server computes the link, since only it holds the secret the key is
-  // signed with; it answers the path and the query, and the origin is the
-  // one this page was loaded from, which is right behind a proxy as well.
+  // signed with; it answers the path and the query. The address in front of
+  // them is general.internalAddress or general.externalAddress when they are
+  // configured, and otherwise the origin this page was loaded from, which is
+  // right behind a proxy as well. With both configured the dialog has a
+  // dropdown between them, which starts on the one this page was loaded from,
+  // or on the external one when it was loaded from neither.
 
   var shareDialog = document.getElementById("share-dialog");
   var shareFields = shareDialog ? shareDialog.querySelectorAll("input.link") : [];
   var copyButtons = shareDialog ? shareDialog.querySelectorAll("button[data-copy]") : [];
+  var shareBases = shareDialog ? {
+    internal: shareDialog.dataset.internal || "",
+    external: shareDialog.dataset.external || ""
+  } : {};
+  var shareChoice = shareDialog ? shareDialog.querySelector("#share-base") : null;
+  // shared is the file the dialog is open for, so that another choice of
+  // address can build its lines again
+  var shared = null;
 
   function shareField(kind) {
     return shareDialog.querySelector("input.link[data-kind='" + kind + "']");
@@ -1076,6 +1088,54 @@
   // hold spaces or quotes, and the link's query an & or a ?.
   function shellQuote(text) {
     return "'" + text.replace(/'/g, "'\\''") + "'";
+  }
+
+  // sameAddress reports whether a configured address names the origin, or
+  // failing that the host, this page was loaded from.
+  function sameAddress(address, part) {
+    try {
+      return new URL(address)[part] === window.location[part];
+    } catch (err) {
+      return false;
+    }
+  }
+
+  // defaultBase is the choice the dropdown starts on.
+  function defaultBase() {
+    var parts = ["origin", "hostname"];
+    for (var i = 0; i < parts.length; i++) {
+      var internal = sameAddress(shareBases.internal, parts[i]);
+      var external = sameAddress(shareBases.external, parts[i]);
+      if (internal !== external) {
+        return internal ? "internal" : "external";
+      }
+      if (external) {
+        return "external";
+      }
+    }
+    return "external";
+  }
+
+  // shareBase is the address the lines are built on.
+  function shareBase() {
+    if (shareChoice) {
+      return shareBases[shareChoice.value];
+    }
+    return shareBases.external || shareBases.internal || window.location.origin;
+  }
+
+  // fillShare writes the link and the commands for the file the dialog is
+  // open for.
+  function fillShare() {
+    var url = shareBase() + shared.path;
+    // the commands name the output file, or the key would end up in it
+    shareField("link").value = url;
+    shareField("curl").value = "curl -fL -o " + shellQuote(shared.name) + " " + shellQuote(url);
+    shareField("wget").value = "wget -O " + shellQuote(shared.name) + " " + shellQuote(url);
+    copyButtons.forEach(function (button) {
+      window.clearTimeout(button.copiedTimer);
+      button.querySelector("span").textContent = "Copy";
+    });
   }
 
   function shareEntry(row) {
@@ -1094,15 +1154,11 @@
       shareDialog.querySelector("p").textContent = "Anyone with this link can download " +
         decodeURI(folder) + name + " without logging in. It stops working as soon as " +
         "the file is changed, renamed or replaced.";
-      var url = window.location.origin + view.path;
-      // the commands name the output file, or the key would end up in it
-      shareField("link").value = url;
-      shareField("curl").value = "curl -fL -o " + shellQuote(name) + " " + shellQuote(url);
-      shareField("wget").value = "wget -O " + shellQuote(name) + " " + shellQuote(url);
-      copyButtons.forEach(function (button) {
-        window.clearTimeout(button.copiedTimer);
-        button.querySelector("span").textContent = "Copy";
-      });
+      shared = { name: name, path: view.path };
+      if (shareChoice) {
+        shareChoice.value = defaultBase();
+      }
+      fillShare();
       shareDialog.showModal();
       shareField("link").focus();
       shareField("link").select();
@@ -1127,6 +1183,13 @@
   }
 
   if (shareDialog) {
+    if (shareChoice) {
+      shareChoice.addEventListener("change", function () {
+        if (shared) {
+          fillShare();
+        }
+      });
+    }
     shareFields.forEach(function (field) {
       field.addEventListener("focus", function () {
         field.select();

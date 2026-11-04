@@ -324,6 +324,15 @@ none. The dialog shows the full link to copy. It is the file's own URL with
 https://example.com/osem/file.extension?key=3f9c…  (128 hex characters)
 ```
 
+Below the link the dialog shows the `curl` and `wget` commands that fetch it,
+each with a Copy button. The address in front of the path is the one the page
+was opened at, unless `general.internalAddress` or `general.externalAddress`
+names another (see [Configuration](CONFIGURATION.md)). With one of them set,
+every link uses that one. With both, an **Address** dropdown above the lines
+switches all three between the internal and the external address. It starts on
+the one the page was opened at, matched by origin and then by host name, and on
+the external one when the page was opened at neither, say through `localhost`.
+
 The download names the file in its `Content-Disposition` header, which a
 browser follows. Command-line clients only use the header when asked to.
 Without that, `wget` names the file after the URL, key included:

@@ -71,6 +71,22 @@ Run by hand as another account, make the folder once and hand it over,
 `sudo install -d -o <user> -g <group> -m 0750 /var/lib/go-fs`, or point the
 four keys at a folder that account owns.
 
+`general.internalAddress` and `general.externalAddress` are the addresses this
+host is reached at from inside the network and from outside it, which a
+[share link](BROWSER.md#sharing-a-file) is built on instead of the address the
+page was opened at. Each is `http` or `https`, the host, a port when it is not
+the scheme's own, and a path when a proxy serves go-fs under one; a slash at
+the end is dropped, and empty leaves the key unset:
+
+```toml
+[general]
+internalAddress = "http://files.lan:8080"
+externalAddress = "https://files.example.com"
+```
+
+With both set, the Share dialog has a dropdown between them. With one set,
+every share link uses that one.
+
 A file written for an older version names them `general.basefolder`,
 `http.registryBaseFolder` and `http.uploadStagingFolder`. It is still read,
 and go-fs renames the keys in it at the next start, keeping the comments and
@@ -105,6 +121,7 @@ What happens depends on what changed:
 | `general.baseFolderFiles` | every server is restarted |
 | `general.baseFolderTemp` | applied to the next upload, nothing is restarted |
 | `general.baseFolderTrash`, `general.trashRetentionDays` | applied to the next delete and the next hourly sweep, nothing is restarted |
+| `general.internalAddress`, `general.externalAddress` | applied to the next listing that is loaded, nothing is restarted |
 | a server switched on or off | it is started or stopped, the others untouched |
 
 A file that does not parse or does not validate is reported at error level and

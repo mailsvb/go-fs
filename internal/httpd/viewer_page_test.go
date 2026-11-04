@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/httpd/viewer"
 )
 
@@ -222,7 +223,7 @@ func TestRemoteListingOffersTheViewer(t *testing.T) {
 		{Name: "song.flac", IsFile: true, ModTime: time.Now()},
 	}
 	page, err := listingPage(remotePlace("share", "/docs/"), entries, sortOrder{}, rights{Download: true},
-		sendView{}, sessionView{}, "nonce", 0)
+		sendView{}, sessionView{}, "nonce", config.HTTP{})
 	if err != nil {
 		t.Fatal(err)
 	}
