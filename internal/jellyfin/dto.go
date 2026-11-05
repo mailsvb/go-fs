@@ -57,6 +57,9 @@ type BaseItem struct {
 	// say none.
 	NormalizationGain      *float64 `json:"NormalizationGain,omitempty"`
 	AlbumNormalizationGain *float64 `json:"AlbumNormalizationGain,omitempty"`
+	// ImageBlurHashes are the blurhashes of the images, by kind and tag,
+	// which Finamp keeps the images it downloads by.
+	ImageBlurHashes map[string]map[string]string `json:"ImageBlurHashes,omitempty"`
 }
 
 // NameID names an item another one refers to.
@@ -170,6 +173,9 @@ func (d Describer) Item(item Item) BaseItem {
 	if tag := imageTag(item); tag != "" {
 		b.ImageTags["Primary"] = tag
 		b.ImageAspectRatio = 1
+		if h := blurHashOf(item); h != "" {
+			b.ImageBlurHashes = map[string]map[string]string{"Primary": {tag: h}}
+		}
 	}
 	switch v := item.(type) {
 	case *Library:

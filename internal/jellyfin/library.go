@@ -126,7 +126,10 @@ type Album struct {
 	cover      string
 	coverTrack *Track
 	coverTag   string
-	lib        *Library
+	// blurHash is the blurhash of the cover, "" when there is none or it
+	// cannot be decoded.
+	blurHash string
+	lib      *Library
 }
 
 // Artist is an artist of tracks, of albums, or of both.
@@ -311,6 +314,7 @@ func Build(name, title, folder, onDisk string, sources []Source, covers map[stri
 		l.Genres = append(l.Genres, g)
 	}
 	slices.SortFunc(l.Albums, byName)
+	hashCovers(l.Albums)
 	slices.SortFunc(l.Artists, byName)
 	slices.SortFunc(l.Genres, byName)
 	slices.SortStableFunc(l.Tracks, byAlbum)

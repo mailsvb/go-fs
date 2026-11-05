@@ -313,6 +313,9 @@ func (j *jellyfinRequest) hints() {
 			"ParentIndexNumber": item.ParentIndexNumber}
 		if tag := item.ImageTags["Primary"]; tag != "" {
 			hint["PrimaryImageTag"] = tag
+			if h := item.ImageBlurHashes["Primary"][tag]; h != "" {
+				hint["BlurHash"] = h
+			}
 		}
 		hints[i] = hint
 	}

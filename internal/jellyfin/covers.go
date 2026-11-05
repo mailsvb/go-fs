@@ -1,15 +1,21 @@
 package jellyfin
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/audio"
 )
 
 // Cover is the image of an album that is beside its tracks on disk.
@@ -113,6 +119,88 @@ func CoverOf(item Item) (file string, track *Track, ok bool) {
 		return "", nil, false
 	}
 	return a.cover, a.coverTrack, true
+}
+
+// hashes are the blurhashes of the covers by their tags, which change when a
+// cover does, so that a cover is decoded once rather than at every build of a
+// library and of the part of it an account sees. A cover that cannot be
+// decoded has "".
+var hashes = struct {
+	sync.Mutex
+	byTag map[string]string
+}{byTag: map[string]string{}}
+
+// hashCovers gives the albums the blurhashes of their covers, decoding those
+// not decoded before side by side.
+func hashCovers(albums []*Album) {
+	var todo []*Album
+	hashes.Lock()
+	for _, a := range albums {
+		if a.coverTag == "" {
+			continue
+		}
+		if h, ok := hashes.byTag[a.coverTag]; ok {
+			a.blurHash = h
+		} else {
+			todo = append(todo, a)
+		}
+	}
+	hashes.Unlock()
+	if len(todo) == 0 {
+		return
+	}
+	work := make(chan *Album)
+	var wg sync.WaitGroup
+	for range min(runtime.GOMAXPROCS(0), len(todo)) {
+		wg.Go(func() {
+			for a := range work {
+				a.blurHash = coverHash(a)
+			}
+		})
+	}
+	for _, a := range todo {
+		work <- a
+	}
+	close(work)
+	wg.Wait()
+	hashes.Lock()
+	for _, a := range todo {
+		hashes.byTag[a.coverTag] = a.blurHash
+	}
+	hashes.Unlock()
+}
+
+// coverHash decodes the cover of an album to its blurhash, "" when it cannot.
+func coverHash(a *Album) string {
+	var r io.Reader
+	if a.cover != "" {
+		f, err := os.Open(a.cover)
+		if err != nil {
+			return ""
+		}
+		defer func() { _ = f.Close() }()
+		r = f
+	} else {
+		picture, _, err := audio.Picture(a.coverTrack.OnDisk())
+		if err != nil {
+			return ""
+		}
+		r = bytes.NewReader(picture)
+	}
+	img, err := decodeCover(r)
+	if err != nil {
+		return ""
+	}
+	return blurHash(img)
+}
+
+// blurHashOf is the blurhash of the image of an item, "" for an item without
+// one or whose image cannot be decoded.
+func blurHashOf(item Item) string {
+	if a := albumOf(item); a != nil {
+		return a.blurHash
+	}
+	return ""
 }
 
 // imageTag is what identifies the image of an item, which clients cache it

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -130,6 +131,7 @@ type jfItems struct {
 	Items []struct {
 		Name, Id, Type, AlbumId string
 		ImageTags               map[string]string
+		ImageBlurHashes         map[string]map[string]string
 		MediaSources            []jellyfin.MediaSource
 	}
 	TotalRecordCount int
@@ -480,9 +482,21 @@ func TestJellyfinBrowses(t *testing.T) {
 	if first.ImageTags["Primary"] == "" {
 		t.Error("the album has no cover")
 	}
+	// Finamp keeps one download of each image by its blurhash: of the
+	// cover beside the tracks and of the picture a track carries
+	for _, album := range albums.Items {
+		if tag := album.ImageTags["Primary"]; album.ImageBlurHashes["Primary"][tag] == "" {
+			t.Errorf("%s has no blurhash: %v", album.Name, album.ImageBlurHashes)
+		}
+	}
 	tracks := jfList(t, server, "/Items?ParentId="+first.Id, token)
 	if got := tracks.names(); !slices.Equal(got, []string{"One", "Two"}) {
 		t.Errorf("tracks %q", got)
+	}
+	for _, track := range tracks.Items {
+		if !maps.EqualFunc(track.ImageBlurHashes, first.ImageBlurHashes, maps.Equal) {
+			t.Errorf("track %s has blurhashes %v, its album %v", track.Name, track.ImageBlurHashes, first.ImageBlurHashes)
+		}
 	}
 	if ms := tracks.Items[0].MediaSources; len(ms) != 1 || ms[0].Container != "mp3" || !ms[0].SupportsDirectPlay {
 		t.Errorf("media sources %+v", ms)
@@ -505,11 +519,16 @@ func TestJellyfinBrowses(t *testing.T) {
 		t.Errorf("latest %+v", latest)
 	}
 	var hints struct {
-		SearchHints []struct{ Name, Type string }
+		SearchHints []struct{ Name, Type, PrimaryImageTag, BlurHash string }
 	}
 	decode(t, jf(t, server, http.MethodGet, "/Search/Hints?SearchTerm=solo", token, nil), &hints)
 	if len(hints.SearchHints) != 2 {
 		t.Errorf("hints %+v", hints)
+	}
+	for _, hint := range hints.SearchHints {
+		if hint.PrimaryImageTag != "" && hint.BlurHash == "" {
+			t.Errorf("hint %+v has no blurhash", hint)
+		}
 	}
 	var item struct{ Name, Type string }
 	// a client may send an id as a GUID
