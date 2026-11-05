@@ -126,8 +126,41 @@ function controls(library) {
       super(owner, { ...options, label: "Next", icon: "vjs-icon-next-item", act: () => { failures = 0; next(); } });
     }
   }
+  // the speed is a button that steps to the next rate, and from the last back
+  // to the first: the menu of Video.js opens upwards, out of the frame the bar
+  // is kept in, where it cannot be seen
+  class RateButton extends Button {
+    constructor(owner, options) {
+      super(owner, options);
+      this.label = document.createElement("span");
+      this.label.className = "vjs-rate-value";
+      this.label.setAttribute("aria-hidden", "true");
+      this.el().appendChild(this.label);
+      this.update();
+      this.on(owner, "ratechange", this.update);
+    }
+
+    buildCSSClass() {
+      return "vjs-rate-control " + super.buildCSSClass();
+    }
+
+    update() {
+      const rate = this.player().playbackRate();
+      this.label.textContent = rate + "×";
+      this.controlText("Speed " + rate + "×, click for the next");
+    }
+
+    // the default rate too, which the next track of the queue starts at
+    handleClick() {
+      const rates = this.player().playbackRates();
+      const rate = rates[(rates.indexOf(this.player().playbackRate()) + 1) % rates.length];
+      this.player().defaultPlaybackRate(rate);
+      this.player().playbackRate(rate);
+    }
+  }
   library.registerComponent("PreviousTrack", PreviousTrack);
   library.registerComponent("NextTrack", NextTrack);
+  library.registerComponent("RateButton", RateButton);
 }
 
 async function start() {
@@ -148,7 +181,7 @@ async function start() {
         "timeDivider",
         "durationDisplay",
         "progressControl",
-        "playbackRateMenuButton",
+        "RateButton",
         { name: "volumePanel", inline: true },
       ],
     },

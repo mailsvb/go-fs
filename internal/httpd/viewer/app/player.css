@@ -94,6 +94,8 @@ button.plain:focus-visible { outline: 2px solid var(--accent); outline-offset: 1
 .video-js .vjs-volume-level::before { color: var(--accent); }
 .video-js .vjs-menu-content { background: var(--ground) !important; color: var(--ink); }
 .video-js .vjs-menu li.vjs-selected { background: var(--accent); color: var(--ground); }
+.video-js .vjs-rate-control { width: 3.2em; }
+.video-js .vjs-rate-value { font-size: 1.4em; line-height: 2; }
 .video-js .vjs-button:disabled { opacity: 0.35; cursor: default; }
 .video-js .vjs-error-display,
 .video-js .vjs-modal-dialog { display: none; }
@@ -116,7 +118,7 @@ button.plain:focus-visible { outline: 2px solid var(--accent); outline-offset: 1
     align-items: flex-start;
   }
   .video-js .vjs-progress-control .vjs-progress-holder { margin: 0; }
-  .video-js .vjs-playback-rate,
+  .video-js .vjs-rate-control,
   .video-js .vjs-volume-panel,
   .video-js .vjs-current-time,
   .video-js .vjs-time-divider,

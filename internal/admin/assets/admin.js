@@ -460,7 +460,7 @@ async function awaitRestart(previous) {
 
 // fieldGrid lays out the plain keys of a section or of one record: one row
 // per key, holding its name, its input, a help icon and the cell the help
-// opens into. Every row has all four cells, so that a key with nothing to say
+// floats from. Every row has all four cells, so that a key with nothing to say
 // keeps the rows below it aligned.
 function fieldGrid(fields, holder, section) {
   const grid = document.createElement("div");
@@ -478,8 +478,9 @@ function fieldGrid(fields, holder, section) {
 }
 
 // helpCells is the icon that opens a key's description and the cell to its
-// right that it opens into. Each icon toggles its own row, so as many as the
-// reader wants can be open at once, and the text lives only in the cell while
+// right that it opens into. The description floats above the rows below it
+// rather than making its own row taller, so only one is open at a time, and a
+// click beside it or Escape closes it. The text lives in the cell only while
 // it is open, so what is not shown is not read out either.
 function helpCells(field) {
   const text = document.createElement("div");
@@ -492,15 +493,49 @@ function helpCells(field) {
   toggle.className = "help-toggle";
   toggle.setAttribute("aria-label", "help for " + field.label);
   toggle.append(span("?", "ring"));
-  const show = (open) => {
-    toggle.setAttribute("aria-expanded", String(open));
-    text.textContent = open ? field.help : "";
+  const pop = document.createElement("div");
+  pop.className = "help-pop";
+  pop.id = "help-" + ++sequence;
+  pop.textContent = field.help;
+  toggle.setAttribute("aria-controls", pop.id);
+  const help = {
+    toggle,
+    pop,
+    show(open) {
+      if (open && openHelp && openHelp !== help) {
+        openHelp.show(false);
+      }
+      toggle.setAttribute("aria-expanded", String(open));
+      text.replaceChildren(...(open ? [pop] : []));
+      if (open) {
+        openHelp = help;
+      } else if (openHelp === help) {
+        openHelp = null;
+      }
+    },
   };
   toggle.addEventListener("click", () =>
-    show(toggle.getAttribute("aria-expanded") !== "true"));
-  show(false);
+    help.show(toggle.getAttribute("aria-expanded") !== "true"));
+  help.show(false);
   return [toggle, text];
 }
+
+// openHelp is the description that is open, if one is: its toggle, the box
+// it floats in, and show, which opens or closes it.
+let openHelp = null;
+document.addEventListener("click", (event) => {
+  if (openHelp && !openHelp.toggle.contains(event.target) &&
+      !openHelp.pop.contains(event.target)) {
+    openHelp.show(false);
+  }
+}, true);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && openHelp) {
+    const toggle = openHelp.toggle;
+    openHelp.show(false);
+    toggle.focus();
+  }
+});
 
 // A table that repeats in the file, [[users]] and the like, is shown as a list
 // with one record per entry, each of which can be removed, and an Add button

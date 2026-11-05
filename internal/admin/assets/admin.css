@@ -231,18 +231,39 @@ section[hidden] { display: none; }
 .fields > .help-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 /* a key with nothing to say keeps its cells, so the rows stay aligned */
 .fields > .help-toggle.none { visibility: hidden; }
-.fields > .help-text {
-  padding-top: 0.35rem;
-  max-width: 44rem;
+/* the cell holds nothing that takes room: the open help floats above the rows
+   below it, so opening it moves nothing */
+.fields > .help-text { position: relative; }
+.fields > .help-text > .help-pop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 10;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(44rem, 100%);
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
   color: var(--faint);
   font-size: 0.82rem;
 }
-.fields > .help-text:empty { padding: 0; }
 /* where four columns do not fit, the text goes under its row instead */
 @media (max-width: 56rem) {
   .fields { grid-template-columns: minmax(9rem, 14rem) minmax(0, 1fr) auto; }
-  .fields > .help-text { grid-column: 1 / -1; margin-top: -0.3rem; padding-top: 0; }
+  .fields > .help-text { grid-column: 1 / -1; margin-top: -0.3rem; }
   .fields > .help-text:empty { display: none; }
+  .fields > .help-text > .help-pop {
+    position: static;
+    width: auto;
+    max-width: none;
+    padding: 0;
+    border: none;
+    background: none;
+    box-shadow: none;
+  }
 }
 
 input[type="text"], input[type="password"], input[type="number"], textarea, select {

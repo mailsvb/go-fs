@@ -198,7 +198,8 @@ Escape closes the window.
 folder, in the order the listing shows them and without those the filter
 hides, become the queue. The bar shows the name and where it is in the queue,
 with previous, play and pause, next, the time, a progress bar, the speed and
-the volume, and moves on to the next file when one ends. Previous goes back to
+the volume, and moves on to the next file when one ends. The speed steps
+through 0.75×, 1×, 1.25×, 1.5× and 2× with each click. Previous goes back to
 the start of the file once it has played a few seconds, and to the one before
 otherwise. A file that does not play is passed over. Clicking another audio
 file starts a new queue from its folder. The × closes the bar.
