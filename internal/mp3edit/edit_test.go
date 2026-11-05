@@ -9,8 +9,8 @@ import (
 	"image/png"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -19,12 +19,44 @@ import (
 	"github.com/mailsvb/go-tag/mp3tags"
 )
 
-// tagged is an MP3 with the fields the editor manages and some it does not.
+// tagged is an MP3 with the fields the editor manages and some it does not,
+// whose frames have a global gain of 150.
 func tagged() []byte {
-	return audiotest.MP3(audiotest.Tags{
+	return withGain(audiotest.MP3(audiotest.Tags{
 		Title: "Old", Artist: "Band", Album: "Record", Year: 2001, Track: 3,
 		Composer: "Writer", Disc: 2, Extra: map[string]string{"MOOD": "calm"},
-	}, 40, true)
+	}, 40, true), 150)
+}
+
+// withGain sets the global gain of every audio frame of an MP3 that
+// audiotest.MP3 built: MPEG-1 Layer III stereo frames of 417 bytes without a
+// CRC, whose side information follows the 4 bytes of the header. A gain of 0,
+// which audiotest leaves, is silence that no volume change touches. The Xing
+// frame is no audio and is left as it is.
+func withGain(mp3 []byte, gain byte) []byte {
+	const frameSize = 417
+	start := bytes.Index(mp3, []byte{0xff, 0xfb, 0x90, 0x00})
+	for off := start; start >= 0 && off+frameSize <= len(mp3); off += frameSize {
+		if string(mp3[off+36:off+40]) == "Xing" {
+			continue
+		}
+		side := mp3[off+4 : off+36]
+		// main_data_begin, private_bits and scfsi take 20 bits; each granule
+		// of each channel takes 59, and its global gain is 8 bits 21 in
+		for i := range 4 {
+			at := 20 + i*59 + 21
+			for b := range 8 {
+				bit := at + b
+				mask := byte(0x80 >> (bit % 8))
+				if gain&(0x80>>b) != 0 {
+					side[bit/8] |= mask
+				} else {
+					side[bit/8] &^= mask
+				}
+			}
+		}
+	}
+	return mp3
 }
 
 // localSource writes data to a file and is the source of it.
@@ -130,11 +162,6 @@ func TestASavedTagIsReadByTheMusicLibrary(t *testing.T) {
 	}
 	defer func() { _ = f.Close() }()
 	m, err := tag.ReadFrom(f)
-	if err != nil && strings.Contains(err.Error(), "even number of bytes") {
-		// github.com/bogem/id3v2 v2.1.4 writes a UTF-16 frame a byte too
-		// long, which go-tag uses for every text field it writes
-		t.Skipf("go-tag writes UTF-16 text dhowden/tag refuses: %v", err)
-	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,9 +260,9 @@ func TestVolumeChangeIsLosslessAndUndone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// the frames are built with a global gain of 0: up only
-	if analysis.MaxUp != 255 || analysis.MaxDown != 0 {
-		t.Errorf("range = +%d/-%d, want +255/-0", analysis.MaxUp, analysis.MaxDown)
+	// from 150 up to 255, and down to 1: 0 is silence, which stays as it is
+	if analysis.MaxUp != 105 || analysis.MaxDown != 149 {
+		t.Errorf("range = +%d/-%d, want +105/-149", analysis.MaxUp, analysis.MaxDown)
 	}
 	if err := Save(src, Edit{Steps: 2}); err != nil {
 		t.Fatal(err)
@@ -272,7 +299,7 @@ func TestVolumeChangeIsLosslessAndUndone(t *testing.T) {
 
 func TestAVolumeChangeOutOfRangeIsRefused(t *testing.T) {
 	m := &memory{data: tagged(), modTime: time.Unix(1000, 0)}
-	err := Save(m.source(), Edit{Steps: -1})
+	err := Save(m.source(), Edit{Steps: 106})
 	if !errors.Is(err, ErrOutOfRange) {
 		t.Fatalf("Save = %v, want %v", err, ErrOutOfRange)
 	}
@@ -314,4 +341,100 @@ func mustRead(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// The change is recorded as MP3Gain records it, so that either undoes what
+// the other did.
+func TestVolumeChangeIsRecordedForMP3Gain(t *testing.T) {
+	src := localSource(t, tagged())
+	if err := Save(src, Edit{Steps: 2}); err != nil {
+		t.Fatal(err)
+	}
+	saved := mustRead(t, src.Path)
+	if !bytes.Contains(saved, []byte("APETAGEX")) || !bytes.Contains(saved, []byte("MP3GAIN_UNDO\x00-002,-002,N")) {
+		t.Error("the file has no APEv2 item MP3GAIN_UNDO of -002,-002,N")
+	}
+	if bytes.Contains(saved, []byte("GO-TAG_GAIN_STEPS")) {
+		t.Error("the change was recorded the old way too")
+	}
+}
+
+// What older versions of go-tag recorded is read, and replaced at the next
+// change.
+func TestAnOldRecordOfTheChangeIsRead(t *testing.T) {
+	plain := tagged()
+	original, err := mp3tags.ReadAudioFrom(bytes.NewReader(plain), int64(len(plain)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// raised by 3 steps by an older go-tag, which noted it in a TXXX frame
+	old := withGain(audiotest.MP3(audiotest.Tags{Title: "Old", Extra: map[string]string{"GO-TAG_GAIN_STEPS": "3"}}, 40, true), 153)
+	src := localSource(t, old)
+	info, err := Read(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Gain.Steps != 3 {
+		t.Fatalf("gain = %+v, want the 3 steps of the old record", info.Gain)
+	}
+	if err := Save(src, Edit{Steps: -3}); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := mp3tags.ReadAudio(src.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(restored, original) {
+		t.Error("undoing the old change did not restore the audio")
+	}
+	saved := mustRead(t, src.Path)
+	if bytes.Contains(saved, []byte("GO-TAG_GAIN_STEPS")) {
+		t.Error("the old record is still there")
+	}
+	if info, err := Read(sourceOfPath(t, src.Path)); err != nil || info.Gain.Steps != 0 {
+		t.Errorf("gain after undoing = %+v, %v", info.Gain, err)
+	}
+}
+
+// mp3gain undoes a change go-fs made, and go-fs one that mp3gain made. It
+// runs where mp3gain is installed.
+func TestMP3GainAndTheEditorUndoEachOther(t *testing.T) {
+	tool, err := exec.LookPath("mp3gain")
+	if err != nil {
+		t.Skip("mp3gain is not installed")
+	}
+	run := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command(tool, args...).CombinedOutput(); err != nil {
+			t.Fatalf("mp3gain %v: %v\n%s", args, err, out)
+		}
+	}
+	src := localSource(t, tagged())
+	original, err := mp3tags.ReadAudio(src.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Save(src, Edit{Steps: 2}); err != nil {
+		t.Fatal(err)
+	}
+	run("-q", "-u", src.Path)
+	if restored, err := mp3tags.ReadAudio(src.Path); err != nil || !bytes.Equal(restored, original) {
+		t.Fatalf("mp3gain -u did not restore the audio go-fs changed (%v)", err)
+	}
+
+	run("-q", "-c", "-g", "3", src.Path)
+	info, err := Read(sourceOfPath(t, src.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Gain.Steps != 3 {
+		t.Fatalf("gain after mp3gain -g 3 = %+v", info.Gain)
+	}
+	if err := Save(sourceOfPath(t, src.Path), Edit{Steps: -3}); err != nil {
+		t.Fatal(err)
+	}
+	if restored, err := mp3tags.ReadAudio(src.Path); err != nil || !bytes.Equal(restored, original) {
+		t.Errorf("go-fs did not restore the audio mp3gain changed (%v)", err)
+	}
 }

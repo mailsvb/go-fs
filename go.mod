@@ -12,8 +12,8 @@ require (
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/klauspost/compress v1.20.3
-	github.com/mailsvb/go-tag/mp3gain v0.0.0-20261105093439-ab27dceea7ca
-	github.com/mailsvb/go-tag/mp3tags v0.0.0-20261105093439-ab27dceea7ca
+	github.com/mailsvb/go-tag/mp3gain v0.1.1
+	github.com/mailsvb/go-tag/mp3tags v0.1.1
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/pelletier/go-toml/v2 v2.4.3

@@ -321,12 +321,25 @@ WebDAV client holds.
 
 ### The volume
 
-The volume changes without decoding and encoding the audio again. Every MPEG
-Layer III frame stores a global gain per channel, and the editor adds the same
-number of steps to all of them. One step is 1.5 dB. The coded audio itself is
-left as it is, so the same number of steps the other way restores the file
-exactly. The tag remembers how many steps were applied so far (`TXXX`
-`GO-TAG_GAIN_STEPS`), which the editor shows.
+The volume changes without decoding and encoding the audio again, as
+[MP3Gain](https://mp3gain.sourceforge.net/) does. Every MPEG Layer III frame
+stores a global gain per channel, and the editor adds the same number of steps
+to all of them. One step is 1.5 dB. The coded audio itself is left as it is, so
+the same number of steps the other way restores the file exactly. Frames of
+digital silence, with a global gain of 0, are left as they are, as MP3Gain
+leaves them.
+
+The change is recorded as MP3Gain records it: in the item `MP3GAIN_UNDO` of an
+APEv2 tag at the end of the file, which holds the change that restores the
+original level. The editor shows how many steps were applied so far, also by
+MP3Gain, and `mp3gain -u` undoes a change made in go-fs. A change made with
+`mp3gain -s i`, which keeps the item in the ID3v2 tag instead, is read too, and
+so is the `TXXX` frame `GO-TAG_GAIN_STEPS` of earlier versions, which the next
+change replaces. A change removes what MP3Gain keeps about a file's gain values
+and loudness (`MP3GAIN_MINMAX`, `MP3GAIN_ALBUM_MINMAX` and the `REPLAYGAIN_*`
+items of the APEv2 tag), which no longer apply and which MP3Gain measures again.
+`mp3gain -u` does not update the ReplayGain values of the ID3v2 tag, so analyze
+a file again after undoing a change with MP3Gain.
 
 **Analyze** decodes the file, measures its loudness (EBU R128 /
 ITU-R BS.1770) and its peak, and suggests the change that brings it to

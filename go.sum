@@ -68,10 +68,10 @@ github.com/klauspost/compress v1.20.3 h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTf
 github.com/klauspost/compress v1.20.3/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
 github.com/kr/fs v0.1.0 h1:Jskdu9ieNAYnjxsi0LbQp1ulIKZV1LAFgK1tWhpZgl8=
 github.com/kr/fs v0.1.0/go.mod h1:FFnZGqtBN9Gxj7eW1uZ42v5BccTP0vu6NEaFoC2HwRg=
-github.com/mailsvb/go-tag/mp3gain v0.0.0-20261105093439-ab27dceea7ca h1:uuKbIKlntrdZd44GQMGrQ4bfo6BUBV5o4ODA+Bb1tAs=
-github.com/mailsvb/go-tag/mp3gain v0.0.0-20261105093439-ab27dceea7ca/go.mod h1:f2gI/8s5Wurk8OqIh3COfr52xD3GFknodCRzAwPKGFc=
-github.com/mailsvb/go-tag/mp3tags v0.0.0-20261105093439-ab27dceea7ca h1:7TEmTcy4rG//atxPrDtpVXeI2jfuOwEGZwlkz/6P1m0=
-github.com/mailsvb/go-tag/mp3tags v0.0.0-20261105093439-ab27dceea7ca/go.mod h1:WdM7bTy2uFJ8X4ltwjQpT10M+76/L9gfYOH0UvDEJmQ=
+github.com/mailsvb/go-tag/mp3gain v0.1.1 h1:tH31fQtTEVPzFcflGy0ceTBPO2vlp0JPoJdRoqeXyz0=
+github.com/mailsvb/go-tag/mp3gain v0.1.1/go.mod h1:f2gI/8s5Wurk8OqIh3COfr52xD3GFknodCRzAwPKGFc=
+github.com/mailsvb/go-tag/mp3tags v0.1.1 h1:7cxvk2CAaS6J65GntEXoPC4d5JLyyPlFchx5HKV7vWA=
+github.com/mailsvb/go-tag/mp3tags v0.1.1/go.mod h1:ohxRDIgGT7n1VDjZUEamaRrrkv+HCCWADJMU2Lq1g2U=
 github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U=
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJwooC2xJA040=
