@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/mp3edit"
 	"github.com/mailsvb/go-fs/internal/secrets"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -527,6 +528,7 @@ func granted(perms config.Permissions, act action) bool {
 // question the dispatch asks is what keeps the buttons on the page and the
 // checks in ServeHTTP saying the same thing.
 func (s *Server) rightsFor(set *settings, user *account, virtual string) rights {
+	overwrite := s.permits(set, user, http.MethodPut, virtual, actOverwrite)
 	return rights{
 		// whoever sees the listing may read what it lists
 		Download:     true,
@@ -535,7 +537,8 @@ func (s *Server) rightsFor(set *settings, user *account, virtual string) rights 
 		DeleteFile:   s.permits(set, user, http.MethodDelete, virtual, actDeleteFile),
 		DeleteFolder: s.permits(set, user, http.MethodDelete, virtual, actDeleteFolder),
 		Rename:       s.permits(set, user, methodMove, virtual, actRename),
-		Overwrite:    s.permits(set, user, http.MethodPut, virtual, actOverwrite),
+		Overwrite:    overwrite,
+		MP3Tags:      mp3edit.Compiled && overwrite,
 	}
 }
 

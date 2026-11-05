@@ -192,6 +192,14 @@
       403: "Only an account that is logged in and may create files in that folder can fetch into it.",
       404: "That server is no longer stored."
     },
+    mp3tags: {
+      403: "You may not change this file here.",
+      404: "That file is gone, or it is not an MP3 file.",
+      409: "The volume change is larger than this file allows.",
+      412: "The file was changed since the editor read it \u2014 open it again.",
+      415: "The cover must be a JPEG or PNG image of at most 10 MiB.",
+      422: "This file holds no MP3 audio the editor can measure or change."
+    },
     "remote-measure": {
       403: "Only an account that is logged in may fetch from this server, and only where it allows downloads.",
       404: "That file or folder is gone, or the server is no longer stored."
@@ -889,6 +897,8 @@
   // Edit is there for a file of text the account may replace, which the
   // server marks; it opens the file in the viewer's editor
   var editing = menu.querySelector("[data-do='edit']");
+  // Edit MP3 Tag is there for an MP3 file where the account may replace it
+  var mp3Item = menu.querySelector("[data-do='mp3tag']");
   var archiveName = /\.(tar|tgz|tzst|txz|tbz2?|tar\.(gz|zst|xz|bz2))$/i;
   var opener = null;
 
@@ -921,6 +931,9 @@
     }
     if (editing) {
       editing.hidden = isFolder || !row.dataset.edit || !openViewer;
+    }
+    if (mp3Item) {
+      mp3Item.hidden = isFolder || !/\.mp3$/i.test(row.dataset.name);
     }
     if (importing) {
       importing.hidden = isFolder || !archiveName.test(row.dataset.name);
@@ -1031,6 +1044,8 @@
       sending.open(row);
     } else if (item.dataset.do === "remote-fetch") {
       remoteFetching.open(row);
+    } else if (item.dataset.do === "mp3tag" && mp3Editing) {
+      mp3Editing.open(row);
     } else if (item.dataset.do === "edit" && openViewer) {
       openViewer(row.querySelector("a") || row, row.dataset.name, row.dataset.edit, "text", "edit");
     }
@@ -2710,6 +2725,816 @@
     }
 
     return { open: open };
+  })();
+
+  // --- editing MP3 tags ------------------------------------------------
+  //
+  // Edit MP3 Tag in the menu of an MP3 file, and Edit MP3 Tags in the header
+  // for every MP3 file of the folder, open the editor over the page: the
+  // fields of the tag, the cover and the volume. The server keeps every other
+  // tag of a file as it is, and changes the volume without re-encoding, in
+  // steps of 1.5 dB that the same change the other way undoes exactly.
+
+  var mp3Editing = (function () {
+    var single = document.getElementById("mp3-dialog");
+    if (!single) {
+      return null;
+    }
+    var several = document.getElementById("mp3-folder-dialog");
+    var stepDB = 5 * Math.log(2) / Math.LN10;
+    var fieldNames = ["title", "artist", "albumArtist", "album", "year", "genre", "track"];
+    var fieldLabels = {
+      title: "Title", artist: "Artist", albumArtist: "Album Artist", album: "Album",
+      year: "Year", genre: "Genre", track: "Track"
+    };
+    var maxCover = 10 * 1024 * 1024;
+    var mp3Name = /\.mp3$/i;
+
+    function isMP3(row) {
+      return row.dataset.dir !== "1" && mp3Name.test(row.dataset.name);
+    }
+
+    // link is where the editor asks about a file of this folder, or about the
+    // folder itself for the name ""
+    function link(name, part) {
+      return remote
+        ? remote + encodeURIComponent(name) + "&mp3tags=" + part
+        : folder + encodeURIComponent(name) + "?go-fs=mp3tags&mp3tags=" + part;
+    }
+
+    function signed(n) {
+      return (n > 0 ? "+" : n < 0 ? "−" : "") + Math.abs(n);
+    }
+
+    function decibels(steps) {
+      var db = steps * stepDB;
+      var size = Math.abs(db).toFixed(1);
+      return (size === "0.0" ? "±" : db > 0 ? "+" : "−") + size + " dB";
+    }
+
+    function stepsOf(input) {
+      return parseInt(input.value, 10) || 0;
+    }
+
+    function loudnessOf(change) {
+      return change.loudness === null ? "silence" : change.loudness.toFixed(1).replace("-", "−") + " LUFS";
+    }
+
+    // measuredText says what a change to the target loudness was planned on
+    function measuredText(change) {
+      return "Measured " + loudnessOf(change) + ", peak " + change.peak.toFixed(2) +
+        ". Reaching −18 LUFS takes " + decibels(change.steps) + " (" + signed(change.steps) + " steps)" +
+        (change.limited ? ", limited to keep the audio from clipping" : "") + ".";
+    }
+
+    function appliedText(gain) {
+      var text = gain.steps
+        ? "Changed by " + decibels(gain.steps) + " (" + signed(gain.steps) + " steps) so far."
+        : "Not changed so far.";
+      if (gain.trackGain) {
+        text += " ReplayGain of the track " + gain.trackGain + (gain.albumGain ? ", of the album " + gain.albumGain : "") + ".";
+      }
+      return text;
+    }
+
+    function json(res) {
+      return res.json();
+    }
+
+    function load(name) {
+      return askJSON("mp3tags", "GET", link(name, "tags")).then(json);
+    }
+
+    function analyze(name) {
+      return askJSON("mp3tags", "POST", link(name, "analyze"), {}).then(json);
+    }
+
+    function planAlbum(names) {
+      return askJSON("mp3tags", "POST", link("", "album"), { names: names }).then(json);
+    }
+
+    // save sends an edit on the condition that the file is still the one
+    // the editor read, so that a change made meanwhile is not overwritten
+    function save(name, modified, edit) {
+      return fetch(link(name, "tags"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "If-Unmodified-Since": modified },
+        credentials: "same-origin",
+        body: JSON.stringify(edit)
+      }).then(function (res) {
+        if (res.ok) {
+          return null;
+        }
+        return res.text().then(function (text) {
+          throw new Error(reason("mp3tags", res.status, text.trim()));
+        });
+      });
+    }
+
+    // readCover reads an image picked to be the cover: as the save sends it,
+    // and as the editor shows it until then
+    function readCover(file) {
+      return new Promise(function (resolve, reject) {
+        if (!/^image\/(jpeg|png)$/.test(file.type)) {
+          reject(new Error("The cover must be a JPEG or PNG image."));
+          return;
+        }
+        if (file.size > maxCover) {
+          reject(new Error("The cover must be at most 10 MiB."));
+          return;
+        }
+        var reader = new FileReader();
+        reader.onload = function () {
+          var url = String(reader.result);
+          resolve({ url: url, data: url.slice(url.indexOf(",") + 1) });
+        };
+        reader.onerror = function () {
+          reject(new Error("The image could not be read."));
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // picker opens the file chooser of a dialog, and hands the image picked
+    // to the function the latest call named
+    function picker(input, failure) {
+      var pending = null;
+      input.addEventListener("change", function () {
+        var file = input.files && input.files[0];
+        input.value = "";
+        if (file && pending) {
+          readCover(file).then(pending).catch(failure);
+        }
+      });
+      return function (then) {
+        pending = then;
+        input.click();
+      };
+    }
+
+    // inOrder runs work on each item, one after the other, until the dialog
+    // it was started for is closed
+    function inOrder(list, work, alive) {
+      return list.reduce(function (chain, item, i) {
+        return chain.then(function () {
+          return alive() ? work(item, i) : null;
+        });
+      }, Promise.resolve());
+    }
+
+    // --- one file ---
+
+    var one = (function () {
+      var form = single.querySelector("form");
+      var where = single.querySelector(".where");
+      var status = single.querySelector(".status");
+      var image = single.querySelector(".art img");
+      var none = single.querySelector(".art .none");
+      var removeCover = single.querySelector("[data-cover='remove']");
+      var replaceCover = single.querySelector("[data-cover='replace']");
+      var applied = single.querySelector(".applied");
+      var measured = single.querySelector(".measured");
+      var steps = form.elements.namedItem("steps");
+      var db = single.querySelector(".db");
+      var analyzing = single.querySelector("[data-do='analyze']");
+      var suggest = single.querySelector("[data-do='suggest']");
+      var saving = form.querySelector("button[value='save']");
+      // state is the file the dialog is open for, null once it closed
+      var state = null;
+
+      function tell(message, bad) {
+        status.textContent = message || "";
+        status.classList.toggle("bad", bad === true);
+      }
+
+      var pick = picker(single.querySelector("input[type='file']"), function (err) {
+        tell(err.message, true);
+      });
+
+      function field(key) {
+        return form.elements.namedItem(key);
+      }
+
+      function showCover(url) {
+        image.hidden = !url;
+        none.hidden = !!url;
+        if (url) {
+          image.src = url;
+        } else {
+          image.removeAttribute("src");
+        }
+        removeCover.disabled = !url;
+      }
+
+      function showSteps() {
+        db.textContent = decibels(stepsOf(steps));
+      }
+
+      function busy(on) {
+        saving.disabled = on;
+        analyzing.disabled = on;
+        replaceCover.disabled = on;
+      }
+
+      function open(row) {
+        var name = row.dataset.name;
+        var asked = { name: name, info: null, cover: null, analysis: null };
+        state = asked;
+        form.reset();
+        where.textContent = shown + name;
+        showCover(null);
+        applied.textContent = "";
+        measured.textContent = "";
+        suggest.hidden = true;
+        steps.removeAttribute("min");
+        steps.removeAttribute("max");
+        showSteps();
+        busy(true);
+        tell("Reading the tag…");
+        single.showModal();
+        load(name).then(function (info) {
+          if (state !== asked) {
+            return;
+          }
+          asked.info = info;
+          fieldNames.forEach(function (key) {
+            field(key).value = info.fields[key] || "";
+          });
+          showCover(info.cover ? link(name, "cover") : null);
+          applied.textContent = appliedText(info.gain);
+          busy(false);
+          tell("");
+          field("title").focus();
+        }).catch(function (err) {
+          if (state === asked) {
+            tell(err.message, true);
+          }
+        });
+      }
+
+      replaceCover.addEventListener("click", function () {
+        var asked = state;
+        pick(function (picked) {
+          if (state === asked && asked) {
+            asked.cover = { data: picked.data };
+            showCover(picked.url);
+            tell("");
+          }
+        });
+      });
+
+      removeCover.addEventListener("click", function () {
+        if (state) {
+          state.cover = { remove: true };
+          showCover(null);
+        }
+      });
+
+      analyzing.addEventListener("click", function () {
+        var asked = state;
+        if (!asked || !asked.info) {
+          return;
+        }
+        busy(true);
+        tell("");
+        measured.textContent = "Measuring the loudness…";
+        analyze(asked.name).then(function (analysis) {
+          if (state !== asked) {
+            return;
+          }
+          asked.analysis = analysis;
+          steps.min = -analysis.maxDown;
+          steps.max = analysis.maxUp;
+          measured.textContent = measuredText(analysis.track);
+          suggest.hidden = false;
+          busy(false);
+        }).catch(function (err) {
+          if (state === asked) {
+            measured.textContent = "";
+            busy(false);
+            tell(err.message, true);
+          }
+        });
+      });
+
+      suggest.addEventListener("click", function () {
+        if (state && state.analysis) {
+          steps.value = state.analysis.track.steps;
+          showSteps();
+        }
+      });
+
+      steps.addEventListener("input", showSteps);
+
+      // The submit event rather than close, for the reason the other dialogs
+      // give: which button was pressed is only known there.
+      form.addEventListener("submit", function (event) {
+        var pressed = event.submitter ? event.submitter.value : "save";
+        if (pressed === "cancel") {
+          return;
+        }
+        event.preventDefault();
+        var asked = state;
+        if (!asked || !asked.info || saving.disabled) {
+          return;
+        }
+        var edit = { fields: {}, gain: { steps: stepsOf(steps), replayGain: !!asked.analysis } };
+        fieldNames.forEach(function (key) {
+          edit.fields[key] = field(key).value.trim();
+        });
+        if (asked.cover) {
+          edit.cover = asked.cover;
+        }
+        busy(true);
+        tell(edit.gain.steps ? "Saving and changing the volume…" : "Saving…");
+        save(asked.name, asked.info.modified, edit).then(function () {
+          if (state === asked) {
+            single.close();
+          }
+          done();
+        }).catch(function (err) {
+          if (state === asked) {
+            busy(false);
+            tell(err.message, true);
+          }
+        });
+      });
+
+      single.addEventListener("close", function () {
+        state = null;
+      });
+
+      return { open: open };
+    })();
+
+    // --- every file of the folder ---
+
+    var all = several && (function () {
+      var form = several.querySelector("form");
+      var filesBody = several.querySelector("tbody.files");
+      var allRow = several.querySelector("tbody.all");
+      var status = several.querySelector(".status");
+      var progress = several.querySelector(".progress");
+      var bar = progress.querySelector("progress");
+      var measured = several.querySelector(".measured");
+      var offset = form.elements.namedItem("offset");
+      var db = several.querySelector(".db");
+      var analyzing = several.querySelector("[data-do='analyze']");
+      var saving = form.querySelector("button[value='save']");
+      // files are the rows of the table, each with what the server said of
+      // its file; album is the change planned for all of them as an album
+      var files = [];
+      var album = null;
+      // session counts the times the dialog was opened, so that what an
+      // earlier one started stops once it closed
+      var session = 0;
+      var savedAny = false;
+
+      function tell(message, bad) {
+        status.textContent = message || "";
+        status.classList.toggle("bad", bad === true);
+      }
+
+      var pick = picker(several.querySelector("input[type='file']"), function (err) {
+        tell(err.message, true);
+      });
+
+      function mode() {
+        var checked = form.querySelector("input[name='mode']:checked");
+        return checked ? checked.value : "track";
+      }
+
+      function busy(on) {
+        saving.disabled = on;
+        analyzing.disabled = on;
+      }
+
+      // planned is the change a save makes to the volume of a file
+      function planned(file) {
+        var base = 0;
+        if (file.analysis) {
+          base = mode() === "album" && album ? album.steps : file.analysis.track.steps;
+        }
+        return base + stepsOf(offset);
+      }
+
+      function showThumb(file, url) {
+        file.thumb.textContent = "";
+        if (url) {
+          var img = document.createElement("img");
+          img.alt = "";
+          img.src = url;
+          file.thumb.appendChild(img);
+        } else {
+          var none = document.createElement("span");
+          none.className = "none";
+          none.textContent = "—";
+          file.thumb.appendChild(none);
+        }
+      }
+
+      function showVolume(file) {
+        var cell = file.volume;
+        cell.textContent = "";
+        cell.classList.remove("bad");
+        if (file.problem) {
+          cell.textContent = file.problem;
+          cell.classList.add("bad");
+          return;
+        }
+        if (!file.info) {
+          return;
+        }
+        var now = document.createElement("span");
+        now.title = "Changed so far; after the arrow, the change a save makes";
+        now.textContent = file.info.gain.steps ? decibels(file.info.gain.steps) : "—";
+        cell.appendChild(now);
+        var change = planned(file);
+        if (change !== 0 || file.analysis) {
+          var next = document.createElement("span");
+          next.className = "planned";
+          next.textContent = " → " + decibels(change);
+          if (file.analysis) {
+            next.title = measuredText(file.analysis.track);
+          }
+          cell.appendChild(next);
+        }
+      }
+
+      function mark(file, key) {
+        var input = file.inputs[key];
+        input.classList.toggle("changed", !!file.info && input.value.trim() !== (file.info.fields[key] || ""));
+      }
+
+      function smallButton(label, icon, then) {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "plain small";
+        button.title = label;
+        button.setAttribute("aria-label", label);
+        var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("class", "ic");
+        var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+        use.setAttribute("href", "#" + icon);
+        svg.appendChild(use);
+        button.appendChild(svg);
+        button.addEventListener("click", then);
+        return button;
+      }
+
+      function rowOf(name) {
+        var file = { name: name, info: null, cover: null, analysis: null, problem: "", inputs: {} };
+        var tr = document.createElement("tr");
+        var th = document.createElement("th");
+        th.scope = "row";
+        th.textContent = name;
+        th.title = name;
+        tr.appendChild(th);
+        fieldNames.forEach(function (key) {
+          var td = document.createElement("td");
+          var input = document.createElement("input");
+          input.type = "text";
+          input.autocomplete = "off";
+          input.disabled = true;
+          input.dataset.field = key;
+          input.setAttribute("aria-label", fieldLabels[key] + " of " + name);
+          if (key === "genre") {
+            input.setAttribute("list", "mp3-genres");
+          }
+          input.addEventListener("input", function () {
+            mark(file, key);
+          });
+          td.appendChild(input);
+          tr.appendChild(td);
+          file.inputs[key] = input;
+        });
+        var cover = document.createElement("td");
+        cover.className = "cover";
+        var cell = document.createElement("div");
+        cell.className = "cell";
+        file.thumb = document.createElement("span");
+        file.thumb.className = "thumb";
+        cell.appendChild(file.thumb);
+        cell.appendChild(smallButton("Replace the cover of " + name, "i-upload", function () {
+          pick(function (picked) {
+            setCover(file, { data: picked.data }, picked.url);
+          });
+        }));
+        cell.appendChild(smallButton("Remove the cover of " + name, "i-close", function () {
+          setCover(file, { remove: true }, null);
+        }));
+        cover.appendChild(cell);
+        tr.appendChild(cover);
+        file.volume = document.createElement("td");
+        file.volume.className = "volume";
+        tr.appendChild(file.volume);
+        file.row = tr;
+        showThumb(file, null);
+        return file;
+      }
+
+      function setCover(file, cover, url) {
+        if (!file.info) {
+          return;
+        }
+        file.cover = cover;
+        showThumb(file, url);
+      }
+
+      function fill(file, info) {
+        file.info = info;
+        file.cover = null;
+        file.analysis = null;
+        file.problem = "";
+        fieldNames.forEach(function (key) {
+          file.inputs[key].value = info.fields[key] || "";
+          file.inputs[key].disabled = false;
+          mark(file, key);
+        });
+        showThumb(file, info.cover ? link(file.name, "cover") + "&at=" + encodeURIComponent(info.modified) : null);
+        showVolume(file);
+      }
+
+      function open() {
+        session++;
+        var mine = session;
+        files = [];
+        album = null;
+        savedAny = false;
+        filesBody.textContent = "";
+        form.reset();
+        measured.textContent = "";
+        progress.hidden = true;
+        db.textContent = decibels(0);
+        rows().filter(isMP3).forEach(function (row) {
+          var file = rowOf(row.dataset.name);
+          files.push(file);
+          filesBody.appendChild(file.row);
+        });
+        busy(true);
+        tell("Reading the tags of " + files.length + (files.length === 1 ? " file…" : " files…"));
+        several.showModal();
+        inOrder(files, function (file) {
+          return load(file.name).then(function (info) {
+            fill(file, info);
+          }).catch(function (err) {
+            file.problem = err.message;
+            file.row.classList.add("failed");
+            showVolume(file);
+          });
+        }, function () {
+          return mine === session;
+        }).then(function () {
+          if (mine === session) {
+            busy(false);
+            tell("");
+          }
+        });
+      }
+
+      // A value typed into the first row is every file's; emptied again,
+      // every file has its own value back.
+      allRow.addEventListener("input", function (event) {
+        var key = event.target.dataset.field;
+        if (!key) {
+          return;
+        }
+        var value = event.target.value;
+        files.forEach(function (file) {
+          if (file.info) {
+            file.inputs[key].value = value.trim() ? value : file.info.fields[key] || "";
+            mark(file, key);
+          }
+        });
+      });
+
+      allRow.addEventListener("click", function (event) {
+        var button = event.target.closest("button");
+        if (!button) {
+          return;
+        }
+        var loaded = files.filter(function (file) {
+          return file.info;
+        });
+        if (button.dataset.do === "number") {
+          loaded.forEach(function (file, i) {
+            file.inputs.track.value = (i + 1) + "/" + loaded.length;
+            mark(file, "track");
+          });
+        } else if (button.dataset.cover === "replace") {
+          pick(function (picked) {
+            loaded.forEach(function (file) {
+              setCover(file, { data: picked.data }, picked.url);
+            });
+          });
+        } else if (button.dataset.cover === "remove") {
+          loaded.forEach(function (file) {
+            setCover(file, { remove: true }, null);
+          });
+        }
+      });
+
+      offset.addEventListener("input", function () {
+        db.textContent = decibels(stepsOf(offset));
+        files.forEach(showVolume);
+      });
+
+      function summary() {
+        if (mode() === "album" && album) {
+          return "The album measures " + loudnessOf(album) + ", peak " + album.peak.toFixed(2) +
+            ". Reaching −18 LUFS takes " + decibels(album.steps) + " (" + signed(album.steps) +
+            " steps) on every file" + (album.limited ? ", limited to keep the audio from clipping" : "") + ".";
+        }
+        return "Each file is planned to reach −18 LUFS on its own; the Volume column shows the change.";
+      }
+
+      // measure analyzes the files not analyzed yet and, for an album, plans
+      // its change
+      function measure() {
+        var mine = session;
+        var alive = function () {
+          return mine === session;
+        };
+        var todo = files.filter(function (file) {
+          return file.info && !file.analysis;
+        });
+        var failures = 0;
+        busy(true);
+        progress.hidden = false;
+        bar.max = Math.max(1, todo.length);
+        bar.value = 0;
+        inOrder(todo, function (file, i) {
+          tell("Measuring " + (i + 1) + " of " + todo.length + ": " + file.name);
+          return analyze(file.name).then(function (analysis) {
+            file.analysis = analysis;
+          }).catch(function (err) {
+            failures++;
+            file.problem = err.message;
+          }).then(function () {
+            bar.value = i + 1;
+            showVolume(file);
+          });
+        }, alive).then(function () {
+          album = null;
+          var names = files.filter(function (file) {
+            return file.analysis;
+          }).map(function (file) {
+            return file.name;
+          });
+          if (!alive() || mode() !== "album" || !names.length) {
+            return null;
+          }
+          tell("Planning the album…");
+          return planAlbum(names).then(function (plan) {
+            album = plan;
+          });
+        }).then(function () {
+          if (!alive()) {
+            return;
+          }
+          progress.hidden = true;
+          busy(false);
+          files.forEach(showVolume);
+          measured.textContent = summary();
+          tell(failures ? failures + (failures === 1 ? " file" : " files") + " could not be measured; the Volume column says why." : "",
+            failures > 0);
+        }).catch(function (err) {
+          if (alive()) {
+            progress.hidden = true;
+            busy(false);
+            tell(err.message, true);
+          }
+        });
+      }
+
+      analyzing.addEventListener("click", measure);
+
+      // the mode decides what a measured file changes by, and an album is
+      // planned once its files are measured
+      form.addEventListener("change", function (event) {
+        if (event.target.name !== "mode") {
+          return;
+        }
+        if (files.some(function (file) {
+          return file.analysis;
+        })) {
+          measure();
+        } else {
+          files.forEach(showVolume);
+        }
+      });
+
+      // editOf is what a save sends for a file, null for one that does not
+      // change
+      function editOf(file) {
+        var fields = {};
+        var changed = false;
+        fieldNames.forEach(function (key) {
+          fields[key] = file.inputs[key].value.trim();
+          changed = changed || fields[key] !== (file.info.fields[key] || "");
+        });
+        var edit = { gain: { steps: planned(file), replayGain: !!file.analysis } };
+        if (changed) {
+          edit.fields = fields;
+        }
+        if (file.cover) {
+          edit.cover = file.cover;
+        }
+        if (mode() === "album" && album && file.analysis) {
+          edit.gain.album = { loudness: album.loudness, peak: album.peak };
+        }
+        return changed || file.cover || edit.gain.steps !== 0 || file.analysis ? edit : null;
+      }
+
+      form.addEventListener("submit", function (event) {
+        var pressed = event.submitter ? event.submitter.value : "save";
+        if (pressed === "cancel") {
+          return;
+        }
+        event.preventDefault();
+        if (saving.disabled) {
+          return;
+        }
+        var mine = session;
+        var alive = function () {
+          return mine === session;
+        };
+        var jobs = files.filter(function (file) {
+          return file.info;
+        }).map(function (file) {
+          return { file: file, edit: editOf(file) };
+        }).filter(function (job) {
+          return job.edit;
+        });
+        if (!jobs.length) {
+          tell("Nothing was changed.");
+          return;
+        }
+        var failures = 0;
+        busy(true);
+        progress.hidden = false;
+        bar.max = jobs.length;
+        bar.value = 0;
+        inOrder(jobs, function (job, i) {
+          var file = job.file;
+          tell("Saving " + (i + 1) + " of " + jobs.length + ": " + file.name);
+          file.row.classList.remove("failed", "saved");
+          return save(file.name, file.info.modified, job.edit).then(function () {
+            savedAny = true;
+            file.row.classList.add("saved");
+            // read again, so that the file can be saved once more from here
+            return load(file.name).then(function (info) {
+              fill(file, info);
+            });
+          }).catch(function (err) {
+            failures++;
+            file.problem = err.message;
+            file.row.classList.add("failed");
+            showVolume(file);
+          }).then(function () {
+            bar.value = i + 1;
+          });
+        }, alive).then(function () {
+          if (!alive()) {
+            return;
+          }
+          progress.hidden = true;
+          busy(false);
+          if (!failures) {
+            several.close();
+            return;
+          }
+          album = null;
+          measured.textContent = "";
+          tell(failures + " of " + jobs.length + " files could not be saved; the Volume column says why.", true);
+        });
+      });
+
+      several.addEventListener("close", function () {
+        session++;
+        if (savedAny) {
+          done();
+        }
+      });
+
+      return { open: open };
+    })();
+
+    var button = document.getElementById("mp3-tags");
+    if (button && all) {
+      button.addEventListener("click", function () {
+        clear();
+        all.open();
+      });
+    }
+
+    return {
+      open: function (row) {
+        if (isMP3(row)) {
+          one.open(row);
+        }
+      }
+    };
   })();
 
   // --- uploading -------------------------------------------------------

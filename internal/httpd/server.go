@@ -676,6 +676,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleEvents(w, r, cred)
 		return
 	}
+	// and so does the MP3 tag editor of the listing
+	if mp3tagsAction(r) {
+		s.handleMP3Tags(set, w, r, target, cred)
+		return
+	}
 	// and so does browsing a stored server
 	if remoteAction(r) {
 		s.handleRemote(set, w, r, cred)

@@ -76,7 +76,7 @@ or on the admin page. Every key is explained in
 | [Protocols](docs/PROTOCOLS.md) | FTP, SFTP, HTTP, WebDAV, bearer tokens, S3, TFTP, supported standards |
 | [Container registry](docs/REGISTRY.md) | pushing and pulling images, multi-platform tags |
 | [Repositories](docs/REPOSITORIES.md) | rpm and F-Droid repositories, Jellyfin music library |
-| [Browser](docs/BROWSER.md) | browser login, document viewer, audio and video, trash, folder download, share links, fetch from URL |
+| [Browser](docs/BROWSER.md) | browser login, document viewer, audio and video, MP3 tags and volume, trash, folder download, share links, fetch from URL |
 | [Remote servers](docs/REMOTE-SERVERS.md) | send to SFTP, SMB or Artifactory, Cryptomator vaults, sync |
 | [Logging](docs/LOGGING.md) | log levels and format, reading the log |
 | [Development](docs/DEVELOPMENT.md) | building, versioning, releases, go-fs-light |

@@ -14,6 +14,7 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/httpd/viewer"
+	"github.com/mailsvb/go-fs/internal/mp3edit"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -275,6 +276,11 @@ type rights struct {
 	// RemoteFetchFolder is Fetch on a folder there, which stores it with all
 	// that is below it, and so also needs the right to create folders.
 	RemoteFetchFolder bool
+	// MP3Tags is Edit MP3 Tag on an MP3 file and Edit MP3 Tags in the header,
+	// which save the file again: offered where the account may replace a
+	// file, and on the page of a stored server where the server allows
+	// uploads too. A binary without the editor offers neither.
+	MP3Tags bool
 	// Trash says Delete moves to the trash rather than deleting for good,
 	// which is what its question says.
 	Trash bool
@@ -441,6 +447,11 @@ type listingData struct {
 	// on; "" for one that is not set.
 	ShareInternal string
 	ShareExternal string
+	// HasMP3 says the folder lists an MP3 file, which Edit MP3 Tags in the
+	// header edits with the others; Genres are what its genre fields
+	// suggest, filled only where Rights.MP3Tags offers the editor.
+	HasMP3 bool
+	Genres []string
 }
 
 // listingPlace is what a listing is of: a folder of the served tree, or one
@@ -490,7 +501,9 @@ func listingPage(place listingPlace, entries []entry, order sortOrder, allowed r
 		who.Page = "Files"
 	}
 	rows := make([]listingRow, 0, len(entries))
+	hasMP3 := false
 	for _, item := range sortEntries(entries, order) {
+		hasMP3 = hasMP3 || (!item.isFolder() && mp3edit.IsMP3(item.Name))
 		row := listingRow{
 			Name:     item.bare(),
 			Label:    item.Name,
@@ -551,6 +564,10 @@ func listingPage(place listingPlace, entries []entry, order sortOrder, allowed r
 		ShareExternal: cfg.ShareExternalAddress,
 		Viewer:        viewer.Page(),
 		Player:        viewer.Player(),
+		HasMP3:        hasMP3,
+	}
+	if allowed.MP3Tags {
+		data.Genres = mp3edit.Genres()
 	}
 	var page bytes.Buffer
 	if err := listingTemplate.Execute(&page, data); err != nil {

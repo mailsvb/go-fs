@@ -418,6 +418,55 @@ dialog .targets { display: flex; flex-direction: column; gap: 0.3rem; }
 dialog .targets label { display: flex; align-items: center; gap: 0.4rem; }
 dialog .targets input[type="text"] { flex: 1; min-width: 0; }
 dialog .targets input.invalid { border-color: var(--bad); }
+/* The MP3 tag editor: the fields of one file beside its cover, or a table of
+   every MP3 file of the folder; under either, the volume. */
+dialog.mp3 .mp3-file { display: grid; grid-template-columns: minmax(0, 1fr) 10rem; gap: 1rem; align-items: start; }
+dialog.mp3 .mp3-short { display: grid; grid-template-columns: 5rem 6rem minmax(0, 1fr); gap: 0.5rem; margin-top: 0.35rem; }
+dialog.mp3 .mp3-short > div { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+dialog.mp3 .mp3-short label { margin-top: 0; }
+dialog.mp3 .mp3-cover { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 1.3rem; }
+dialog.mp3 .art { display: flex; align-items: center; justify-content: center; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 4px; background: var(--ground); overflow: hidden; }
+dialog.mp3 .art img { width: 100%; height: 100%; object-fit: cover; }
+dialog.mp3 .art .none, dialog.mp3 .thumb .none { color: var(--faint); font-size: 0.8rem; }
+dialog.mp3 .cover-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+dialog.mp3 .cover-actions .plain { height: 1.75rem; padding: 0 0.5rem; font-size: 0.8rem; }
+dialog.mp3 fieldset.mp3-volume { display: flex; flex-direction: column; gap: 0.45rem; margin: 0; padding: 0.5rem 0.75rem 0.65rem; border: 1px solid var(--line); border-radius: 6px; }
+dialog.mp3 fieldset.mp3-volume legend { padding: 0 0.25rem; color: var(--faint); font-size: 0.8rem; }
+dialog.mp3 .volume-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; font-size: 0.85rem; }
+dialog.mp3 .volume-line input[type="number"] { width: 5rem; }
+dialog.mp3 .volume-line .plain { height: 1.75rem; font-size: 0.8rem; }
+dialog.mp3 .unit { color: var(--faint); }
+dialog.mp3 .status:empty, dialog.mp3 .measured:empty, dialog.mp3 .applied:empty { display: none; }
+dialog.mp3 .measured { color: var(--ink); }
+dialog.mp3 input.changed { border-color: var(--accent); }
+dialog.mp3.wide form { width: min(90rem, calc(100vw - 2rem)); }
+dialog.mp3 .mp3-table { max-height: 55vh; overflow: auto; border: 1px solid var(--line); border-radius: 4px; }
+/* not the listing's table: the columns size to what they hold, and only the
+   headings stick, to the top of the box that scrolls */
+dialog.mp3 .mp3-table table { width: 100%; table-layout: auto; border-collapse: collapse; font-size: 0.8rem; }
+dialog.mp3 .mp3-table th, dialog.mp3 .mp3-table td { position: static; padding: 0.25rem 0.35rem; border-bottom: 1px solid var(--line); box-shadow: none; background: none; overflow: visible; text-align: left; vertical-align: middle; white-space: nowrap; font-size: 0.8rem; letter-spacing: normal; }
+dialog.mp3 .mp3-table thead th { position: sticky; top: 0; z-index: 1; background: var(--raised); box-shadow: inset 0 -1px var(--line); color: var(--faint); font-weight: 600; }
+dialog.mp3 .mp3-table tbody tr:hover { background: none; }
+dialog.mp3 .mp3-table tbody.all td, dialog.mp3 .mp3-table tbody.all th { background: var(--ground); }
+dialog.mp3 .mp3-table tbody.all th { color: var(--faint); font-weight: 600; }
+dialog.mp3 .mp3-table tbody.files th { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 400; }
+dialog.mp3 .mp3-table input[type="text"] { box-sizing: border-box; width: 100%; min-width: 8rem; padding: 0.25rem 0.35rem; font-size: 0.8rem; }
+dialog.mp3 .mp3-table input[data-field="year"], dialog.mp3 .mp3-table input[data-field="track"] { min-width: 4rem; }
+dialog.mp3 .mp3-table .plain.small { height: 1.6rem; padding: 0 0.4rem; font-size: 0.75rem; }
+dialog.mp3 .mp3-table td.cover .cell { display: flex; align-items: center; gap: 0.25rem; }
+dialog.mp3 .thumb { display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; border: 1px solid var(--line); border-radius: 3px; background: var(--ground); overflow: hidden; }
+dialog.mp3 .thumb img { width: 100%; height: 100%; object-fit: cover; }
+dialog.mp3 .mp3-table td.volume { color: var(--faint); }
+dialog.mp3 .mp3-table td.volume .planned { color: var(--ink); }
+dialog.mp3 .mp3-table tr.failed th, dialog.mp3 .mp3-table td.volume.bad { color: var(--bad); }
+dialog.mp3 .mp3-table tr.saved th::after { content: " \2713"; color: var(--accent); }
+@media (max-width: 40rem) {
+  dialog.mp3 .mp3-file { grid-template-columns: minmax(0, 1fr); }
+  dialog.mp3 .mp3-cover { margin-top: 0; flex-direction: row; align-items: center; }
+  dialog.mp3 .art { width: 6rem; flex: none; }
+  dialog.mp3 .mp3-short { grid-template-columns: 1fr 1fr; }
+  dialog.mp3 .mp3-short .wide { grid-column: 1 / -1; }
+}
 dialog .targets .meta { color: var(--faint); font-size: 0.8rem; white-space: nowrap; }
 dialog .targets button.plain { align-self: flex-start; height: 1.6rem; font-size: 0.8rem; }
 /* The send dialog: the key a host shows, to be compared rather than read,

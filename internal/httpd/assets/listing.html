@@ -29,6 +29,9 @@
     <button id="upload" class="plain needs-js" type="button" title="Upload" aria-label="Upload"><svg class="ic"><use href="#i-upload"/></svg><span class="label">Upload or Drop file</span></button>
     <input id="picker" type="file" multiple hidden>
     {{end}}
+    {{if and .Rights.MP3Tags .HasMP3}}
+    <button id="mp3-tags" class="plain needs-js" type="button" title="Edit MP3 Tags" aria-label="Edit MP3 Tags"><svg class="ic"><use href="#i-tag"/></svg><span class="label">Edit MP3 Tags</span></button>
+    {{end}}
     {{if .Rights.Fetch}}
     <button id="fetch" class="plain needs-js" type="button" title="Fetch" aria-label="Fetch"><svg class="ic"><use href="#i-download"/></svg><span class="label">Fetch</span></button>
     {{end}}
@@ -90,6 +93,7 @@
   {{if .Rights.RemoteFetch}}<button type="button" role="menuitem" data-do="remote-fetch"{{if .Rights.RemoteFetchFolder}} data-folders="1"{{end}}><svg class="ic"><use href="#i-download"/></svg>Fetch&#8230;</button>{{end}}
   {{if and .Rights.Import .Session.Registry}}<a role="menuitem" data-do="import" data-registry="{{.Session.Registry}}" hidden><svg class="ic"><use href="#i-box"/></svg><span>Import into registry&#8230;</span></a>{{end}}
   {{if and .Viewer .Rights.Overwrite}}<button type="button" role="menuitem" data-do="edit" hidden><svg class="ic"><use href="#i-pencil"/></svg>Edit&#8230;</button>{{end}}
+  {{if .Rights.MP3Tags}}<button type="button" role="menuitem" data-do="mp3tag" hidden><svg class="ic"><use href="#i-tag"/></svg>Edit MP3 Tag&#8230;</button>{{end}}
   {{if .Rights.Rename}}<button type="button" role="menuitem" data-do="rename"><svg class="ic"><use href="#i-pencil"/></svg>Rename&#8230;</button>{{end}}
   {{if or .Rights.DeleteFile .Rights.DeleteFolder}}<button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete</button>{{end}}
 </div>
@@ -279,6 +283,125 @@
     </div>
     <div class="row">
       <button class="plain" type="submit" value="cancel">Close</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{if .Rights.MP3Tags}}
+<datalist id="mp3-genres">{{range .Genres}}<option value="{{.}}">{{end}}</datalist>
+
+<dialog id="mp3-dialog" class="mp3" aria-labelledby="mp3-title">
+  <form method="dialog">
+    <h2 id="mp3-title">Edit MP3 Tag</h2>
+    <p class="where"></p>
+    <div class="mp3-file">
+      <div class="fields">
+        <label for="mp3-field-title">Title</label>
+        <input id="mp3-field-title" name="title" type="text" autocomplete="off">
+        <label for="mp3-field-artist">Artist</label>
+        <input id="mp3-field-artist" name="artist" type="text" autocomplete="off">
+        <label for="mp3-field-album-artist">Album Artist</label>
+        <input id="mp3-field-album-artist" name="albumArtist" type="text" autocomplete="off">
+        <label for="mp3-field-album">Album</label>
+        <input id="mp3-field-album" name="album" type="text" autocomplete="off">
+        <div class="mp3-short">
+          <div>
+            <label for="mp3-field-year">Year</label>
+            <input id="mp3-field-year" name="year" type="text" inputmode="numeric" autocomplete="off">
+          </div>
+          <div>
+            <label for="mp3-field-track">Track</label>
+            <input id="mp3-field-track" name="track" type="text" autocomplete="off" placeholder="3/12">
+          </div>
+          <div class="wide">
+            <label for="mp3-field-genre">Genre</label>
+            <input id="mp3-field-genre" name="genre" type="text" list="mp3-genres" autocomplete="off">
+          </div>
+        </div>
+      </div>
+      <div class="mp3-cover">
+        <div class="art"><img alt="Cover" hidden><span class="none">No cover</span></div>
+        <div class="cover-actions">
+          <button class="plain" type="button" data-cover="replace"><svg class="ic"><use href="#i-upload"/></svg>Replace&#8230;</button>
+          <button class="plain" type="button" data-cover="remove"><svg class="ic"><use href="#i-close"/></svg>Remove</button>
+        </div>
+        <input type="file" accept="image/jpeg,image/png" hidden>
+      </div>
+    </div>
+    <fieldset class="mp3-volume">
+      <legend>Volume</legend>
+      <p class="applied"></p>
+      <div class="volume-line">
+        <label for="mp3-steps">Change by</label>
+        <input id="mp3-steps" name="steps" type="number" step="1" value="0">
+        <span class="unit">steps of 1.5&nbsp;dB, <span class="db">&#177;0.0 dB</span></span>
+      </div>
+      <div class="volume-line">
+        <button class="plain" type="button" data-do="analyze">Analyze</button>
+        <button class="plain" type="button" data-do="suggest" hidden>Use suggestion</button>
+      </div>
+      <p class="measured" role="status" aria-live="polite"></p>
+    </fieldset>
+    <p class="status" role="status" aria-live="polite"></p>
+    <div class="row">
+      <button class="go" type="submit" value="save">Save</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="mp3-folder-dialog" class="mp3 wide" aria-labelledby="mp3-folder-title">
+  <form method="dialog">
+    <h2 id="mp3-folder-title">Edit MP3 Tags</h2>
+    <p>Every MP3 file in {{.Path}}. A value typed into the first row is set on every file.</p>
+    <div class="mp3-table">
+      <table>
+        <thead>
+          <tr><th scope="col">File</th><th scope="col">Title</th><th scope="col">Artist</th><th scope="col">Album Artist</th><th scope="col">Album</th><th scope="col">Year</th><th scope="col">Genre</th><th scope="col">Track</th><th scope="col">Cover</th><th scope="col">Volume</th></tr>
+        </thead>
+        <tbody class="all">
+          <tr>
+            <th scope="row">All files</th>
+            <td></td>
+            <td><input type="text" data-field="artist" aria-label="Artist of every file" autocomplete="off"></td>
+            <td><input type="text" data-field="albumArtist" aria-label="Album Artist of every file" autocomplete="off"></td>
+            <td><input type="text" data-field="album" aria-label="Album of every file" autocomplete="off"></td>
+            <td><input type="text" data-field="year" aria-label="Year of every file" inputmode="numeric" autocomplete="off"></td>
+            <td><input type="text" data-field="genre" aria-label="Genre of every file" list="mp3-genres" autocomplete="off"></td>
+            <td><button class="plain small" type="button" data-do="number" title="Number the files in order">1, 2, 3&#8230;</button></td>
+            <td class="cover"><div class="cell">
+              <button class="plain small" type="button" data-cover="replace" title="Set one cover on every file" aria-label="Set one cover on every file"><svg class="ic"><use href="#i-upload"/></svg></button>
+              <button class="plain small" type="button" data-cover="remove" title="Remove the cover of every file" aria-label="Remove the cover of every file"><svg class="ic"><use href="#i-close"/></svg></button>
+            </div></td>
+            <td></td>
+          </tr>
+        </tbody>
+        <tbody class="files"></tbody>
+      </table>
+    </div>
+    <input type="file" accept="image/jpeg,image/png" hidden>
+    <fieldset class="mp3-volume">
+      <legend>Volume</legend>
+      <div class="volume-line choices">
+        <label><input type="radio" name="mode" value="track" checked> Each file to &#8722;18 LUFS</label>
+        <label><input type="radio" name="mode" value="album"> As one album</label>
+        <button class="plain" type="button" data-do="analyze">Analyze all</button>
+      </div>
+      <div class="volume-line">
+        <label for="mp3-offset">Change every file by a further</label>
+        <input id="mp3-offset" name="offset" type="number" step="1" value="0">
+        <span class="unit">steps of 1.5&nbsp;dB, <span class="db">&#177;0.0 dB</span></span>
+      </div>
+      <p class="measured" role="status" aria-live="polite"></p>
+    </fieldset>
+    <div class="progress" hidden>
+      <progress max="1"></progress>
+    </div>
+    <p class="status" role="status" aria-live="polite"></p>
+    <div class="row">
+      <button class="go" type="submit" value="save">Save</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>

@@ -37,6 +37,9 @@ const (
 	// Cryptomator is keeping the files of a stored server in a vault of
 	// Cryptomator.
 	Cryptomator = "cryptomator"
+	// MP3Tags is editing the tags and the volume of MP3 files in the file
+	// listing.
+	MP3Tags = "mp3tags"
 	// WebDAV is answering WebDAV on the paths the HTTP server serves, so
 	// that the folder mounts as a drive.
 	WebDAV = "webdav"

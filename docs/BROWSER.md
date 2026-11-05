@@ -292,6 +292,67 @@ Their licenses are served beside them, at `/.go-fs/viewer/<build>/pdfjs/LICENSE`
 `/.go-fs/viewer/<build>/ace/LICENSE` and `/.go-fs/viewer/<build>/videojs/LICENSE`, and
 `/.go-fs/viewer/<build>/VERSIONS` says which versions the build has.
 
+## Editing MP3 tags
+
+**Edit MP3 Tag…** in the menu of an `.mp3` file opens an editor over the page
+for the tag and the volume of that file. **Edit MP3 Tags** in the header opens
+the same editor for every `.mp3` file of the folder as a table, one row per
+file. Both are offered to an account that may replace a file there
+(`allowUserFileOverwrite`). On the page of a stored server they need the
+server's `allowUpload` too, as replacing a file there does.
+
+The fields are Title, Artist, Album Artist, Album, Year, Track and Genre, with
+the common genre names suggested, and the front cover, which a JPEG or PNG
+image of up to 10 MiB replaces. In the folder editor, a value typed into the
+first row is set on every file, and emptying it again gives every file its own
+value back. **1, 2, 3…** numbers the files in the order of the table, as
+`1/12`, `2/12` and so on.
+
+A save changes only these fields and the volume information. Every other
+frame of the tag — comments, the disc number, the composer, lyrics, other
+pictures, other `TXXX` frames — stays as it is, and so do APEv2, Lyrics3 and
+ID3v1 tags at the end of the file; an ID3v1 tag gets the new values of its
+fields too. The tag is written as ID3v2.3. A file of the served folder is
+written beside itself and renamed into place, so it is never half written. A
+file of a stored server is uploaded again whole, as an upload that replaces it
+is. Each save carries `If-Unmodified-Since`, so a file somebody changed since
+the editor read it is not overwritten (`412`), and it respects the lock a
+WebDAV client holds.
+
+### The volume
+
+The volume changes without decoding and encoding the audio again. Every MPEG
+Layer III frame stores a global gain per channel, and the editor adds the same
+number of steps to all of them. One step is 1.5 dB. The coded audio itself is
+left as it is, so the same number of steps the other way restores the file
+exactly. The tag remembers how many steps were applied so far (`TXXX`
+`GO-TAG_GAIN_STEPS`), which the editor shows.
+
+**Analyze** decodes the file, measures its loudness (EBU R128 /
+ITU-R BS.1770) and its peak, and suggests the change that brings it to
+−18 LUFS, the reference of ReplayGain 2.0. The suggestion is smaller where the
+full change would make the audio clip, or where the gain of the frames
+allows no more. The change is typed in steps, or taken from the suggestion.
+In the folder editor, **Analyze all** measures every file. **Each file to
+−18 LUFS** changes each by its own amount; **As one album** changes all of them
+by the same amount, so that the album as a whole reaches −18 LUFS and its tracks
+keep their levels to each other. A further number of steps can be added to
+every file on top of that.
+
+A save after a measurement also writes the ReplayGain values that are left
+after the change (`REPLAYGAIN_TRACK_GAIN` and `_PEAK`, and for an album
+`REPLAYGAIN_ALBUM_GAIN` and `_PEAK`). A change of the volume without an album
+removes the album values, which no longer apply.
+
+Measuring decodes the whole file, which takes a core for about as long as the
+decoder needs; go-fs measures at most as many files at once as the machine has
+cores, keeps what it measured until the file changes, and refuses files larger
+than 512 MiB. A Jellyfin library reads a file again once it was saved, as it
+does any changed file.
+
+The editor is left out of go-fs-light, and of a binary built with the tag
+`no_mp3tags`.
+
 ## Downloading a folder
 
 **Download** on a folder in the listing saves the whole folder as

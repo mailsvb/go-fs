@@ -16,6 +16,7 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/httpd/viewer"
+	"github.com/mailsvb/go-fs/internal/mp3edit"
 	"github.com/mailsvb/go-fs/internal/remote"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -127,6 +128,8 @@ func (s *Server) handleRemote(set *settings, w http.ResponseWriter, r *http.Requ
 	// the page says who is signed in, and only a session may see it
 	w.Header().Set("Vary", "Cookie")
 	read := r.Method == http.MethodGet || r.Method == http.MethodHead
+	// the MP3 tag editor asks on a file of the server too, and saves with POST
+	editor := r.URL.Query().Has(mp3PartParam)
 	if !mayBrowseRemote(cred) {
 		if cred.user == nil && read && browserRequest(r) && (canLogIn(set) || canLogInToRegistry(set)) {
 			http.Redirect(w, r, loginURL(r.URL), http.StatusSeeOther)
@@ -141,8 +144,10 @@ func (s *Server) handleRemote(set *settings, w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	switch r.Method {
-	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete, methodMkcol, methodMove:
+	switch {
+	case editor:
+	case r.Method == http.MethodGet, r.Method == http.MethodHead, r.Method == http.MethodPut,
+		r.Method == http.MethodDelete, r.Method == methodMkcol, r.Method == methodMove:
 	default:
 		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, MOVE")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -162,7 +167,7 @@ func (s *Server) handleRemote(set *settings, w http.ResponseWriter, r *http.Requ
 	q := &remoteRequest{server: server, user: cred.user, path: remotePath(query),
 		address: clientAddress(set, r)}
 	// a page asked for is a page answered, with what went wrong in it
-	page := read && browserRequest(r) && query.Get(remoteArchiveParam) == ""
+	page := read && browserRequest(r) && query.Get(remoteArchiveParam) == "" && !editor
 	fail := func(status int, err error) {
 		if page {
 			s.remotePage(set, w, r, cred, q, nil, err)
@@ -187,6 +192,10 @@ func (s *Server) handleRemote(set *settings, w http.ResponseWriter, r *http.Requ
 	defer func() { _ = fsys.Close() }()
 	q.fs = fsys
 
+	if editor {
+		s.remoteMP3Tags(set, w, r, q)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		s.remoteGet(set, w, r, cred, q, page)
@@ -302,6 +311,8 @@ func remoteRights(cred credential, server config.Server) rights {
 		Downloads:         mayFollowFetches(cred),
 		RemoteFetch:       allowed.Download && granted(perms, actCreate),
 		RemoteFetchFolder: allowed.Download && granted(perms, actCreate) && granted(perms, actMkdir),
+		MP3Tags: mp3edit.Compiled && allowed.Download && allowed.Upload &&
+			granted(perms, actOverwrite),
 	}
 }
 
