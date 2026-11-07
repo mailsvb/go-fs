@@ -54,7 +54,7 @@ func uploadFile(t *testing.T, front *httptest.Server, kind, name string,
 	}, nil)
 }
 
-// The six keys that hold key material get the buttons, and nothing else
+// The keys that hold key material get the buttons, and nothing else
 // does. authorizedKeys in particular stays a plain list of pasted lines.
 func TestSchemaMarksTheKeyMaterial(t *testing.T) {
 	// the whole file is on the page of a binary with every part
@@ -68,6 +68,10 @@ func TestSchemaMarksTheKeyMaterial(t *testing.T) {
 		"https.key":                   config.KindTLSKey,
 		"sftp.hostkey":                config.KindSSHKey,
 		"http.httpSessionTokenSecret": config.KindSessionSecret,
+		"nbd.cert":                    config.KindCertificate,
+		"nbd.key":                     config.KindTLSKey,
+		"nbd.clientCA":                config.KindCertificateAuthority,
+		"nbd.clientCRL":               config.KindCRL,
 	}
 
 	found := map[string]string{}
@@ -77,11 +81,15 @@ func TestSchemaMarksTheKeyMaterial(t *testing.T) {
 				continue
 			}
 			found[sec.Key+"."+field.Key] = field.Upload
-			if field.Upload == config.KindCertificate && field.Pair == "" {
+			// nothing that cannot be generated needs a pair
+			if field.Upload == config.KindCertificate && field.Pair == "" && !field.NoGenerate {
 				t.Errorf("%s.%s has no private key to generate with it", sec.Key, field.Key)
 			}
-			// a private key is masked, a certificate is not
-			if wantSecret := field.Upload != config.KindCertificate; //
+			// a private key is masked, a certificate, a CA and a
+			// revocation list are not
+			public := field.Upload == config.KindCertificate ||
+				field.Upload == config.KindCertificateAuthority || field.Upload == config.KindCRL
+			if wantSecret := !public; //
 			wantSecret != (field.Kind == kindSecret) {
 				t.Errorf("%s.%s has kind %q", sec.Key, field.Key, field.Kind)
 			}

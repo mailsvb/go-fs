@@ -1938,7 +1938,7 @@ function materialEditor(field, holder, section) {
   input.className = "blob";
   input.rows = 3;
   input.spellcheck = false;
-  input.placeholder = "empty: generated at every start";
+  input.placeholder = field.placeholder || "empty: generated at every start";
   input.value = holder[field.key] ?? "";
 
   const summary = paragraph(summaries[path] || "", "summary");
@@ -1989,8 +1989,9 @@ function materialEditor(field, holder, section) {
   }
 
   // only a certificate and a host key can be generated: a private key on its
-  // own would not match any certificate
-  if (field.upload !== "tlskey") {
+  // own would not match any certificate. Some material must come from
+  // elsewhere, which the schema says with noGenerate.
+  if (field.upload !== "tlskey" && !field.noGenerate) {
     buttons.append(plainButton("Generate", async () => {
       report("");
       try {
@@ -2040,7 +2041,8 @@ function plainButton(text, onClick) {
 // accepts is a hint for the file dialog only. What a file may be is decided by
 // the server, which parses it.
 function accepts(kind) {
-  if (kind === "certificate") return ".pem,.crt,.cer,.cert";
+  if (kind === "certificate" || kind === "cacertificate") return ".pem,.crt,.cer,.cert";
+  if (kind === "crl") return ".pem,.crl";
   if (kind === "sessionsecret") return ".txt,.key";
   return ".pem,.key,.p8";
 }

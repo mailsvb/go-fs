@@ -25,6 +25,7 @@ func (s *Server) runCleanup(ctx context.Context) {
 	s.sweepStaging()
 	s.sweepRegistry()
 	s.purgeTrash()
+	s.sweepDisks()
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 	for {
@@ -37,6 +38,7 @@ func (s *Server) runCleanup(ctx context.Context) {
 			s.sweepStaging()
 			s.sweepRegistry()
 			s.purgeTrash()
+			s.sweepDisks()
 		}
 	}
 }

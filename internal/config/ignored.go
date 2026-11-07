@@ -22,6 +22,9 @@ func (c Config) Ignored() []string {
 	if c.TFTP.Enabled && !features.Has(features.TFTP) {
 		ignored = append(ignored, "tftp")
 	}
+	if c.NBD.Enabled && !features.Has(features.NBD) {
+		ignored = append(ignored, "nbd")
+	}
 	if c.HTTP.WebDAV && !features.Has(features.WebDAV) {
 		ignored = append(ignored, "http.webdav")
 	}

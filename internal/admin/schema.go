@@ -82,6 +82,11 @@ type Field struct {
 	// the name of no setting, so which fields those are is decided here, by
 	// their shape.
 	Summary bool `json:"summary,omitempty"`
+	// NoGenerate takes the Generate button away from key material go-fs must
+	// not make up, and Placeholder is what its empty box says instead of
+	// "generated at every start".
+	NoGenerate  bool   `json:"noGenerate,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
 	// ReadOnly is a value the page shows and sends back but does not let
 	// anyone type into, because it is made by the server, a token's hash, or
 	// changed in a dialog of its own, the login of a remote server.
@@ -222,6 +227,10 @@ func buildSection(structure reflect.Type, path string, nested bool) (Section, []
 		case ok:
 			made := newField(name, kind, k, path+"."+name, structure.Name()+"."+inner.Name)
 			made.ReadOnly = serverMade[path+"."+name]
+			if placeholder, ok := uploadOnly[path+"."+name]; ok {
+				made.NoGenerate = true
+				made.Placeholder = placeholder
+			}
 			section.Fields = append(section.Fields, made)
 
 		case inner.Type.Kind() == reflect.Slice && inner.Type.Elem().Kind() == reflect.Struct:
@@ -403,8 +412,23 @@ func material(name string) string {
 		return config.KindSessionSecret
 	case "signingkey":
 		return config.KindPGPKey
+	case "clientca":
+		return config.KindCertificateAuthority
+	case "clientcrl":
+		return config.KindCRL
 	}
 	return ""
+}
+
+// uploadOnly is the key material go-fs must not make up, by its path in the
+// file, with what its empty box says. The NBD server's certificate has to come
+// from the CA its clients are given, which one generated here never does, and
+// the CA and its revocation list are by their nature someone else's.
+var uploadOnly = map[string]string{
+	"nbd.cert":      "required: the server's certificate, issued by your CA for the host QEMU connects to",
+	"nbd.key":       "required: the private key of that certificate",
+	"nbd.clientCA":  "required: the certificate of the CA client certificates are issued by",
+	"nbd.clientCRL": "empty: no client certificate is revoked",
 }
 
 // pairUp gives every certificate in a section the name of its private key, so

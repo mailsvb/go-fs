@@ -54,6 +54,7 @@ type Config struct {
 	HTTP    HTTP    `toml:"http"`
 	HTTPS   HTTPS   `toml:"https"`
 	TFTP    TFTP    `toml:"tftp" feature:"tftp"`
+	NBD     NBD     `toml:"nbd" feature:"nbd"`
 	// Servers are the remote hosts the file listing sends files to by name.
 	Servers []Server `toml:"servers"`
 	// Repositories are the package repositories go-fs keeps in folders the
@@ -76,6 +77,14 @@ type General struct {
 	// folder any server serves, since everything in it is managed by the
 	// registry alone.
 	BaseFolderRegistry string `toml:"baseFolderRegistry"`
+	// BaseFolderDisks holds the disk images of the Disks page, which the NBD
+	// server serves to QEMU and other NBD clients, all of them directly in
+	// it. Empty turns the Disks page off, and the NBD server needs it. It has
+	// to be an absolute path to a folder that neither is nor holds nor lies
+	// inside any other folder of go-fs: nothing but the Disks page and the NBD
+	// server may touch an image, since a file server that replaced one under
+	// a running VM would corrupt its disk.
+	BaseFolderDisks string `toml:"baseFolderDisks" feature:"nbd"`
 	// BaseFolderTemp holds the not-yet-finalized bytes of an upload to the
 	// http server: a chunked upload, an S3 object, a WebDAV file or a fetch.
 	// It must neither be nor hold nor lie inside a folder any server serves
@@ -232,6 +241,11 @@ type User struct {
 	FTP  bool `toml:"ftp,omitempty" feature:"ftp"`
 	SFTP bool `toml:"sftp,omitempty" feature:"sftp"`
 	HTTP bool `toml:"http,omitempty"`
+	// NBD lets a client certificate whose common name is this username attach
+	// the disk images of the NBD server: read-only with
+	// allowUserFileRetrieve, read-write with allowUserFileOverwrite as well.
+	// The password plays no part in it.
+	NBD bool `toml:"nbd,omitempty" feature:"nbd"`
 	// S3 lets the account use the S3 API of the HTTP server, with its username
 	// as the access key and its password as the secret key. It is independent
 	// of HTTP, and the same Paths and rights apply to it.
@@ -704,13 +718,14 @@ func FindServer(servers []Server, name string) (Server, bool) {
 	return Server{}, false
 }
 
-// FTPUsers, SFTPUsers, HTTPUsers and S3Users are the entries a server serves:
+// FTPUsers, SFTPUsers, HTTPUsers, S3Users and NBDUsers are the entries a server serves:
 // the ones that switch it on. Each server is handed its own list, so it never
 // sees an account that is not meant for it.
 func (c Config) FTPUsers() []User  { return c.usersFor(func(u User) bool { return u.FTP }) }
 func (c Config) SFTPUsers() []User { return c.usersFor(func(u User) bool { return u.SFTP }) }
 func (c Config) HTTPUsers() []User { return c.usersFor(func(u User) bool { return u.HTTP }) }
 func (c Config) S3Users() []User   { return c.usersFor(func(u User) bool { return u.S3 }) }
+func (c Config) NBDUsers() []User  { return c.usersFor(func(u User) bool { return u.NBD }) }
 
 // HTTPServerUsers are the entries the HTTP server serves in any way: over
 // http, over its S3 API, over its container registry or over several. The
@@ -855,6 +870,12 @@ type HTTP struct {
 	// RegistryBaseFolder is general.baseFolderRegistry, which Resolved hands
 	// the server. It is no key of the section.
 	RegistryBaseFolder string `toml:"-"`
+	// DisksFolder is general.baseFolderDisks, where the Disks page keeps the
+	// disk images, and NBDPort the port the NBD server serves them on, 0
+	// while it is off. Resolved hands both to the server; neither is a key of
+	// the section.
+	DisksFolder string `toml:"-"`
+	NBDPort     int    `toml:"-"`
 	// RegistryAnonymousRead lets anyone pull from the registry without
 	// credentials. With it off, pulling takes an account that sets registry,
 	// as pushing and deleting always do.
@@ -1024,6 +1045,51 @@ type TFTP struct {
 	MaxFileSize           int64 `toml:"maxFileSize"`
 }
 
+// NBD configures the NBD server, which serves the disk images of
+// general.baseFolderDisks to QEMU and other NBD clients, one image to a
+// connection, by its file name as the export name. Every connection has to
+// switch to TLS before it may do anything else, and has to show a client
+// certificate that ClientCA issued: its common name is the username of a
+// [[users]] entry that sets nbd, whose rights decide what it may do.
+//
+// go-fs issues no certificate itself. Cert and ClientCA come from a CA of
+// your own, since QEMU checks the server's certificate against the CA it is
+// given and refuses one that is not a CA's.
+type NBD struct {
+	Enabled bool `toml:"enabled"`
+	Port    int  `toml:"port"`
+	// Address is the interface the listener binds to. Empty binds every one.
+	Address string `toml:"address"`
+	// DisksFolder is general.baseFolderDisks, which Resolved hands the
+	// server. It is no key of the section.
+	DisksFolder string `toml:"-"`
+
+	// Cert and Key are the certificate the server shows and its private key,
+	// base64 of the PEM. Both are required: there is no self-signed
+	// fallback, because QEMU would refuse it.
+	Cert string `toml:"cert"`
+	Key  string `toml:"key"`
+	// ClientCA is the certificate of the CA, or several of them, that a
+	// client certificate has to be issued by, base64 of the PEM.
+	ClientCA string `toml:"clientCA"`
+	// ClientCRL is a certificate revocation list of that CA, base64 of the
+	// PEM. A certificate it lists is refused, and a connection that logged in
+	// with one is closed when the list arrives. Empty revokes nothing.
+	ClientCRL string `toml:"clientCRL"`
+
+	// AllowedClients are the addresses or CIDR ranges a connection is
+	// accepted from. Empty accepts every address.
+	AllowedClients []string `toml:"allowedClients"`
+	MaxConnections int      `toml:"maxConnections"`
+	// HandshakeTimeout is how many seconds a client has from connecting to
+	// having chosen its image.
+	HandshakeTimeout int `toml:"handshakeTimeout"`
+	// KeepAlive is how many seconds a connection may be silent before TCP
+	// keepalive probes start; a client that stopped answering is dropped
+	// about fifteen seconds later, and the image it held is free again.
+	KeepAlive int `toml:"keepAlive"`
+}
+
 // Default returns the configuration that applies when nothing is set. Only the
 // http server is on, every server listens on 127.0.0.1 alone and on a port
 // above 1024, so that a fresh install runs without privileges and exposes
@@ -1102,6 +1168,13 @@ func Default() Config {
 			TransferTimeout:       300,
 			MaxBlockSize:          1468,
 			MaxWindowSize:         16,
+		},
+		NBD: NBD{
+			Port:             10809,
+			Address:          "127.0.0.1",
+			MaxConnections:   16,
+			HandshakeTimeout: 10,
+			KeepAlive:        15,
 		},
 	}
 }
@@ -1265,6 +1338,11 @@ func (c Config) Resolved() Config {
 	c.HTTP.Basefolder = c.General.BaseFolderFiles
 	c.TFTP.Basefolder = c.General.BaseFolderFiles
 	c.HTTP.RegistryBaseFolder = c.General.BaseFolderRegistry
+	c.HTTP.DisksFolder = c.General.BaseFolderDisks
+	c.NBD.DisksFolder = c.General.BaseFolderDisks
+	if c.nbdOn() {
+		c.HTTP.NBDPort = c.NBD.Port
+	}
 	c.HTTP.UploadStagingFolder = c.General.BaseFolderTemp
 	c.HTTP.TrashFolder = c.General.BaseFolderTrash
 	c.HTTP.TrashRetentionDays = c.General.TrashRetentionDays
@@ -1370,6 +1448,9 @@ func (c Config) Validate() error {
 	if err := c.validateTrash(); err != nil {
 		return err
 	}
+	if err := c.validateDisks(); err != nil {
+		return err
+	}
 	if _, err := ShareAddress(c.General.InternalAddress); err != nil {
 		return fmt.Errorf("general.internalAddress: %w", err)
 	}
@@ -1384,7 +1465,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("general.cleanup[%d].keep cannot be negative", i)
 		}
 	}
-	if !c.ftpOn() && !c.sftpOn() && !c.HTTP.Enabled && !c.HTTPS.Enabled && !c.tftpOn() {
+	if !c.ftpOn() && !c.sftpOn() && !c.HTTP.Enabled && !c.HTTPS.Enabled && !c.tftpOn() && !c.nbdOn() {
 		return errors.New("no server is enabled, nothing to do")
 	}
 	// every server serves this one folder, so whichever is on needs it
@@ -1426,16 +1507,22 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
+	if c.nbdOn() {
+		if err := c.validateNBD(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-// ftpOn, sftpOn and tftpOn report a server that is enabled and that the
+// ftpOn, sftpOn, tftpOn and nbdOn report a server that is enabled and that the
 // binary was built with. One it was built without is ignored, enabled or not,
 // so that go-fs-light reads the file of go-fs; nothing of it is checked
 // either.
 func (c Config) ftpOn() bool  { return (c.FTP.Enabled || c.FTPS.Enabled) && features.Has(features.FTP) }
 func (c Config) sftpOn() bool { return c.SFTP.Enabled && features.Has(features.SFTP) }
 func (c Config) tftpOn() bool { return c.TFTP.Enabled && features.Has(features.TFTP) }
+func (c Config) nbdOn() bool  { return c.NBD.Enabled && features.Has(features.NBD) }
 
 // validateUsers checks the account list. The rules that hold for every entry
 // are checked first; what a server needs of its accounts is checked only for
@@ -1514,6 +1601,11 @@ func (c Config) validateUsers() error {
 			if strings.Contains(user.Username, ":") {
 				return fmt.Errorf("%s %q sets registry, and a registry username cannot hold a colon",
 					where, user.Username)
+			}
+		}
+		if user.NBD && features.Has(features.NBD) {
+			if err := validateNBDUser(where, user); err != nil {
+				return err
 			}
 		}
 		// the admin interface is reached with a session, and only an http
@@ -1736,6 +1828,7 @@ func (c Config) validateRegistry() error {
 	}
 	served := []struct{ name, folder string }{
 		{"general.baseFolderFiles", c.General.BaseFolderFiles},
+		{"general.baseFolderDisks", c.disksFolder()},
 	}
 	for i, user := range c.Users {
 		served = append(served, struct{ name, folder string }{
@@ -1770,6 +1863,7 @@ func (c Config) validateTemp() error {
 	others := []struct{ name, folder string }{
 		{"general.baseFolderFiles", c.General.BaseFolderFiles},
 		{"general.baseFolderRegistry", c.General.BaseFolderRegistry},
+		{"general.baseFolderDisks", c.disksFolder()},
 	}
 	for i, user := range c.Users {
 		others = append(others, struct{ name, folder string }{
@@ -1808,6 +1902,7 @@ func (c Config) validateTrash() error {
 		{"general.baseFolderFiles", c.General.BaseFolderFiles},
 		{"general.baseFolderRegistry", c.General.BaseFolderRegistry},
 		{"general.baseFolderTemp", c.General.BaseFolderTemp},
+		{"general.baseFolderDisks", c.disksFolder()},
 	}
 	for i, user := range c.Users {
 		others = append(others, struct{ name, folder string }{

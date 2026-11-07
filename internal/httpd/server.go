@@ -170,6 +170,9 @@ type settings struct {
 	ssh config.SSH
 	// servers are the [[servers]] entries, the hosts a send may name.
 	servers []config.Server
+	// disks is the folder of the Disks page, nil while it is off or the
+	// binary was built without it.
+	disks diskFolder
 }
 
 func (s *Server) settings() *settings {
@@ -246,9 +249,14 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 		}
 		proxies = append(proxies, prefix)
 	}
+	disks, err := openDisks(cfg.DisksFolder)
+	if err != nil {
+		return nil, fmt.Errorf("general.baseFolderDisks: %w", err)
+	}
 	return &settings{cfg: cfg, https: https, accounts: accounts, tokens: bearers,
 		s3accounts: s3accounts, registryAccounts: registryAccounts, registry: store,
-		jellyfin: len(cfg.JellyfinFolders) > 0, protectedPaths: protected, proxies: proxies, ssh: sshCfg, servers: servers}, nil
+		jellyfin: len(cfg.JellyfinFolders) > 0, protectedPaths: protected, proxies: proxies, ssh: sshCfg, servers: servers,
+		disks: disks}, nil
 }
 
 // Reload swaps the accounts, the tokens, the paths and the limits that are read
@@ -576,6 +584,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// folder, and decides for itself who may be there
 	if action := trashPageAction(r); action != "" {
 		s.handleTrash(set, w, r, action)
+		return
+	}
+
+	// so does the Disks page, whose disks are no files of the served folder
+	if action := disksPageAction(r); action != "" {
+		s.handleDisks(set, w, r, action)
 		return
 	}
 

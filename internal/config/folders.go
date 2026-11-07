@@ -11,7 +11,7 @@ import (
 // MakeFolders makes the folders of [general] that are set but not there yet,
 // with every folder above them that is missing, as mkdir -p does. They belong
 // to the user go-fs runs as, which is the one that reads and writes them. The
-// files and the registry are given 0750 and the temp folder 0700, since
+// files, the registry and the disks are given 0750 and the temp folder 0700, since
 // nobody else has any business in it; a folder above them is given 0755. The
 // mode is set after the folder is made, so the umask does not narrow or widen
 // it. A folder that is there already is left as it is.
@@ -25,6 +25,7 @@ func (c Config) MakeFolders() error {
 	}{
 		{"general.baseFolderFiles", c.General.BaseFolderFiles, 0o750},
 		{"general.baseFolderRegistry", c.General.BaseFolderRegistry, 0o750},
+		{"general.baseFolderDisks", c.disksFolder(), 0o750},
 		{"general.baseFolderTemp", c.General.BaseFolderTemp, 0o700},
 		{"general.baseFolderTrash", c.General.BaseFolderTrash, 0o700},
 	} {

@@ -77,6 +77,14 @@ contents:
       mode: 0750
       owner: go-fs
       group: go-fs
+  # the folder of the disk images of the Disks page and the nbd server,
+  # beside the served one
+  - dst: /var/lib/go-fs/disks
+    type: dir
+    file_info:
+      mode: 0750
+      owner: go-fs
+      group: go-fs
   # the folder uploads are staged in until they are finished, beside the
   # served one so that finishing one is a rename
   - dst: /var/lib/go-fs/temp

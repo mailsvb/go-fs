@@ -28,7 +28,8 @@ allowWrite = true
 
 Without a section, a server keeps its defaults: only HTTP is on, every server
 listens on `127.0.0.1` alone, and the ports are 8021 for FTP, 8990 for FTPS,
-8022 for SFTP, 8080 for HTTP, 8443 for HTTPS and 8069 for TFTP. `address = ""`
+8022 for SFTP, 8080 for HTTP, 8443 for HTTPS, 8069 for TFTP and 10809 for
+NBD. `address = ""`
 listens on every interface.
 
 `general.baseFolderFiles` is the folder every server serves: FTP, SFTP, HTTP,
@@ -44,16 +45,21 @@ and belongs on the same filesystem as `general.baseFolderFiles` so finishing
 an upload is a rename. `general.baseFolderTrash` is where the HTTP server puts
 what it deletes, see [The trash](BROWSER.md#the-trash); it is off while it is empty,
 must not overlap any of the others, and belongs on the same filesystem as
-`general.baseFolderFiles` as well. These are the only folders: no server has a
+`general.baseFolderFiles` as well. `general.baseFolderDisks` holds the VM
+disk images of the Disks page and the NBD server, see
+[VM disks over NBD](NBD.md); it is off while it is empty and must not overlap
+any of the others either, since nothing but the Disks page and the NBD server
+may touch a running VM's disk. These are the only folders: no server has a
 folder of its own, and only an account can be pointed elsewhere, see
 [Accounts](#accounts).
 
-The starter file keeps all four in one place:
+The starter file keeps all five in one place:
 
 ```toml
 [general]
 baseFolderFiles = "/var/lib/go-fs/files"
 baseFolderRegistry = "/var/lib/go-fs/registry"
+baseFolderDisks = "/var/lib/go-fs/disks"
 baseFolderTemp = "/var/lib/go-fs/temp"
 baseFolderTrash = "/var/lib/go-fs/trash"
 trashRetentionDays = 30
@@ -62,7 +68,7 @@ trashRetentionDays = 30
 Each has to be an absolute path. One that is not there is made when go-fs
 starts, reloads the file or saves it from the admin interface, with every
 folder above it, as `mkdir -p` would: it belongs to the user go-fs runs as,
-with mode `0750` for the files and the registry and `0700` for the temp
+with mode `0750` for the files, the registry and the disks and `0700` for the temp
 folder and the trash, and `0755` for a folder made above them. A folder that is there
 already is left as it is. go-fs has to be allowed to write to the folder it
 makes them in, and `/var/lib` belongs to root: the rpm makes `/var/lib/go-fs`

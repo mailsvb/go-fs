@@ -101,7 +101,7 @@ after it, its updates are signed with a key of their own
 
 Each optional part can also be left out on its own, with one of the tags
 `no_ftp`, `no_sftpd`, `no_sftp_remote`, `no_smb`, `no_tftp`, `no_webdav`,
-`no_rpm`, `no_fdroid`, `no_jellyfin`, `no_mp3tags` and `no_cryptomator`
+`no_rpm`, `no_fdroid`, `no_jellyfin`, `no_mp3tags`, `no_cryptomator` and `no_nbd`
 (see `internal/features`). go-fs-light has the document viewer, which the tag
 `no_viewer` leaves out of either product. The Features workflow vets and tests go-fs-light
 and checks the modules it links against `tools/features/light-modules.txt`.

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%232f6f4f' stroke-width='2' d='M3.5 6.5h17v11h-17zM3.5 13.5h17'/%3E%3C/svg%3E">
+<title>{{.Title}}</title>
+<style nonce="{{.Nonce}}">{{.Style}}
+.disk-info { margin: 0.75rem 1rem 0; color: var(--faint); font-size: 0.85rem; overflow-wrap: anywhere; }
+.disk-info code { font-size: 0.8rem; }
+td.c-att { font-size: 0.85rem; white-space: normal; }
+.att { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: 0.1rem 0; white-space: normal; }
+.att .meta { white-space: normal; overflow: visible; }
+.att .who { font-weight: 600; }
+.att .mode { padding: 0 0.35rem; border-radius: 0.6rem; font-size: 0.75rem; background: var(--ground); }
+.att .mode.rw { background: color-mix(in srgb, var(--accent) 22%, var(--ground)); }
+.att button { padding: 0.05rem 0.4rem; font-size: 0.75rem; }
+.busy { color: var(--faint); font-style: italic; }
+.jobs { margin: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.jobs[hidden] { display: none; }
+.jobs h2 { margin: 0; font-size: 0.95rem; }
+.job { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+.job progress { flex: 1 1 10rem; max-width: 24rem; }
+.job .failed { color: var(--bad); }
+dialog pre.snippet { margin: 0; padding: 0.6rem; overflow-x: auto; background: var(--ground); border-radius: 0.3rem; font-size: 0.75rem; white-space: pre; }
+</style>
+<script nonce="{{.Nonce}}">document.documentElement.className = "js";</script>
+</head>
+<body>
+
+{{template "icons"}}
+
+<header>
+  <nav class="crumbs" aria-label="Path">
+    <svg class="ic"><use href="#i-disk"/></svg>
+    <span class="here">Disks</span>
+  </nav>
+  <div class="tools">
+    <input id="filter" class="needs-js" type="search" placeholder="Filter&#8230;" aria-label="Filter the disks">
+    <button id="new-disk" class="plain needs-js" type="button" title="Make a new, empty disk image" aria-label="New disk image"><svg class="ic"><use href="#i-plus"/></svg><span class="label">New disk image</span></button>
+    <button id="upload-disk" class="plain needs-js" type="button" title="Upload a raw disk image" aria-label="Upload disk"><svg class="ic"><use href="#i-upload"/></svg><span class="label">Upload disk</span></button>
+    <input id="upload-file" type="file" hidden>
+  </div>
+  {{template "session" .Session}}
+</header>
+
+<div id="banner" class="banner" hidden><span class="text"></span><button type="button" class="close" title="Dismiss" aria-label="Dismiss"><svg class="ic"><use href="#i-close"/></svg></button></div>
+
+<main>
+<noscript><p class="empty">The Disks page needs JavaScript.</p></noscript>
+<p id="disk-info" class="disk-info"></p>
+<table id="disks">
+  <thead>
+    <tr>
+      <th><span class="head">Name</span></th>
+      <th class="num c-size"><span class="head">Size</span></th>
+      <th class="num c-size"><span class="head">Used</span></th>
+      <th class="c-att"><span class="head">Attached</span></th>
+      <th class="c-mod"><span class="head">Modified</span></th>
+      <th class="c-acts" aria-label="Actions"></th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+<p id="no-disks" class="empty" hidden>There are no disks yet. Make one with New disk image, or upload a raw image.</p>
+<section id="uploads" class="jobs" hidden><h2>Uploads</h2></section>
+<section id="jobs" class="jobs" hidden><h2>Clones</h2></section>
+</main>
+
+<div id="menu" class="menu" role="menu" hidden>
+  <button type="button" role="menuitem" data-do="connect"><svg class="ic"><use href="#i-info"/></svg>Connection details</button>
+  <button type="button" role="menuitem" data-do="resize"><svg class="ic"><use href="#i-resize"/></svg>Resize</button>
+  <button type="button" role="menuitem" data-do="rename"><svg class="ic"><use href="#i-pencil"/></svg>Rename</button>
+  <button type="button" role="menuitem" data-do="clone"><svg class="ic"><use href="#i-copy"/></svg>Clone</button>
+  <button type="button" role="menuitem" data-do="download"><svg class="ic"><use href="#i-download"/></svg>Download</button>
+  <button type="button" role="menuitem" class="remove" data-do="delete"><svg class="ic"><use href="#i-trash"/></svg>Delete</button>
+</div>
+
+<dialog id="ask">
+  <form method="dialog">
+    <h2></h2>
+    <p class="text"></p>
+    <div class="fields">
+      <label for="ask-name" data-for="name">Name</label>
+      <input id="ask-name" name="name" type="text" autocomplete="off" spellcheck="false" data-for="name">
+      <label for="ask-size" data-for="size">Size</label>
+      <input id="ask-size" name="size" type="text" autocomplete="off" spellcheck="false" placeholder="100G" data-for="size">
+      <span class="hint" data-for="size">A number of bytes, or one with K, M, G or T, such as 20G or 1.5T. The disk takes no space until the guest writes to it.</span>
+      <label class="toggle" data-for="shrink"><input name="shrink" type="checkbox"> Make it smaller, cutting off what the guest wrote at its end</label>
+      <label class="toggle" data-for="replace"><input name="replace" type="checkbox"> Replace the disk of that name</label>
+    </div>
+    <div class="row">
+      <button class="go" type="submit" value="agree">OK</button>
+      <button class="plain" type="submit" value="cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="connect">
+  <form method="dialog">
+    <h2></h2>
+    <p class="text"></p>
+    <div class="fields">
+      <label>QEMU</label>
+      <pre class="snippet" data-snippet="qemu"></pre>
+      <label>libvirt</label>
+      <pre class="snippet" data-snippet="libvirt"></pre>
+    </div>
+    <div class="row">
+      <button class="go" type="submit" value="close">Close</button>
+      <button class="plain" type="button" data-copy="libvirt"><svg class="ic"><use href="#i-copy"/></svg>Copy libvirt</button>
+      <button class="plain" type="button" data-copy="qemu"><svg class="ic"><use href="#i-copy"/></svg>Copy QEMU</button>
+    </div>
+  </form>
+</dialog>
+
+<script id="state" type="application/json">{{.State}}</script>
+<script nonce="{{.Nonce}}">{{.Script}}</script>
+</body>
+</html>

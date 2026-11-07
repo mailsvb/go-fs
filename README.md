@@ -17,8 +17,8 @@ HTTP server serves to its admins.
   and limits change on the running servers, and a download in progress
   finishes.
 - **More than a file server.** An OCI container registry, rpm and F-Droid
-  repositories that update themselves, and a music library that Jellyfin
-  clients can play from.
+  repositories that update themselves, a music library that Jellyfin
+  clients can play from, and VM disks that QEMU attaches over NBD.
 - **A real browser UI.** A built-in viewer for PDF, Word, Excel, PowerPoint,
   text and images that needs nothing from the web, video playback, an audio
   player that keeps playing while you browse, share links, a trash, folder
@@ -74,6 +74,7 @@ or on the admin page. Every key is explained in
 | [Install and run](docs/INSTALL.md) | rpm, msi, command line flags, persistent data, self-update |
 | [Configuration](docs/CONFIGURATION.md) | folders, reloading, accounts, admin interface, defaults, TLS |
 | [Protocols](docs/PROTOCOLS.md) | FTP, SFTP, HTTP, WebDAV, bearer tokens, S3, TFTP, supported standards |
+| [VM disks over NBD](docs/NBD.md) | the Disks page, certificates, QEMU and libvirt, space and locking |
 | [Container registry](docs/REGISTRY.md) | pushing and pulling images, multi-platform tags |
 | [Repositories](docs/REPOSITORIES.md) | rpm and F-Droid repositories, Jellyfin music library |
 | [Browser](docs/BROWSER.md) | browser login, document viewer, audio and video, MP3 tags and volume, trash, folder download, share links, fetch from URL |

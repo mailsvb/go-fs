@@ -80,6 +80,11 @@ WINDOWS_TEMP  := baseFolderTemp = "C:/ProgramData/go-fs/temp"
 TEMPLATE_TRASH := baseFolderTrash = "/var/lib/go-fs/trash"
 LINUX_TRASH    := baseFolderTrash = "/var/lib/go-fs/trash"
 WINDOWS_TRASH  := baseFolderTrash = "C:/ProgramData/go-fs/trash"
+# the baseFolderDisks line of the template, and what it says for each
+# installer: the folder disks beside the served folder
+TEMPLATE_DISKS := baseFolderDisks = "/var/lib/go-fs/disks"
+LINUX_DISKS    := baseFolderDisks = "/var/lib/go-fs/disks"
+WINDOWS_DISKS  := baseFolderDisks = "C:/ProgramData/go-fs/disks"
 
 .PHONY: all build test race cover fuzz vet fmt lint clean release sign checksums version \
 	packages rpm msi-inputs viewer-deps viewer-update
@@ -189,8 +194,9 @@ packages: rpm msi-inputs
 
 # installerconfig writes the template with its baseFolderFiles line replaced
 # by the first argument, its baseFolderRegistry line by the third, its
-# baseFolderTemp line by the fourth and its baseFolderTrash line by the fifth,
-# and fails when the template no longer has those lines to replace.
+# baseFolderTemp line by the fourth, its baseFolderTrash line by the fifth and
+# its baseFolderDisks line by the sixth, and fails when the template no longer
+# has those lines to replace.
 define installerconfig
 	@mkdir -p $(dir $(2))
 	@grep -qxF '$(TEMPLATE_BASEFOLDER)' $(TEMPLATE) || \
@@ -201,16 +207,19 @@ define installerconfig
 		(echo "$(TEMPLATE) has no line $(TEMPLATE_TEMP)"; exit 1)
 	@grep -qxF '$(TEMPLATE_TRASH)' $(TEMPLATE) || \
 		(echo "$(TEMPLATE) has no line $(TEMPLATE_TRASH)"; exit 1)
+	@grep -qxF '$(TEMPLATE_DISKS)' $(TEMPLATE) || \
+		(echo "$(TEMPLATE) has no line $(TEMPLATE_DISKS)"; exit 1)
 	@sed -e 's|^$(TEMPLATE_BASEFOLDER)$$|$(1)|' \
 		-e 's|^$(TEMPLATE_REGISTRY)$$|$(3)|' \
 		-e 's|^$(TEMPLATE_TEMP)$$|$(4)|' \
-		-e 's|^$(TEMPLATE_TRASH)$$|$(5)|' $(TEMPLATE) > $(2)
+		-e 's|^$(TEMPLATE_TRASH)$$|$(5)|' \
+		-e 's|^$(TEMPLATE_DISKS)$$|$(6)|' $(TEMPLATE) > $(2)
 	@echo "wrote $(2)"
 endef
 
 # what the rpm of each product serves, the first line of its description and
 # so its summary
-RPM_SERVES       := FTP, FTPS, SFTP, HTTP, HTTPS, an S3 compatible API and TFTP
+RPM_SERVES       := FTP, FTPS, SFTP, HTTP, HTTPS, an S3 compatible API, TFTP and NBD
 RPM_LIGHT_SERVES := HTTP, HTTPS, an S3 compatible API and an OCI registry
 
 # nfpm takes its files from fixed paths, see packaging/linux/nfpm.yaml, so the
@@ -220,7 +229,7 @@ RPM_LIGHT_SERVES := HTTP, HTTPS, an S3 compatible API and an OCI registry
 # SIGNING_KEY_FILE naming an armored PGP private key, and NFPM_RPM_PASSPHRASE
 # unlocking it, the rpms are signed, as the package repository needs them to be.
 rpm: viewer-deps
-	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml,$(LINUX_REGISTRY),$(LINUX_TEMP),$(LINUX_TRASH))
+	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml,$(LINUX_REGISTRY),$(LINUX_TEMP),$(LINUX_TRASH),$(LINUX_DISKS))
 	@mkdir -p $(DIST)
 	@for product in $(BINARY) $(LIGHT); do \
 		if [ "$$product" = "$(LIGHT)" ]; then \
@@ -241,7 +250,7 @@ rpm: viewer-deps
 
 # both msi install the same configuration, each its own product's binary
 msi-inputs: viewer-deps
-	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml,$(WINDOWS_REGISTRY),$(WINDOWS_TEMP),$(WINDOWS_TRASH))
+	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml,$(WINDOWS_REGISTRY),$(WINDOWS_TEMP),$(WINDOWS_TRASH),$(WINDOWS_DISKS))
 	@for product in $(BINARY) $(LIGHT); do \
 		for arch in amd64; do \
 			bin=$(PKG)/$${product}_windows_$$arch.exe; \

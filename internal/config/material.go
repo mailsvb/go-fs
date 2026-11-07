@@ -55,6 +55,10 @@ func Decode(kind, value string) ([]byte, error) {
 		return DecodePrivateKey(value)
 	case KindSessionSecret:
 		return DecodeSessionSecret(value)
+	case KindCertificateAuthority:
+		return DecodeCertificateAuthority(value)
+	case KindCRL:
+		return DecodeCRL(value)
 	default:
 		if k, ok := keyKinds[kind]; ok {
 			return k.decode(value)
@@ -300,6 +304,10 @@ func Describe(kind, value string) string {
 		return describeCertificate(value)
 	case KindSessionSecret:
 		return describeSessionSecret(value)
+	case KindCertificateAuthority:
+		return describeCertificateAuthority(value)
+	case KindCRL:
+		return describeCRL(value)
 	default:
 		if k, ok := keyKinds[kind]; ok {
 			return k.describe(value)

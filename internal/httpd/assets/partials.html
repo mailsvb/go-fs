@@ -23,6 +23,10 @@
   <symbol id="i-server" viewBox="0 0 24 24"><path d="M4 4.5h16v6H4zm0 9h16v6H4z"/><path d="M7.5 7.5h.5m-.5 9h.5"/></symbol>
   <symbol id="i-restore" viewBox="0 0 24 24"><path d="M4 9h11a5 5 0 0 1 0 10H8"/><path d="M8 5 4 9l4 4"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-disk" viewBox="0 0 24 24"><path d="M3.5 6.5h17v11h-17z"/><path d="M3.5 13.5h17M16.5 15.5h1"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-resize" viewBox="0 0 24 24"><path d="M4 9V4h5M20 15v5h-5M4 4l6 6m10 10-6-6"/></symbol>
+  <symbol id="i-unplug" viewBox="0 0 24 24"><path d="M9 4v4m6-4v4M7 8h10v3a5 5 0 0 1-10 0zM12 16v4M4 20 20 4"/></symbol>
 </svg>
 {{end}}
 
@@ -31,12 +35,13 @@
    Each item is there only for someone who may use it, and a menu left with
    nothing in it is not shown at all. */}}
 {{define "session"}}
-{{if or .Files .Registry .Servers .Trash .Admin .User .CanLogin}}
+{{if or .Files .Registry .Disks .Servers .Trash .Admin .User .CanLogin}}
 <details class="nav">
-  <summary class="plain" title="{{.Page}}" aria-label="{{.Page}}"><svg class="ic"><use href="#{{if .Remote}}i-server{{else if eq .Page "Registry"}}i-box{{else if eq .Page "Trash"}}i-trash{{else}}i-folder{{end}}"/></svg><span class="label">{{.Page}}</span><svg class="ic caret"><use href="#i-caret"/></svg></summary>
+  <summary class="plain" title="{{.Page}}" aria-label="{{.Page}}"><svg class="ic"><use href="#{{if .Remote}}i-server{{else if eq .Page "Registry"}}i-box{{else if eq .Page "Disks"}}i-disk{{else if eq .Page "Trash"}}i-trash{{else}}i-folder{{end}}"/></svg><span class="label">{{.Page}}</span><svg class="ic caret"><use href="#i-caret"/></svg></summary>
   <div class="menu">
     {{if .Files}}<a href="{{.Files}}"><svg class="ic"><use href="#i-folder"/></svg>Files</a>{{end}}
     {{if .Registry}}<a href="{{.Registry}}"><svg class="ic"><use href="#i-box"/></svg>Registry</a>{{end}}
+    {{if and .User .Disks}}<a href="{{.Disks}}"><svg class="ic"><use href="#i-disk"/></svg>Disks</a>{{end}}
     {{range .Servers}}<a href="{{.Link}}"><svg class="ic"><use href="#i-server"/></svg>{{.Name}}</a>{{end}}
     {{if and .User .Trash}}<a href="{{.Trash}}"><svg class="ic"><use href="#i-trash"/></svg>Trash</a>{{end}}
     {{if and .User .Admin}}<a href="{{.Admin}}"><svg class="ic"><use href="#i-gear"/></svg>Admin</a>{{end}}

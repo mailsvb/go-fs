@@ -285,6 +285,9 @@ func (s *Server) sessionViewFor(set *settings, r *http.Request, cred credential)
 		if offersTrash(set, cred) {
 			who.Trash = trashURL()
 		}
+		if offersDisks(set, cred) {
+			who.Disks = disksURL()
+		}
 		if s.admits(set, cred) {
 			who.Admin = adminURL(r.URL)
 		}

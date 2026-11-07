@@ -25,6 +25,15 @@ baseFolderFiles = "/var/lib/go-fs/files"
 # registry may write to it. Pushing and deleting take a [[users]] entry that
 # sets registry = true.
 baseFolderRegistry = "/var/lib/go-fs/registry"
+# The disk images of the Disks page, which the nbd server serves to QEMU and
+# other NBD clients, all of them directly in this folder. Only an account that
+# sets isAdmin sees the Disks page, where images are made, resized, renamed,
+# cloned, uploaded and downloaded. Empty turns the Disks page off, and nbd
+# needs it. It must neither be nor hold nor lie inside baseFolderFiles,
+# baseFolderRegistry, baseFolderTemp, baseFolderTrash or the basefolder of an
+# account: nothing but the Disks page and the nbd server may touch an image.
+# It is made with mode 0750 when it is not there.
+baseFolderDisks = "/var/lib/go-fs/disks"
 # Where the not-yet-finalized bytes of an upload to the http server are kept
 # while it is in progress: a chunked upload, an s3 object, a webdav file or a
 # fetch. It must neither be nor hold nor lie inside baseFolderFiles,
@@ -197,6 +206,10 @@ isAdmin = true
 # http.registryAnonymousRead is off. It is independent of http; the paths and
 # rights below do not apply to it.
 # registry = true
+# Let a client certificate whose common name is this username attach the disk
+# images of the nbd server: read-only with allowUserFileRetrieve, read-write
+# with allowUserFileOverwrite as well. The password plays no part in it.
+# nbd = true
 # own folder for this account on ftp and sftp, general.baseFolderFiles when
 # empty
 # basefolder = "/var/lib/go-fs/files/john"
@@ -759,3 +772,45 @@ maxBlockSize = 1468
 maxWindowSize = 16
 # largest accepted upload in bytes, 0 means no limit
 maxFileSize = 0
+
+# The NBD server, which serves the disk images of general.baseFolderDisks to
+# QEMU and other NBD clients, one image to a connection, its file name being
+# the export name. A connection has to switch to TLS before anything else and
+# show a client certificate issued by clientCA, whose common name is the
+# username of a [[users]] entry that sets nbd = true. go-fs issues no
+# certificate itself: cert and clientCA come from a CA of your own, since QEMU
+# checks the server's certificate against the CA it is given. Off unless
+# switched on.
+[nbd]
+enabled = false
+
+port = 10809
+# interface to bind to, empty binds to all; 127.0.0.1 is reachable from this
+# host alone
+address = "127.0.0.1"
+
+# The certificate the server shows and its private key, base64 of the PEM,
+# both required. It has to name the host QEMU connects to (server.host) and
+# be issued by the CA the QEMU host has as ca-cert.pem.
+cert = ""
+key = ""
+# The certificate of the CA a client certificate has to be issued by, or of
+# several, base64 of the PEM; every one of them has to be a CA's.
+clientCA = ""
+# A certificate revocation list of that CA, base64 of the PEM, as openssl ca
+# -gencrl writes it. A certificate it lists is refused, and a connection that
+# logged in with one is closed as soon as the list is applied. Empty revokes
+# nothing.
+clientCRL = ""
+# to fill them in by hand: base64 < ca.crt | tr -d "\n"
+
+# addresses or CIDR ranges a connection is accepted from, empty accepts any
+allowedClients = []
+# maximum simultaneous connections
+maxConnections = 16
+# seconds a client has from connecting to having chosen its image
+handshakeTimeout = 10
+# Seconds a connection may be silent before TCP keepalive probes start. A
+# client that stopped answering is dropped about fifteen seconds after that,
+# and the image it held can be attached again.
+keepAlive = 15

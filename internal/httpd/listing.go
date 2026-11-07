@@ -373,6 +373,9 @@ type sessionView struct {
 	// Trash is the link to the Trash page, empty while there is no trash and
 	// for everyone but an admin account signed in with a session.
 	Trash string
+	// Disks is the link to the Disks page, empty while there is no disks
+	// folder and for everyone but an admin account signed in with a session.
+	Disks string
 	// Page is the name of the page the header is on, which is what its menu
 	// is labelled with, and Files the link back to the listing from a page
 	// that is not it.

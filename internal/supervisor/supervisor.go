@@ -61,6 +61,7 @@ const (
 	orderSFTP
 	orderHTTP
 	orderTFTP
+	orderNBD
 	orderCleanup
 	orderRepositories
 	orderSyncs
