@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -534,7 +533,7 @@ func TestReloadClosesWhatItNoLongerAdmits(t *testing.T) {
 type fullDisk struct{ image }
 
 func (fullDisk) WriteAt([]byte, int64) (int, error) {
-	return 0, &osPathError{err: syscall.ENOSPC}
+	return 0, &osPathError{err: errDiskFull}
 }
 
 type osPathError struct{ err error }
