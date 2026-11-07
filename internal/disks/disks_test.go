@@ -238,8 +238,12 @@ func TestAWriterIsAloneUnlessItTakesOverFromItself(t *testing.T) {
 	}
 	<-second.closed
 	<-second.released
-	if _, _, err := f.OpenRead("vm.raw"); err != nil {
+	// the file has to be closed, or Windows cannot remove the test's folder
+	if file, lease, err := f.OpenRead("vm.raw"); err != nil {
 		t.Errorf("a download once the writer is gone = %v", err)
+	} else {
+		file.Close()
+		lease.Release()
 	}
 }
 
@@ -250,10 +254,12 @@ func TestATakeoverGivesUpOnASessionThatHangs(t *testing.T) {
 	create(t, f, "vm.raw", mib)
 	stuck := NewSession(func(string) {})
 	stuck.Writable, stuck.Fingerprint = true, "aa"
-	_, lease, err := f.Attach("vm.raw", stuck)
+	file, lease, err := f.Attach("vm.raw", stuck)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// the file has to be closed, or Windows cannot remove the test's folder
+	defer file.Close()
 	defer lease.Release()
 	key := f.key("vm.raw")
 	done := make(chan error, 1)

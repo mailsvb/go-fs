@@ -62,13 +62,25 @@ type Session struct {
 	closer        func(reason string)
 	closeOnce     sync.Once
 	released      chan struct{}
+	// seq is the order the sessions were made in. Since cannot tell that
+	// apart where the clock ticks coarsely, as on Windows, where two sessions
+	// made within a millisecond or so are given the same time.
+	seq uint64
 }
+
+// sessionSeq numbers the sessions in the order they are made.
+var sessionSeq atomic.Uint64
 
 // NewSession is a session that close ends, told why: it is called at most
 // once, by the Disks page, by a writer taking over, or by whatever else ends
 // it.
 func NewSession(close func(reason string)) *Session {
-	return &Session{closer: close, released: make(chan struct{}), Since: time.Now()}
+	return &Session{closer: close, released: make(chan struct{}), Since: time.Now(), seq: sessionSeq.Add(1)}
+}
+
+// bySeq sorts sessions in the order they were made.
+func bySeq(sessions []*Session) {
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].seq < sessions[j].seq })
 }
 
 // Close ends the session for the reason given.
@@ -269,7 +281,7 @@ func (r *registry) state(key string) (sessions []*Session, busy string, holds in
 	for reader := range e.readers {
 		sessions = append(sessions, reader)
 	}
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].Since.Before(sessions[j].Since) })
+	bySeq(sessions)
 	return sessions, e.exclusive, e.holds
 }
 
@@ -280,7 +292,7 @@ func (r *registry) sessions() []*Session {
 	for _, session := range r.byID {
 		all = append(all, session)
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Since.Before(all[j].Since) })
+	bySeq(all)
 	return all
 }
 
