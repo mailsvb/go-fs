@@ -161,9 +161,9 @@ banner = []
 # yt-dlp, which lets Fetch download the video or the audio of a YouTube link.
 # Empty looks for it.
 ytDlp = ""
-# ffmpeg, which yt-dlp uses to join the best video with the best audio and to
-# turn audio into MP3; without it Fetch takes the best single file a site
-# offers. Empty looks for it.
+# ffmpeg, which yt-dlp uses to join the best video with the best audio, and
+# Fetch to turn audio into MP3; without it Fetch takes the best single file a
+# site offers. Empty looks for it.
 ffmpeg = ""
 
 # Folders that are kept from growing without bound: once an hour everything but

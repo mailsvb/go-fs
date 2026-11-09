@@ -9,6 +9,8 @@
   --faint: #626b76;
   --accent: #2f6f4f;
   --bad: #a3352b;
+  /* a video or audio being converted, once its download is complete */
+  --convert: #a86a12;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -19,6 +21,7 @@
     --faint: #9aa4b0;
     --accent: #6fbf8f;
     --bad: #e08b82;
+    --convert: #e0a54f;
   }
 }
 
@@ -569,7 +572,7 @@ dialog .remote-list li.note { padding: 0.3rem 0.6rem; color: var(--faint); font-
 dialog .downloads-list { display: flex; flex-direction: column; gap: 0.15rem; margin: 0; padding: 0; list-style: none; max-height: 60vh; overflow-y: auto; }
 dialog .downloads-list li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 4.5rem 6.5rem auto;
+  grid-template-columns: minmax(0, 1fr) 4.5rem minmax(6.5rem, max-content) auto;
   grid-template-areas: "name share speed stop" "track track track stop";
   gap: 0.2rem 0.75rem;
   align-items: center;
@@ -582,9 +585,10 @@ dialog .downloads-list .name { grid-area: name; display: flex; flex-direction: c
 dialog .downloads-list .file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 dialog .downloads-list .folder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 0.75rem; }
 dialog .downloads-list .share { grid-area: share; text-align: right; font-variant-numeric: tabular-nums; }
-dialog .downloads-list .speed { grid-area: speed; text-align: right; color: var(--faint); font-variant-numeric: tabular-nums; }
+dialog .downloads-list .speed { grid-area: speed; text-align: right; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 dialog .downloads-list .track { grid-area: track; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
 dialog .downloads-list .fill { display: block; height: 100%; width: 0; background: var(--accent); }
+dialog .downloads-list li.converting .fill { background: var(--convert); }
 dialog .downloads-list button { grid-area: stop; height: 1.8rem; font-size: 0.8rem; }
 dialog .downloads-list li.failed .share, dialog .downloads-list li.failed .speed, dialog .downloads-list li.failed .track { display: none; }
 dialog .downloads-list .message { grid-row: 2; grid-column: 1 / -2; color: var(--bad); font-size: 0.8rem; overflow-wrap: anywhere; }

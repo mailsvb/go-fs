@@ -605,8 +605,11 @@ is public. The endpoints are `?go-fs=fetch` (`POST` of `url`, `username`,
 `?go-fs=fetch-job&id=…` (`GET` for the progress, `DELETE` to stop and clear)
 on the folder, and `?go-fs=fetch-jobs` (`GET`), on any folder, for the
 account's fetches and sends that have not been cleared, with `kind`, `name`, `folder`,
-`phase` (`downloading` once the remote has answered), `bytesDone`,
-`bytesTotal` and `bytesPerSecond`. Note that the server connects to whatever host is typed in, from its
+`phase` (`downloading` once the remote has answered, `converting` while
+a video or audio that was downloaded is joined or converted), `bytesDone`,
+`bytesTotal` and `bytesPerSecond`, and while an audio is converted to MP3
+`convertDone` and `convertTotal`, how far ffmpeg is in the audio and how long
+it is in milliseconds, and `convertSpeed`, how many times faster than it plays. Note that the server connects to whatever host is typed in, from its
 own network, internal addresses included: give the right to create files only
 to accounts that may do that.
 
@@ -636,7 +639,14 @@ under the rules of any fetch: created where the account may create, replacing
 a file only with `allowUserFileOverwrite`, and no larger than `maxUploadSize`.
 It runs as a fetch too, among the eight that run at once, in **Transfers**
 with its progress, its speed and **Stop**; the progress of a video counts its
-video and its audio together, which are downloaded one after the other. The
+video and its audio together, which are downloaded one after the other.
+Once the download is complete, ffmpeg takes a while longer. An audio to be
+an MP3 is converted by go-fs itself, which runs ffmpeg with `-progress`
+rather than leave it to yt-dlp, which tells nothing until ffmpeg ends: the
+bar starts again from 0% in amber and reads, say, **Converting · 24×**, how
+many times faster than it plays the audio is converted; for a long mix on a
+slow machine that is minutes. Joining a video and its audio copies them and
+takes seconds, shown as **Converting…** at 100%. The
 dialog waits until yt-dlp has found the video and begun the download, so an
 error such as `Video unavailable` or a video that needs a login is shown
 there.

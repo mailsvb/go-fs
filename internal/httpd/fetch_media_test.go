@@ -20,11 +20,63 @@ import (
 // yt-dlp, and here that is this one.
 const fakeYtDlpMode = "GOFS_FAKE_YTDLP"
 
+// fakeFFmpegMode is how the test binary acts as ffmpeg, which it is too: the
+// server runs ffmpeg with -progress, and yt-dlp never.
+const fakeFFmpegMode = "GOFS_FAKE_FFMPEG"
+
 func TestMain(m *testing.M) {
 	if mode, ok := os.LookupEnv(fakeYtDlpMode); ok {
+		for _, arg := range os.Args[1:] {
+			if arg == "-progress" {
+				os.Exit(fakeFFmpeg(os.Getenv(fakeFFmpegMode), os.Args[1:]))
+			}
+		}
 		os.Exit(fakeYtDlp(mode, os.Args[1:]))
 	}
 	os.Exit(m.Run())
+}
+
+// fakeFFmpeg does what ffmpeg would when the server converts an audio to an
+// MP3: it says the length of the input on stderr and its progress on stdout,
+// and writes the output, whose content is the input's and the arguments it
+// was run with.
+func fakeFFmpeg(mode string, args []string) int {
+	if mode == "fail" {
+		fmt.Fprintln(os.Stderr, "Input #0, matroska,webm, from 'in.webm':")
+		fmt.Fprintln(os.Stderr, "file:in.webm: Invalid data found when processing input")
+		return 1
+	}
+	fmt.Fprintln(os.Stderr, "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'in.m4a':")
+	fmt.Fprintln(os.Stderr, "  Duration: 00:01:40.00, start: 0.000000, bitrate: 128 kb/s")
+	if mode == "hang" {
+		// ffmpeg says where it is twice a second, however slow it goes
+		for range 600 {
+			fmt.Print("out_time_us=25000000\nspeed=20.0x\nprogress=continue\n")
+			time.Sleep(100 * time.Millisecond)
+		}
+		return 0
+	}
+	fmt.Print("out_time_us=N/A\nspeed=N/A\nprogress=continue\n")
+	fmt.Print("out_time_us=50000000\nspeed=20.0x\nprogress=continue\n")
+	fmt.Print("out_time_us=100000000\nspeed= 20x\nprogress=end\n")
+	var in string
+	for i, arg := range args {
+		if arg == "-i" && i+1 < len(args) {
+			in = strings.TrimPrefix(args[i+1], "file:")
+		}
+	}
+	out := strings.TrimPrefix(args[len(args)-1], "file:")
+	content, err := os.ReadFile(in)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	content = append(content, "\n--ffmpeg--\n"+strings.Join(args, "\n")...)
+	if err := os.WriteFile(out, content, 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
 }
 
 // fakeYtDlp does what yt-dlp would, as far as the server can tell: it prints
@@ -61,12 +113,19 @@ func fakeYtDlp(mode string, args []string) int {
 		fmt.Println(mediaProgress + "100|1000|NA|Slow")
 		time.Sleep(time.Minute)
 		return 0
+	case "merging":
+		fmt.Println(mediaProgress + "0|1000|NA|Long Film")
+		fmt.Println(mediaProgress + "1000|1000|NA|Long Film")
+		fmt.Println("[Merger] Merging formats into \"" + filepath.Join(value("-P"), "Long Film [abc123].mp4") + "\"")
+		time.Sleep(time.Minute)
+		return 0
 	}
 
 	dir := value("-P")
 	ext := "mp4"
 	switch {
-	case value("--audio-format") == "mp3":
+	case mode == "mp3":
+		// a site that sends its audio as an MP3
 		ext = "mp3"
 	case strings.HasPrefix(value("-f"), "ba"):
 		ext = "m4a"
@@ -75,7 +134,7 @@ func fakeYtDlp(mode string, args []string) int {
 	for _, line := range []string{"0|1000|NA", "600|1000|NA", "1000|1000|NA", "0|NA|500.5", "500|NA|500.5"} {
 		fmt.Println(mediaProgress + line + "|A Song | Live")
 	}
-	if has("--merge-output-format") || has("-x") {
+	if has("--merge-output-format") {
 		fmt.Println("[Merger] Merging formats into \"" + filepath.Join(dir, "A Song [abc123]."+ext) + "\"")
 	}
 	name := "A Song [abc123]." + ext
@@ -90,18 +149,19 @@ func fakeYtDlp(mode string, args []string) int {
 }
 
 // mediaServer is a server whose yt-dlp is this test binary, acting as mode,
-// and which has an ffmpeg where withFFmpeg says so.
+// and which has an ffmpeg where withFFmpeg says so, this binary again, acting
+// as $GOFS_FAKE_FFMPEG says.
 func mediaServer(t *testing.T, mode string, withFFmpeg bool, tune func(*httpConfig)) *testServer {
 	t.Helper()
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	self := testBinary(t)
 	t.Setenv(fakeYtDlpMode, mode)
+	if _, ok := os.LookupEnv(fakeFFmpegMode); !ok {
+		t.Setenv(fakeFFmpegMode, "ok")
+	}
 	return newServer(t, func(cfg *httpConfig) {
 		cfg.YtDlp = config.Tool{Path: self, Version: "2026.10.31"}
 		if withFFmpeg {
-			cfg.FFmpeg = config.Tool{Path: "/opt/ffmpeg/bin/ffmpeg", Version: "7.1"}
+			cfg.FFmpeg = config.Tool{Path: self, Version: "7.1"}
 		}
 		cfg.UploadStagingFolder = t.TempDir()
 		if tune != nil {
@@ -112,6 +172,15 @@ func mediaServer(t *testing.T, mode string, withFFmpeg bool, tune func(*httpConf
 
 const youTubeURL = "https://www.youtube.com/watch?v=abc123"
 
+func testBinary(t *testing.T) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return self
+}
+
 func TestMediaFetchStoresWhatYtDlpMade(t *testing.T) {
 	for _, test := range []struct {
 		media      string
@@ -121,9 +190,12 @@ func TestMediaFetchStoresWhatYtDlpMade(t *testing.T) {
 		notArgs    []string
 	}{
 		{mediaVideo, true, "A Song [abc123].mp4",
-			[]string{"bv*+ba/b", "--merge-output-format", "--ffmpeg-location\n/opt/ffmpeg/bin/ffmpeg"}, nil},
+			[]string{"bv*+ba/b", "--merge-output-format", "--ffmpeg-location\n" + testBinary(t)}, []string{"--ffmpeg--"}},
 		{mediaVideo, false, "A Song [abc123].mp4", []string{"-f\nb\n"}, []string{"--ffmpeg-location"}},
-		{mediaAudio, true, "A Song [abc123].mp3", []string{"-x", "--audio-format\nmp3"}, nil},
+		// yt-dlp downloads the audio as it is, and go-fs has ffmpeg convert it
+		{mediaAudio, true, "A Song [abc123].mp3",
+			[]string{"-f\nba/b\n", "--ffmpeg--", "libmp3lame", "-q:a\n0", "-progress\npipe:1", ".m4a\n", ".mp3.part"},
+			[]string{"-x\n", "--audio-format"}},
 		{mediaAudio, false, "A Song [abc123].m4a", []string{"ba[ext=m4a]/ba"}, []string{"-x", "--ffmpeg-location"}},
 	} {
 		t.Run(fmt.Sprintf("%s ffmpeg=%v", test.media, test.withFFmpeg), func(t *testing.T) {
@@ -273,6 +345,131 @@ func TestMediaFetchCanBeStopped(t *testing.T) {
 		t.Errorf("stopping took %s", took)
 	}
 	expectNoWorkFolder(t, staging)
+}
+
+// convertingView waits for the job to be converting, with a length that
+// ffmpeg read where withLength says so, and says what it is then. ffmpeg says
+// the length on stderr and its progress on stdout, which are read apart, so
+// the first progress can come before the length.
+func convertingView(t *testing.T, server *testServer, session *http.Cookie, id string, withLength bool) registryJobJSON {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		_, data := transferRequest(t, server, http.MethodGet, "/?go-fs=fetch-job&id="+id, session, nil)
+		var view registryJobJSON
+		_ = json.Unmarshal(data, &view)
+		if view.Phase == fetchConverting && (view.ConvertTotal > 0) == withLength {
+			return view
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the conversion was not shown: %+v", view)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestMediaFetchShowsTheConversion checks that while ffmpeg converts an
+// audio into an MP3, the job says how far it is and how fast, rather than a
+// speed of the download that falls towards nothing, and that Stop ends it.
+func TestMediaFetchShowsTheConversion(t *testing.T) {
+	t.Setenv(fakeFFmpegMode, "hang")
+	var staging string
+	server := mediaServer(t, "ok", true, func(cfg *httpConfig) {
+		staging = cfg.UploadStagingFolder
+	})
+	session := login(t, server, "/", "john", "doe")
+	job := startFetch(t, server, "/", session, fetchBody{URL: youTubeURL, Media: mediaAudio})
+	view := convertingView(t, server, session, job.ID, true)
+	if view.State != jobRunning || view.ConvertDone != 25000 || view.ConvertTotal != 100000 ||
+		view.ConvertSpeed != 20 || view.BytesPerSecond != 0 || view.BytesDone == 0 || view.BytesDone != view.BytesTotal {
+		t.Errorf("the job is %+v", view)
+	}
+	started := time.Now()
+	transferRequest(t, server, http.MethodDelete, "/?go-fs=fetch-job&id="+job.ID, session, nil)
+	if ended := waitForFetch(t, server, "/", job.ID, session); ended.State != jobCancelled {
+		t.Errorf("the fetch ended %s: %s", ended.State, ended.Message)
+	}
+	if took := time.Since(started); took > 10*time.Second {
+		t.Errorf("stopping took %s", took)
+	}
+	expectNoWorkFolder(t, staging)
+}
+
+// TestMediaFetchSaysItJoins checks that a video whose video and audio
+// ffmpeg joins, which says nothing of how far it is, is shown as converting
+// with no progress of its own.
+func TestMediaFetchSaysItJoins(t *testing.T) {
+	server := mediaServer(t, "merging", true, nil)
+	session := login(t, server, "/", "john", "doe")
+	job := startFetch(t, server, "/", session, fetchBody{URL: youTubeURL, Media: mediaVideo})
+	view := convertingView(t, server, session, job.ID, false)
+	if view.State != jobRunning || view.BytesDone != 1000 || view.BytesTotal != 1000 ||
+		view.BytesPerSecond != 0 || view.ConvertTotal != 0 || view.Name != "Long Film" {
+		t.Errorf("the job is %+v", view)
+	}
+	transferRequest(t, server, http.MethodDelete, "/?go-fs=fetch-job&id="+job.ID, session, nil)
+	if ended := waitForFetch(t, server, "/", job.ID, session); ended.State != jobCancelled {
+		t.Errorf("the fetch ended %s: %s", ended.State, ended.Message)
+	}
+}
+
+func TestMediaFetchSaysWhyFFmpegFailed(t *testing.T) {
+	t.Setenv(fakeFFmpegMode, "fail")
+	server := mediaServer(t, "ok", true, nil)
+	session := login(t, server, "/", "john", "doe")
+	expectFailed(t, fetched(t, server, "/", session, fetchBody{URL: youTubeURL, Media: mediaAudio}),
+		"ffmpeg failed with exit status 1: file:in.webm: Invalid data found when processing input")
+	if entries, _ := os.ReadDir(server.base); len(entries) != 0 {
+		t.Errorf("the failed fetch left %d files", len(entries))
+	}
+}
+
+// TestMediaFetchTakesAnMP3AsItIs checks that an audio the site sends as an
+// MP3 is not converted again: an ffmpeg that fails is never run.
+func TestMediaFetchTakesAnMP3AsItIs(t *testing.T) {
+	t.Setenv(fakeFFmpegMode, "fail")
+	server := mediaServer(t, "mp3", true, nil)
+	session := login(t, server, "/", "john", "doe")
+	job := fetched(t, server, "/", session, fetchBody{URL: youTubeURL, Media: mediaAudio})
+	expectDone(t, job)
+	if content := server.read(t, "A Song [abc123].mp3"); strings.Contains(content, "--ffmpeg--") {
+		t.Errorf("the MP3 was converted:\n%s", content)
+	}
+}
+
+func TestMediaConversionReadsFFmpeg(t *testing.T) {
+	job := &registryJob{}
+	conv := &mediaConversion{job: job, timer: time.AfterFunc(time.Hour, func() {})}
+	defer conv.timer.Stop()
+	for _, line := range []string{"Input #0, matroska,webm, from 'x.webm':",
+		"  Duration: 01:02:03.50, start: -0.007000, bitrate: 131 kb/s",
+		"Output #0, mp3, to 'x.mp3.part':", "  Duration: 00:00:01.00, start: 0.000000"} {
+		conv.said(line)
+	}
+	for _, line := range []string{"out_time_us=N/A", "speed=N/A", "progress=continue"} {
+		conv.progress(line)
+	}
+	if job.convertDone != 0 || job.convertTotal != 3723500000 || job.convertSpeed != 0 {
+		t.Errorf("at first the job has %d of %d at %v", job.convertDone, job.convertTotal, job.convertSpeed)
+	}
+	for _, line := range []string{"bitrate= 245.1kbits/s", "out_time_us=1800000000\r", "speed= 31.5x", "progress=continue"} {
+		conv.progress(line)
+	}
+	if job.convertDone != 1800000000 || job.convertSpeed != 31.5 {
+		t.Errorf("the job has %d at %v", job.convertDone, job.convertSpeed)
+	}
+	// ffmpeg can go a little past the length it read
+	for _, line := range []string{"out_time_us=3723600000", "progress=end"} {
+		conv.progress(line)
+	}
+	if job.convertDone != job.convertTotal {
+		t.Errorf("the end has %d of %d", job.convertDone, job.convertTotal)
+	}
+	for clock, want := range map[string]int64{"00:00:01.25": 1250000, "10:00:00.00": 36000000000, "N/A": 0, "1:2": 0} {
+		if got := clockMicros(clock); got != want {
+			t.Errorf("clockMicros(%q) = %d, want %d", clock, got, want)
+		}
+	}
 }
 
 func TestFetchOffersVideoWhileThereIsYtDlp(t *testing.T) {

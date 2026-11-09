@@ -1297,6 +1297,17 @@
     return tenth(size / 1024) + " KB";
   }
 
+  // underway says a fetch or a send is past connecting: it stores the file,
+  // or, for a video or audio, joins or converts what it downloaded.
+  function underway(phase) {
+    return phase === "downloading" || phase === "converting";
+  }
+
+  // readableSpeed is how many times faster than it plays a conversion runs
+  function readableSpeed(times) {
+    return (times < 10 ? times.toFixed(1) : Math.round(times)) + "×";
+  }
+
   function readableRate(perSecond) {
     return readableSize(perSecond || 0) + "/s";
   }
@@ -1488,7 +1499,21 @@
       }
       // a fetch of a folder counts its files as well as its bytes
       var files = job.blobsTotal > 0 ? job.blobsDone + "/" + job.blobsTotal + " files · " : "";
-      if (job.phase !== "downloading") {
+      row.item.classList.toggle("converting", job.phase === "converting");
+      if (job.phase === "converting" && job.convertTotal > 0) {
+        // ffmpeg converts the audio it downloaded, and says how far it is
+        // and how many times faster than it plays
+        var converted = Math.floor(Math.min(job.convertDone || 0, job.convertTotal) * 100 / job.convertTotal);
+        row.share.textContent = converted + "%";
+        row.speed.textContent = "Converting" + (job.convertSpeed > 0 ? " · " + readableSpeed(job.convertSpeed) : "");
+        row.fill.style.width = converted + "%";
+      } else if (job.phase === "converting") {
+        // the download is complete and is joined or converted, which moves
+        // no bytes for a while and says nothing of how far it is
+        row.share.textContent = files + "100%";
+        row.speed.textContent = "Converting…";
+        row.fill.style.width = "100%";
+      } else if (job.phase !== "downloading") {
         row.share.textContent = "";
         row.speed.textContent = job.phase === "listing" ? "Analysing…" : "Connecting…";
         row.fill.style.width = "0";
@@ -1778,7 +1803,7 @@
         if (job !== id) {
           return;
         }
-        if (view.state === "running" && view.phase !== "downloading") {
+        if (view.state === "running" && !underway(view.phase)) {
           window.setTimeout(wait, 400);
           return;
         }
@@ -2323,7 +2348,7 @@
         if (job !== id) {
           return;
         }
-        if (view.state === "running" && view.phase !== "downloading") {
+        if (view.state === "running" && !underway(view.phase)) {
           window.setTimeout(wait, 400);
           return;
         }
@@ -2707,7 +2732,7 @@
         if (job !== id) {
           return;
         }
-        if (view.state === "running" && view.phase !== "downloading") {
+        if (view.state === "running" && !underway(view.phase)) {
           if (view.phase === "listing") {
             tell("Analysing " + name + " again before the fetch…");
           }

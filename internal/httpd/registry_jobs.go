@@ -53,6 +53,11 @@ const (
 // what the dialog waits for before it closes.
 const fetchDownloading = "downloading"
 
+// fetchConverting is the phase of a video or audio fetch once yt-dlp has
+// downloaded it and joins or converts what it has: the disk is busy but no
+// byte arrives, so the page shows that step rather than a speed.
+const fetchConverting = "converting"
+
 // rateWindow is how often the speed of a transfer is sampled, and
 // rateStale how long a sample may be old before the speed is taken to fall.
 const (
@@ -108,6 +113,12 @@ type registryJob struct {
 	sampleAt    time.Time
 	sampleBytes int64
 	rate        float64
+	// convertDone and convertTotal are how much of an audio ffmpeg has
+	// converted, and how long it is, in microseconds, and convertSpeed how
+	// many times faster than it plays: a video or audio fetch's, once its
+	// download is complete.
+	convertDone, convertTotal int64
+	convertSpeed              float64
 }
 
 // registryJobJSON is what the page reads of a job.
@@ -133,6 +144,12 @@ type registryJobJSON struct {
 	Folder string `json:"folder,omitempty"`
 	// BytesPerSecond is how fast a running job moves its bytes just now.
 	BytesPerSecond int64 `json:"bytesPerSecond"`
+	// ConvertDone and ConvertTotal are how far ffmpeg has converted an
+	// audio, and how long it is, in milliseconds; ConvertSpeed is how many
+	// times faster than it plays. The total is 0 where it is not known.
+	ConvertDone  int64   `json:"convertDone,omitempty"`
+	ConvertTotal int64   `json:"convertTotal,omitempty"`
+	ConvertSpeed float64 `json:"convertSpeed,omitempty"`
 }
 
 func (j *registryJob) view() registryJobJSON {
@@ -142,11 +159,12 @@ func (j *registryJob) view() registryJobJSON {
 		BlobsTotal: j.blobsTotal.Load(), BlobsDone: j.blobsDone.Load(),
 		BytesTotal: j.bytesTotal.Load(), BytesDone: j.bytesDone.Load(),
 		Started: j.started.UTC().Format(time.RFC3339), Phase: j.phase,
-		Name: j.name, Folder: j.folder}
+		Name: j.name, Folder: j.folder,
+		ConvertDone: j.convertDone / 1000, ConvertTotal: j.convertTotal / 1000, ConvertSpeed: j.convertSpeed}
 	if j.state == jobReady {
 		view.Images = j.offer
 	}
-	if j.state == jobRunning {
+	if j.state == jobRunning && j.phase != fetchConverting {
 		view.BytesPerSecond = int64(j.rateAt(time.Now(), view.BytesDone))
 	}
 	if !j.finished.IsZero() {
@@ -207,6 +225,22 @@ func (j *registryJob) downloading() {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.phase = fetchDownloading
+}
+
+// converting says a video or audio fetch is past its download and joins or
+// converts what it downloaded.
+func (j *registryJob) converting() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.phase = fetchConverting
+}
+
+// converted says how far ffmpeg has converted the audio of a fetch, out of
+// total, in microseconds, and how many times faster than it plays.
+func (j *registryJob) converted(done, total int64, speed float64) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.convertDone, j.convertTotal, j.convertSpeed = done, total, speed
 }
 
 // dismiss forgets a job for the page, stopping it first if it runs. It

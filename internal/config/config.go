@@ -159,7 +159,7 @@ type Tools struct {
 	// Empty looks for it.
 	YtDlp string `toml:"ytDlp"`
 	// FFmpeg is the path to ffmpeg, which yt-dlp uses to join the best video
-	// with the best audio and to turn audio into MP3. Without it a video is
+	// with the best audio, and Fetch to turn audio into MP3. Without it a video is
 	// fetched as the best single file the site offers, and audio as the
 	// site sends it. Empty looks for it.
 	FFmpeg string `toml:"ffmpeg"`

@@ -1,7 +1,6 @@
 package httpd
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -24,6 +23,8 @@ import (
 // server runs yt-dlp, which general.tools names or go-fs found, with ffmpeg
 // where there is one: it downloads into a folder of its own in the staging
 // folder, and the one file it ends up with is stored like any fetched file.
+// An audio to be an MP3 is converted by go-fs's own run of ffmpeg, whose
+// progress the job shows, see fetch_media_ffmpeg.go.
 // What the page sees is the same job as a plain fetch: the progress, Stop and
 // the Transfers in the header.
 //
@@ -89,7 +90,8 @@ func mediaArgs(set *settings, fetch fetchRequest, work string) []string {
 	}
 	switch {
 	case fetch.media == mediaAudio && ffmpeg.Found():
-		args = append(args, "-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0")
+		// the audio as the site sends it, which toMP3 converts afterwards
+		args = append(args, "-f", "ba/b")
 	case fetch.media == mediaAudio:
 		// without ffmpeg nothing can be converted, so the audio is taken as
 		// the site sends it, M4A where it offers that
@@ -147,14 +149,17 @@ func (s *Server) fetchMedia(ctx context.Context, set *settings, job *registryJob
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	run := &mediaRun{job: job, cancel: cancel}
-	if err := run.ytDlp(runCtx, set.cfg.YtDlp.Path, mediaArgs(set, fetch, work)); err != nil {
+	failed := func(err error) error {
 		if cause := context.Cause(runCtx); errors.Is(cause, errStalled) {
-			return "", fmt.Errorf("%s from %s: %w", job.view().Name, fetch.url.Host, errStalled)
+			return fmt.Errorf("%s from %s: %w", job.view().Name, fetch.url.Host, errStalled)
 		}
 		if ctx.Err() != nil {
-			return "", ctx.Err()
+			return ctx.Err()
 		}
-		return "", err
+		return err
+	}
+	if err := run.ytDlp(runCtx, set.cfg.YtDlp.Path, mediaArgs(set, fetch, work)); err != nil {
+		return "", failed(err)
 	}
 	if run.tooLarge() {
 		return "", fetchTooLarge(job.view().Name, set.cfg.MaxUploadSize)
@@ -163,6 +168,11 @@ func (s *Server) fetchMedia(ctx context.Context, set *settings, job *registryJob
 	staged, err := mediaFile(work)
 	if err != nil {
 		return "", err
+	}
+	if fetch.media == mediaAudio && set.cfg.FFmpeg.Found() {
+		if staged, err = run.toMP3(runCtx, set.cfg.FFmpeg.Path, staged); err != nil {
+			return "", failed(err)
+		}
 	}
 	name := cleanFetchedName(filepath.Base(staged))
 	if name == "" {
@@ -302,14 +312,7 @@ func (m *mediaRun) ytDlp(ctx context.Context, program string, args []string) err
 
 // read takes what yt-dlp prints, line by line.
 func (m *mediaRun) read(r io.Reader, isStderr bool) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
-	for scanner.Scan() {
-		m.line(scanner.Text(), isStderr)
-	}
-	// a line longer than the buffer stops the scanner; what is left is
-	// read and dropped, so that yt-dlp is not blocked writing it
-	_, _ = io.Copy(io.Discard, r)
+	scanLines(r, func(line string) { m.line(line, isStderr) })
 }
 
 func (m *mediaRun) line(line string, isStderr bool) {
@@ -332,13 +335,10 @@ func (m *mediaRun) line(line string, isStderr bool) {
 		strings.HasPrefix(line, "[VideoConvertor]"), strings.HasPrefix(line, "[Fixup"):
 		m.local = true
 		m.timer.Stop()
+		m.job.converting()
 	}
 	if isStderr {
-		m.stderr = append(m.stderr, line...)
-		m.stderr = append(m.stderr, '\n')
-		if over := len(m.stderr) - mediaStderrTail; over > 0 {
-			m.stderr = m.stderr[over:]
-		}
+		m.stderr = appendTail(m.stderr, line)
 	}
 }
 
@@ -377,12 +377,7 @@ func (m *mediaRun) progress(fields string) {
 // lastStderr is the last line yt-dlp said on stderr, for a failure it gave
 // no ERROR line for. The caller holds m.mu.
 func (m *mediaRun) lastStderr() string {
-	lines := strings.Split(strings.TrimSpace(string(m.stderr)), "\n")
-	line := strings.TrimSpace(lines[len(lines)-1])
-	if len(line) > 300 {
-		line = line[:300] + "…"
-	}
-	return line
+	return tailLine(m.stderr)
 }
 
 func (m *mediaRun) tooLarge() bool {
