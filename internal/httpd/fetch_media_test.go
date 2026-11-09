@@ -41,9 +41,19 @@ func TestMain(m *testing.M) {
 // and writes the output, whose content is the input's and the arguments it
 // was run with.
 func fakeFFmpeg(mode string, args []string) int {
+	inputs := 0
+	for _, arg := range args {
+		if arg == "-i" {
+			inputs++
+		}
+	}
 	if mode == "fail" {
 		fmt.Fprintln(os.Stderr, "Input #0, matroska,webm, from 'in.webm':")
 		fmt.Fprintln(os.Stderr, "file:in.webm: Invalid data found when processing input")
+		return 1
+	}
+	if mode == "cover-fail" && inputs > 1 {
+		fmt.Fprintln(os.Stderr, "file:cover.webp: Invalid data found when processing input")
 		return 1
 	}
 	fmt.Fprintln(os.Stderr, "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'in.m4a':")
@@ -61,7 +71,8 @@ func fakeFFmpeg(mode string, args []string) int {
 	fmt.Print("out_time_us=100000000\nspeed= 20x\nprogress=end\n")
 	var in string
 	for i, arg := range args {
-		if arg == "-i" && i+1 < len(args) {
+		if arg == "-i" && i+1 < len(args) && in == "" {
+			// the audio, before any cover
 			in = strings.TrimPrefix(args[i+1], "file:")
 		}
 	}
@@ -137,6 +148,24 @@ func fakeYtDlp(mode string, args []string) int {
 	if has("--merge-output-format") {
 		fmt.Println("[Merger] Merging formats into \"" + filepath.Join(dir, "A Song [abc123]."+ext) + "\"")
 	}
+	if mode != "nometa" {
+		// what yt-dlp writes beside the download when it is asked to
+		if file := value("--print-to-file"); file != "" {
+			for i, arg := range args {
+				if arg == "--print-to-file" && i+2 < len(args) {
+					file = args[i+2]
+				}
+			}
+			_ = os.MkdirAll(filepath.Dir(filepath.Join(dir, file)), 0o700)
+			fields := `{"title": "A Song | Live", "artist": null, "artists": null, "uploader": "Jawed",` +
+				` "upload_date": "20260131", "webpage_url": "https://www.youtube.com/watch?v=abc123"}`
+			_ = os.WriteFile(filepath.Join(dir, file), []byte(fields+"\n"), 0o600)
+		}
+		if has("--write-thumbnail") {
+			_ = os.MkdirAll(filepath.Join(dir, mediaMeta), 0o700)
+			_ = os.WriteFile(filepath.Join(dir, mediaMeta, "cover.webp"), []byte("RIFF....WEBP"), 0o600)
+		}
+	}
 	name := "A Song [abc123]." + ext
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(strings.Join(args, "\n")), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
@@ -190,13 +219,21 @@ func TestMediaFetchStoresWhatYtDlpMade(t *testing.T) {
 		notArgs    []string
 	}{
 		{mediaVideo, true, "A Song [abc123].mp4",
-			[]string{"bv*+ba/b", "--merge-output-format", "--ffmpeg-location\n" + testBinary(t)}, []string{"--ffmpeg--"}},
+			[]string{"bv*+ba/b", "--merge-output-format", "--ffmpeg-location\n" + testBinary(t)},
+			[]string{"--ffmpeg--", "--write-thumbnail", "--print-to-file"}},
 		{mediaVideo, false, "A Song [abc123].mp4", []string{"-f\nb\n"}, []string{"--ffmpeg-location"}},
-		// yt-dlp downloads the audio as it is, and go-fs has ffmpeg convert it
+		// yt-dlp downloads the audio as it is, with the thumbnail and the
+		// fields of the video beside it, and go-fs has ffmpeg convert and tag it
 		{mediaAudio, true, "A Song [abc123].mp3",
-			[]string{"-f\nba/b\n", "--ffmpeg--", "libmp3lame", "-q:a\n0", "-progress\npipe:1", ".m4a\n", ".mp3.part"},
-			[]string{"-x\n", "--audio-format"}},
-		{mediaAudio, false, "A Song [abc123].m4a", []string{"ba[ext=m4a]/ba"}, []string{"-x", "--ffmpeg-location"}},
+			[]string{"-f\nba/b\n", "--write-thumbnail", "thumbnail:meta/cover.%(ext)s", "--print-to-file\n%(.{title,",
+				"--ffmpeg--", "libmp3lame", "-q:a\n0", "-progress\npipe:1", ".m4a\n", ".mp3.part",
+				"/meta/cover.webp\n-map\n0:a:0\n-map\n1:v:0", "crop='min(iw,ih)':'min(iw,ih)'", "attached_pic",
+				"-map_metadata\n-1\n-id3v2_version\n3",
+				"-metadata\ntitle=A Song | Live\n", "-metadata\nartist=Jawed\n", "-metadata\ndate=2026\n",
+				"-metadata\ncomment=" + youTubeURL + "\n"},
+			[]string{"-x\n", "--audio-format", "-metadata\nalbum="}},
+		{mediaAudio, false, "A Song [abc123].m4a", []string{"ba[ext=m4a]/ba"},
+			[]string{"-x", "--ffmpeg-location", "--write-thumbnail", "--print-to-file"}},
 	} {
 		t.Run(fmt.Sprintf("%s ffmpeg=%v", test.media, test.withFFmpeg), func(t *testing.T) {
 			server := mediaServer(t, "ok", test.withFFmpeg, nil)
@@ -424,16 +461,101 @@ func TestMediaFetchSaysWhyFFmpegFailed(t *testing.T) {
 	}
 }
 
-// TestMediaFetchTakesAnMP3AsItIs checks that an audio the site sends as an
-// MP3 is not converted again: an ffmpeg that fails is never run.
-func TestMediaFetchTakesAnMP3AsItIs(t *testing.T) {
-	t.Setenv(fakeFFmpegMode, "fail")
+// TestMediaFetchTagsAnMP3WithoutConverting checks that an audio the site
+// sends as an MP3 is copied, not converted again, for its tags and cover.
+func TestMediaFetchTagsAnMP3WithoutConverting(t *testing.T) {
 	server := mediaServer(t, "mp3", true, nil)
 	session := login(t, server, "/", "john", "doe")
 	job := fetched(t, server, "/", session, fetchBody{URL: youTubeURL, Media: mediaAudio})
 	expectDone(t, job)
-	if content := server.read(t, "A Song [abc123].mp3"); strings.Contains(content, "--ffmpeg--") {
-		t.Errorf("the MP3 was converted:\n%s", content)
+	content := server.read(t, "A Song [abc123].mp3")
+	for _, want := range []string{"--ffmpeg--", "-c:a\ncopy\n", "attached_pic", "-metadata\ntitle=A Song | Live\n"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("ffmpeg was not given %q:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "libmp3lame") {
+		t.Errorf("the MP3 was converted again:\n%s", content)
+	}
+}
+
+// TestMediaFetchWithoutWhatYtDlpKnows checks that an MP3 is made where
+// yt-dlp wrote no thumbnail and no fields, with no cover and no tags.
+func TestMediaFetchWithoutWhatYtDlpKnows(t *testing.T) {
+	server := mediaServer(t, "nometa", true, nil)
+	session := login(t, server, "/", "john", "doe")
+	job := fetched(t, server, "/", session, fetchBody{URL: youTubeURL, Media: mediaAudio})
+	expectDone(t, job)
+	_, ffmpeg, _ := strings.Cut(server.read(t, "A Song [abc123].mp3"), "--ffmpeg--")
+	if strings.Contains(ffmpeg, "-metadata\n") || strings.Contains(ffmpeg, "attached_pic") ||
+		strings.Count(ffmpeg, "\n-i\n") != 1 {
+		t.Errorf("ffmpeg was given tags or a cover:\n%s", ffmpeg)
+	}
+}
+
+// TestMediaFetchLeavesOutACoverFFmpegRefuses checks that a thumbnail ffmpeg
+// cannot read costs the MP3 its cover, but not the fetch.
+func TestMediaFetchLeavesOutACoverFFmpegRefuses(t *testing.T) {
+	t.Setenv(fakeFFmpegMode, "cover-fail")
+	server := mediaServer(t, "ok", true, nil)
+	session := login(t, server, "/", "john", "doe")
+	job := fetched(t, server, "/", session, fetchBody{URL: youTubeURL, Media: mediaAudio})
+	expectDone(t, job)
+	_, ffmpeg, _ := strings.Cut(server.read(t, "A Song [abc123].mp3"), "--ffmpeg--")
+	if strings.Contains(ffmpeg, "attached_pic") || !strings.Contains(ffmpeg, "-metadata\ntitle=A Song | Live\n") {
+		t.Errorf("the second run of ffmpeg was given:\n%s", ffmpeg)
+	}
+}
+
+func TestMediaTags(t *testing.T) {
+	for _, test := range []struct {
+		json string
+		want mediaTags
+	}{
+		{`{"title": "Me at the zoo", "artist": null, "uploader": "jawed", "channel": "jawed",` +
+			` "upload_date": "20050424", "webpage_url": "https://www.youtube.com/watch?v=jNQXAC9IVRw"}`,
+			mediaTags{Title: "Me at the zoo", Artist: "jawed", Date: "2005",
+				Comment: "https://www.youtube.com/watch?v=jNQXAC9IVRw"}},
+		// YouTube Music knows the track, its artists and album
+		{`{"title": "Song (Official Video)", "track": "Song", "artists": ["A", "B"], "uploader": "A - Topic",` +
+			` "album": "Album", "album_artist": "A", "track_number": 3, "release_year": 2019,` +
+			` "release_date": "20190301", "upload_date": "20200101"}`,
+			mediaTags{Title: "Song", Artist: "A, B", AlbumArtist: "A", Album: "Album", Track: "3", Date: "2019"}},
+		{`{"title": "Live\nSet", "creator": "C", "uploader": "U", "release_date": "20210515"}`,
+			mediaTags{Title: "Live Set", Artist: "C", Date: "2021"}},
+		{`{"title": "NA", "channel": "Ch", "upload_date": "NA"}`, mediaTags{Artist: "Ch"}},
+		{`not json`, mediaTags{}},
+	} {
+		work := t.TempDir()
+		_ = os.MkdirAll(filepath.Join(work, mediaMeta), 0o700)
+		if err := os.WriteFile(filepath.Join(work, mediaMeta, "tags.json"), []byte(test.json+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := readMediaTags(work); got != test.want {
+			t.Errorf("%s\nmade %+v\nwant %+v", test.json, got, test.want)
+		}
+	}
+	if got := readMediaTags(t.TempDir()); got != (mediaTags{}) {
+		t.Errorf("without a file the tags are %+v", got)
+	}
+}
+
+func TestFindCover(t *testing.T) {
+	work := t.TempDir()
+	if findCover(work) != "" {
+		t.Error("a cover was found without meta/")
+	}
+	meta := filepath.Join(work, mediaMeta)
+	_ = os.MkdirAll(meta, 0o700)
+	_ = os.WriteFile(filepath.Join(meta, "tags.json"), []byte("{}"), 0o600)
+	_ = os.WriteFile(filepath.Join(meta, "cover.webp.part"), []byte("x"), 0o600)
+	_ = os.WriteFile(filepath.Join(meta, "cover.jpg"), nil, 0o600)
+	if got := findCover(work); got != "" {
+		t.Errorf("found %s among an empty cover and a part", got)
+	}
+	_ = os.WriteFile(filepath.Join(meta, "cover.jpg"), []byte("x"), 0o600)
+	if got := findCover(work); got != filepath.Join(meta, "cover.jpg") {
+		t.Errorf("found %q", got)
 	}
 }
 
@@ -441,7 +563,11 @@ func TestMediaConversionReadsFFmpeg(t *testing.T) {
 	job := &registryJob{}
 	conv := &mediaConversion{job: job, timer: time.AfterFunc(time.Hour, func() {})}
 	defer conv.timer.Stop()
-	for _, line := range []string{"Input #0, matroska,webm, from 'x.webm':",
+	conv.input = -1
+	// the Duration of a cover, input 1, is not that of the audio
+	for _, line := range []string{"  Duration: 00:00:02.00, start: 0.000000",
+		"Input #1, webp_pipe, from 'cover.webp':", "  Duration: N/A, bitrate: N/A",
+		"Input #0, matroska,webm, from 'x.webm':", "  Metadata:", "    DURATION        : 01:02:03.50",
 		"  Duration: 01:02:03.50, start: -0.007000, bitrate: 131 kb/s",
 		"Output #0, mp3, to 'x.mp3.part':", "  Duration: 00:00:01.00, start: 0.000000"} {
 		conv.said(line)

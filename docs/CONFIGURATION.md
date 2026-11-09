@@ -145,7 +145,7 @@ next reload, by saving the configuration, or at the next start.
 | Program | Used for |
 |---|---|
 | `ytDlp` | **Video** and **Audio only** in the Fetch dialog, see [Video and audio](BROWSER.md#video-and-audio) |
-| `ffmpeg` | the best video joined with the best audio by yt-dlp, and audio converted to MP3 by go-fs with its progress shown; without it the best single file |
+| `ffmpeg` | the best video joined with the best audio by yt-dlp, and audio converted to a tagged MP3 with the thumbnail as cover by go-fs, with its progress shown; without it the best single file |
 
 ## Reloading
 

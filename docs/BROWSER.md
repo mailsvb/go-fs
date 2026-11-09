@@ -632,7 +632,18 @@ What is fetched depends on whether go-fs also found ffmpeg:
 | | with ffmpeg | without ffmpeg |
 |---|---|---|
 | Video | the best video and the best audio, joined into an `.mp4` | the best single file that holds both, often of a lower resolution |
-| Audio only | the best audio, converted to an `.mp3` of the highest VBR quality | the best audio as the site sends it, an `.m4a` where it offers one |
+| Audio only | the best audio, converted to an `.mp3` of the highest VBR quality, tagged and with a cover | the best audio as the site sends it, an `.m4a` where it offers one |
+
+The `.mp3` is tagged (ID3v2.3) with what yt-dlp knows of the video: the
+title, or the track where the site names one; the artist, which most videos
+do not name, so their channel stands in for it; the album, its artist and
+the track number where the site has them, as YouTube Music does; the year it
+was released, or else uploaded; and the address of the video as the comment.
+Its cover is the thumbnail of the video, cut to the square in its middle. An
+audio the site sends as an MP3 already is tagged without being converted
+again, and a thumbnail ffmpeg cannot read leaves the file without a cover
+rather than fail the fetch. The tags can be changed afterwards with
+[Edit MP3 Tag…](#editing-mp3-tags).
 
 The file is named `Title [id].ext` after the video, and lands in the folder
 under the rules of any fetch: created where the account may create, replacing

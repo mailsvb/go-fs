@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
@@ -90,8 +91,12 @@ func mediaArgs(set *settings, fetch fetchRequest, work string) []string {
 	}
 	switch {
 	case fetch.media == mediaAudio && ffmpeg.Found():
-		// the audio as the site sends it, which toMP3 converts afterwards
-		args = append(args, "-f", "ba/b")
+		// the audio as the site sends it, which toMP3 converts afterwards,
+		// and beside it in meta/ the thumbnail and what is known of the
+		// video, which toMP3 makes the cover and the tags of the MP3
+		args = append(args, "-f", "ba/b",
+			"--write-thumbnail", "-o", "thumbnail:"+mediaMeta+"/cover.%(ext)s",
+			"--print-to-file", mediaTagsTemplate, mediaMeta+"/tags.json")
 	case fetch.media == mediaAudio:
 		// without ffmpeg nothing can be converted, so the audio is taken as
 		// the site sends it, M4A where it offers that
@@ -148,7 +153,7 @@ func (s *Server) fetchMedia(ctx context.Context, set *settings, job *registryJob
 
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	run := &mediaRun{job: job, cancel: cancel}
+	run := &mediaRun{job: job, cancel: cancel, log: s.log}
 	failed := func(err error) error {
 		if cause := context.Cause(runCtx); errors.Is(cause, errStalled) {
 			return fmt.Errorf("%s from %s: %w", job.view().Name, fetch.url.Host, errStalled)
@@ -170,7 +175,7 @@ func (s *Server) fetchMedia(ctx context.Context, set *settings, job *registryJob
 		return "", err
 	}
 	if fetch.media == mediaAudio && set.cfg.FFmpeg.Found() {
-		if staged, err = run.toMP3(runCtx, set.cfg.FFmpeg.Path, staged); err != nil {
+		if staged, err = run.toMP3(runCtx, set.cfg.FFmpeg.Path, work, staged); err != nil {
 			return "", failed(err)
 		}
 	}
@@ -242,6 +247,7 @@ func mediaFile(work string) (string, error) {
 type mediaRun struct {
 	job    *registryJob
 	cancel context.CancelCauseFunc
+	log    *slog.Logger
 
 	mu sync.Mutex
 	// begun says the first progress line came, which is when the dialog
