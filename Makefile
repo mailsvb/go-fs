@@ -87,7 +87,7 @@ LINUX_DISKS    := baseFolderDisks = "/var/lib/go-fs/disks"
 WINDOWS_DISKS  := baseFolderDisks = "C:/ProgramData/go-fs/disks"
 
 .PHONY: all build test race cover fuzz vet fmt lint clean release sign checksums version \
-	packages rpm msi-inputs viewer-deps viewer-update
+	packages rpm msi-inputs docker-inputs docker viewer-deps viewer-update
 
 all: vet test build
 
@@ -259,3 +259,29 @@ msi-inputs: viewer-deps
 				-ldflags "-s -w -X main.version=$(VERSION) -X main.packaging=msi" -o $$bin . || exit 1; \
 		done; \
 	done
+
+# What packaging/docker/Dockerfile builds the container image from, and all it
+# sees: the linux/amd64 binary stamped as the image's, so that it leaves
+# updating to a newer image, the configuration of the rpm with every server
+# listening on all interfaces, since a published port does not reach
+# 127.0.0.1 inside the container, the entrypoint and the licence.
+DOCKER     := $(PKG)/docker
+LOOPBACK   := address = "127.0.0.1"
+ALL_IFACES := address = ""
+
+docker-inputs: viewer-deps
+	$(call installerconfig,$(LINUX_BASEFOLDER),$(DOCKER)/go-fs.toml,$(LINUX_REGISTRY),$(LINUX_TEMP),$(LINUX_TRASH),$(LINUX_DISKS))
+	@grep -qxF '$(LOOPBACK)' $(DOCKER)/go-fs.toml || \
+		(echo "$(TEMPLATE) has no line $(LOOPBACK)"; exit 1)
+	@sed -i.bak 's|^$(LOOPBACK)$$|$(ALL_IFACES)|' $(DOCKER)/go-fs.toml && rm -f $(DOCKER)/go-fs.toml.bak
+	@echo "building $(DOCKER)/$(BINARY)"
+	@GOOS=linux GOARCH=amd64 $(BUILDENV) go build $(GOFLAGS) \
+		-ldflags "-s -w -X main.version=$(VERSION) -X main.packaging=docker" \
+		-o $(DOCKER)/$(BINARY) .
+	@cp packaging/docker/entrypoint.sh LICENSE $(DOCKER)/
+
+# docker builds the image locally as go-fs:VERSION; the release workflow
+# builds and pushes it itself from the same inputs.
+docker: docker-inputs
+	docker build --platform linux/amd64 --build-arg VERSION=$(VERSION) \
+		-f packaging/docker/Dockerfile -t $(BINARY):$(VERSION) $(DOCKER)

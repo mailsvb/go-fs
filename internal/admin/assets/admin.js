@@ -272,10 +272,11 @@ function updatePanel(index) {
   latest.id = "release";
   latest.className = "release";
   if (update.managedBy) {
-    // a package owns the executable, and only its newer version replaces it
+    // a package or an image owns the executable, and only its newer version
+    // replaces it
     element.append(
       paragraph("Running go-fs " + update.version + " for " + update.os + "/" + update.arch
-        + " from " + update.executable + ", installed by the " + update.managedBy + " package.",
+        + " from " + update.executable + ", " + managedOrigin() + ".",
         "update-current"),
       latest,
       paragraph(managedHelp(), "section-help"));
@@ -321,9 +322,21 @@ function updatePanel(index) {
   return element;
 }
 
+// managedOrigin says what put the executable of a managed go-fs in place.
+function managedOrigin() {
+  if (update.managedBy === "docker") return "from the container image";
+  return "installed by the " + update.managedBy + " package";
+}
+
 // managedHelp says how a go-fs that a package installed is updated: by the
-// package of the newer release, which keeps the configuration as it is.
+// package of the newer release, which keeps the configuration as it is. A
+// container is updated by the image of the newer release, and keeps the
+// configuration in its volume.
 function managedHelp() {
+  if (update.managedBy === "docker") {
+    return "Updates come as a new container image: docker pull ghcr.io/mailsvb/go-fs:latest, "
+      + "then recreate the container; the configuration in the /etc/go-fs volume is kept.";
+  }
   return "Updates come as a new " + update.managedBy + " package from the go-fs repository: "
     + "zypper update go-fs or dnf upgrade go-fs, which restarts the service; the configuration "
     + "file is kept.";
@@ -384,7 +397,9 @@ function showRelease() {
   const status = paragraph("go-fs " + info.version + " is available" + when + " (", "release-status release-new");
   status.append(notes, ").");
   if (update.managedBy) {
-    status.append(" Install it with its " + update.managedBy + " package, it cannot be installed from here.");
+    status.append(update.managedBy === "docker"
+      ? " Pull its container image, it cannot be installed from here."
+      : " Install it with its " + update.managedBy + " package, it cannot be installed from here.");
     holder.replaceChildren(status, again);
     return;
   }

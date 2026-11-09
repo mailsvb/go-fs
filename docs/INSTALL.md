@@ -20,6 +20,9 @@ configuration as it is; [Updating over HTTP](#updating-over-http) refuses to
 replace a binary the rpm installed. An msi install updates itself from the
 GitHub releases, see [Windows: msi](#windows-msi).
 
+Every release is also a container image for linux/amd64,
+`ghcr.io/mailsvb/go-fs`, see [Linux: Docker](#linux-docker).
+
 ### Linux: rpm
 
 The rpms are signed, and served as a zypper and dnf repository from GitHub
@@ -67,6 +70,70 @@ move to 21, 22, 69, 80 or 443. It keeps `/usr` and `/etc` read-only, except
 `/etc/go-fs`. A folder elsewhere only needs to be readable, or writable, by the
 `go-fs` account. Change the unit with a drop-in rather than by editing it:
 `systemctl edit go-fs`.
+
+### Linux: Docker
+
+Each release is pushed as `ghcr.io/mailsvb/go-fs:<version>`, and, unless it is
+a pre-release, as `:<major>.<minor>` and `:latest`, for linux/amd64 only. It is
+Alpine with go-fs and what [Fetch](BROWSER.md) runs: yt-dlp, the ffmpeg and
+ffprobe it merges and converts with, and deno, which yt-dlp needs for YouTube.
+go-fs finds them by itself, so `general.tools` stays empty. Each image carries
+the yt-dlp that was current when it was built; the label
+`io.github.mailsvb.go-fs.yt-dlp.version` says which.
+
+```shell
+docker volume create go-fs-config
+docker run -d --name go-fs --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  -v go-fs-config:/etc/go-fs \
+  -v /srv/media:/var/lib/go-fs/files \
+  ghcr.io/mailsvb/go-fs:latest
+docker logs -f go-fs                           # the log
+```
+
+The configuration is the rpm's, except that every server listens on all
+interfaces of the container, since a published port does not reach
+`127.0.0.1` inside it. Publish the HTTP port on `127.0.0.1` of the host, as
+above, until the password of `admin` is changed at
+`http://127.0.0.1:8080/?go-fs=admin`. Arguments after the image name are
+passed on to go-fs, such as `-logfile`.
+
+| Path | What |
+|---|---|
+| `/usr/bin/go-fs` | the binary |
+| `/etc/go-fs/go-fs.toml` | the configuration, and `go-fs.db` beside it, a volume |
+| `/var/lib/go-fs/files` | the folder the configuration serves |
+| `/var/lib/go-fs/registry` | the folder of the container registry |
+| `/var/lib/go-fs/trash` | the trash, what is deleted over HTTP and WebDAV |
+
+Both `/etc/go-fs` and `/var/lib/go-fs` are volumes. Mount a folder at
+`/etc/go-fs`, never the file alone: go-fs saves the configuration by renaming
+a new file over it, which a file mounted on its own refuses. An empty folder
+is given the starter configuration at the first start.
+
+go-fs runs as the account `go-fs`, UID and GID 10001, so a folder of the host
+mounted into the container must be writable by that UID, for example with
+`chown -R 10001:10001 /srv/media`. Or run it as the owner of the host's
+folders with `--user 1000:1000`, and mount folders of that owner at both
+`/etc/go-fs` and `/var/lib/go-fs`, since those of the image belong to 10001;
+go-fs makes the folders of `[general]` it is missing itself.
+
+A server other than HTTP also needs its port published once it is switched
+on: `-p 8443:8443`, `-p 8022:8022`, `-p 8069:8069/udp` and so on. Passive FTP
+needs the whole range, `-p 1024-1034:1024-1034` by default, and
+`ftp.passiveAddress` set to the address of the host, since the container's own
+is not one a client can reach. Finding Sonos speakers and announcing the
+Jellyfin server use multicast on the local network, which reaches a container
+only with `--network host`; then no `-p` is needed.
+
+An image is updated by the image of the newer release, and keeps what is in
+its volumes. [Updating over HTTP](#updating-over-http) refuses to replace the
+binary of an image, which recreating the container would undo.
+
+```shell
+docker pull ghcr.io/mailsvb/go-fs:latest
+docker rm -f go-fs && docker run -d --name go-fs ...  # as before
+```
 
 ### Windows: msi
 

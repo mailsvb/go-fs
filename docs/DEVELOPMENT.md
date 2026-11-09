@@ -13,6 +13,7 @@ make race           # the test suite under the race detector
 make release        # the signed .update files of a release into dist/ with checksums
 make sign           # signed .update files for the binaries in dist/
 make packages       # the rpm packages into dist/, and what the msi is built from
+make docker         # the container image for linux/amd64, as go-fs:<version>
 make viewer-deps    # the libraries of the document viewer, which every target above fetches first
 make viewer-update  # pin the latest versions of those libraries, then fetch them
 ```
@@ -21,6 +22,16 @@ make viewer-update  # pin the latest versions of those libraries, then fetch the
 arm64 and for windows on amd64, the platforms a release has a package for. Builds use `CGO_ENABLED=0`,
 so the binary is fully static and carries no host dependencies. Any other
 platform Go supports builds with a plain `GOOS=… GOARCH=… go build .`.
+
+`make docker` builds the container image from `packaging/docker/Dockerfile`.
+`make docker-inputs` first puts all the build sees into `build/pkg/docker`: the
+linux/amd64 binary stamped `-X main.packaging=docker`, which refuses to update
+itself over HTTP, the starter configuration listening on all interfaces, the
+entrypoint and the licence. The Dockerfile adds Alpine's ffmpeg, ffprobe and
+deno and the standalone yt-dlp, checked against the checksums of its release;
+`--build-arg YTDLP_VERSION=` picks another one. The release workflow builds the
+image after publishing the release, with the latest yt-dlp, starts it once to
+check that it answers, and pushes it to `ghcr.io/mailsvb/go-fs`.
 
 ## The libraries of the document viewer
 

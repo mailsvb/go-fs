@@ -41,9 +41,10 @@ var baseVersion string
 // to the embedded version below.
 var version string
 
-// packaging names the installer a build is made for, rpm or msi, stamped with
-// -ldflags "-X main.packaging=...". The rpm owns the executable, so the self
-// update leaves it alone; an msi install updates itself from the releases.
+// packaging names the installer a build is made for, rpm, msi or docker,
+// stamped with -ldflags "-X main.packaging=...". The rpm owns the executable,
+// and a container loses a replaced one when it is recreated, so the self
+// update leaves both alone; an msi install updates itself from the releases.
 // Empty for the plain binaries.
 var packaging string
 
@@ -196,16 +197,16 @@ func run(stop <-chan struct{}) error {
 		return err
 	}
 	updater := selfupdate.New(currentVersion(), keys)
-	if packaging == "rpm" {
+	if packaging == "rpm" || packaging == "docker" {
 		updater.SetManagedBy(packaging)
 	}
 	// a staged update a crash never applied is removed
 	updater.CleanupOld()
 	switch {
 	case cfg.HTTP.EnableSelfUpdate && updater.Current().ManagedBy != "":
-		logger.Warn("http.enableSelfUpdate is set, but this go-fs was installed by the "+
-			packaging+" package, so every update over http is refused; update the "+
-			"package instead", "installer", packaging)
+		logger.Warn("http.enableSelfUpdate is set, but this go-fs "+managedHow(packaging)+
+			", so every update over http is refused; "+managedUpdate(packaging),
+			"installer", packaging)
 	case cfg.HTTP.EnableSelfUpdate && len(keys) == 0:
 		logger.Warn("http.enableSelfUpdate is set, but this build trusts no update " +
 			"signing key, so every update will be refused")
@@ -354,4 +355,20 @@ func warnAboutSecrets(logger *slog.Logger, path string, cfg config.Config) {
 			"holds every password and every private key of this server",
 			"path", path, "mode", fmt.Sprintf("%04o", mode), "suggested", "0600")
 	}
+}
+
+// managedHow says what put the executable of a managed build in place.
+func managedHow(installer string) string {
+	if installer == "docker" {
+		return "runs from a container image"
+	}
+	return "was installed by the " + installer + " package"
+}
+
+// managedUpdate says how a managed build is updated instead.
+func managedUpdate(installer string) string {
+	if installer == "docker" {
+		return "pull the newer image and recreate the container instead"
+	}
+	return "update the package instead"
 }

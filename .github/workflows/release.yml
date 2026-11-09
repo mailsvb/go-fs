@@ -209,6 +209,119 @@ jobs:
           generate_release_notes: true
           files: dist/*
 
+  # The container image, for linux/amd64, pushed to ghcr.io once the release
+  # is published. It is a job here rather than a workflow of its own started
+  # by the release: a release published with the GITHUB_TOKEN starts no other
+  # workflow. A failed push is retried by re-running this job.
+  docker:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # the tag publish made, so that the image is built from the commit
+      # whose VERSION says what is released, not the one the run started on
+      - uses: actions/checkout@v7
+        with:
+          ref: v${{ inputs.version }}
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: fetch the viewer libraries
+        run: |
+          go run ./tools/viewer
+          go run ./tools/viewer -check
+
+      # the binary stamped as the image's, its configuration, the entrypoint
+      # and the licence, which are all the build sees
+      - name: make docker-inputs
+        run: make docker-inputs VERSION=${{ inputs.version }}
+
+      # YouTube breaks an old yt-dlp quickly, so every image carries the
+      # latest one; the Dockerfile checks it against the release's checksums
+      - name: image name and versions
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/go-fs"
+          ytdlp=$(gh release view --repo yt-dlp/yt-dlp --json tagName -q .tagName)
+          minor=$(echo "$VERSION" | cut -d. -f1,2)
+          {
+            echo "ytdlp=$ytdlp"
+            echo "tags<<EOF"
+            echo "$image:$VERSION"
+            # a pre-release, such as 1.0.0-rc1, moves neither the minor
+            # version's tag nor latest
+            if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "$image:$minor"
+              echo "$image:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # built into the local docker first, so that an image that does not
+      # start is never pushed
+      - name: build the image
+        uses: docker/build-push-action@v7
+        with:
+          context: build/pkg/docker
+          file: packaging/docker/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ inputs.version }}
+            YTDLP_VERSION=${{ steps.meta.outputs.ytdlp }}
+          load: true
+          tags: go-fs:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # go-fs starts on the configuration the image ships, answers on the
+      # published port and knows it runs from an image; the tools of Fetch run
+      - name: test the image
+        run: |
+          docker run -d --name go-fs-test -p 127.0.0.1:8080:8080 go-fs:test
+          for _ in $(seq 30); do
+            curl -fsS -o /dev/null http://127.0.0.1:8080/ && break
+            sleep 1
+          done
+          logs=$(docker logs go-fs-test 2>&1)
+          echo "$logs"
+          curl -fsS -o /dev/null http://127.0.0.1:8080/
+          grep -q 'go-fs starting' <<<"$logs"
+          grep -qE 'installer"?[=:]"?docker' <<<"$logs"
+          docker rm -f go-fs-test
+          docker run --rm --entrypoint ffmpeg go-fs:test -version | sed -n 1p
+          docker run --rm --entrypoint ffprobe go-fs:test -version | sed -n 1p
+          docker run --rm --entrypoint deno go-fs:test --version | sed -n 1p
+          docker run --rm --entrypoint yt-dlp go-fs:test --version
+
+      # the same build again, from the cache, pushed under every tag
+      - name: push the image
+        uses: docker/build-push-action@v7
+        with:
+          context: build/pkg/docker
+          file: packaging/docker/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ inputs.version }}
+            YTDLP_VERSION=${{ steps.meta.outputs.ytdlp }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+
   # The zypper/dnf repository on GitHub Pages, rebuilt from the rpms of the
   # five newest releases, so older versions drop out. Pages must be set to
   # deploy from GitHub Actions.

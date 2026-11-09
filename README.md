@@ -49,6 +49,13 @@ On Windows:
 msiexec /i go-fs-<version>-x64.msi   # offers to open the admin page when done
 ```
 
+As a container, for linux/amd64, with yt-dlp and ffmpeg for Fetch
+([details](docs/INSTALL.md#linux-docker)):
+
+```sh
+docker run -d -p 127.0.0.1:8080:8080 -v go-fs-config:/etc/go-fs ghcr.io/mailsvb/go-fs:latest
+```
+
 ## Run it
 
 ```sh
