@@ -275,6 +275,27 @@ func TestPlaySetsTheFileAndPlaysIt(t *testing.T) {
 	}
 }
 
+func TestJoinAndLeave(t *testing.T) {
+	speaker := newFakeSpeaker(t, "RINCON_C01400", "Kitchen")
+	c := New()
+	if err := c.Join(context.Background(), speaker.host(), "RINCON_A01400"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Leave(context.Background(), speaker.host()); err != nil {
+		t.Fatal(err)
+	}
+	calls := speaker.taken()
+	if len(calls) != 2 || calls[0].Action != "SetAVTransportURI" || calls[1].Action != "BecomeCoordinatorOfStandaloneGroup" {
+		t.Fatalf("calls %+v, want SetAVTransportURI and BecomeCoordinatorOfStandaloneGroup", calls)
+	}
+	if join := calls[0].Args; join["InstanceID"] != "0" || join["CurrentURI"] != "x-rincon:RINCON_A01400" || join["CurrentURIMetaData"] != "" {
+		t.Errorf("SetAVTransportURI got %v", join)
+	}
+	if calls[1].Args["InstanceID"] != "0" {
+		t.Errorf("BecomeCoordinatorOfStandaloneGroup got %v", calls[1].Args)
+	}
+}
+
 func TestFaultsAreErrors(t *testing.T) {
 	speaker := newFakeSpeaker(t, "RINCON_B01400", "Bath")
 	speaker.answer("SetAVTransportURI", func(map[string]string) (map[string]string, int) { return nil, 800 })
@@ -409,7 +430,7 @@ func TestStateAndVolume(t *testing.T) {
 		return map[string]string{"CurrentTransportState": "PLAYING"}, 0
 	})
 	speaker.answer("GetPositionInfo", func(map[string]string) (map[string]string, int) {
-		return map[string]string{"TrackURI": "http://x/a.mp3",
+		return map[string]string{"TrackURI": "http://x/a.mp3", "RelTime": "0:01:02", "TrackDuration": "1:00:05",
 			"TrackMetaData": didl("http://x/a.mp3", Track{Title: "Song & Dance", MIME: "audio/mpeg"})}, 0
 	})
 	speaker.answer("GetGroupVolume", func(map[string]string) (map[string]string, int) {
@@ -420,7 +441,7 @@ func TestStateAndVolume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st != (State{Transport: "PLAYING", Title: "Song & Dance", URI: "http://x/a.mp3", Volume: 23}) {
+	if st != (State{Transport: "PLAYING", Title: "Song & Dance", URI: "http://x/a.mp3", Volume: 23, Position: 62, Duration: 3605}) {
 		t.Errorf("state %+v", st)
 	}
 	if err := c.SetGroupVolume(context.Background(), speaker.host(), 140); err != nil {
@@ -430,6 +451,17 @@ func TestStateAndVolume(t *testing.T) {
 	last := calls[len(calls)-2:]
 	if last[0].Action != "SnapshotGroupVolume" || last[1].Action != "SetGroupVolume" || last[1].Args["DesiredVolume"] != "100" {
 		t.Errorf("volume calls %+v", last)
+	}
+}
+
+func TestClock(t *testing.T) {
+	for text, want := range map[string]int{
+		"0:00:00": 0, "0:03:07": 187, "1:00:05": 3605, "0:01:02.500": 62,
+		"NOT_IMPLEMENTED": 0, "": 0, "3:07": 0, "0:x:01": 0, "-1:00:00": 0,
+	} {
+		if got := clock(text); got != want {
+			t.Errorf("clock(%q) = %d, want %d", text, got, want)
+		}
 	}
 }
 

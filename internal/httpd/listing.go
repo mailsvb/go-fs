@@ -389,6 +389,11 @@ type sessionView struct {
 	// that is not it.
 	Page  string
 	Files string
+	// Sonos is what the account has speakers play, as the bar shows it,
+	// JSON, while it plays; see sonos_session.go. The page opens its bar on
+	// it, so that what plays on Sonos is in hand again after the page was
+	// closed.
+	Sonos string
 	// Servers are the stored servers the menu opens, between the registry and
 	// the admin interface, for a session that may browse them; see
 	// mayBrowseRemote. Remote says the page is one of them.

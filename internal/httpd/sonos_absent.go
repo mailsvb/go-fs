@@ -19,4 +19,6 @@ func (s *Server) sonosFile(*settings, *http.Request, vfs.Target) bool { return f
 
 func (s *Server) handleSonos(*settings, http.ResponseWriter, *http.Request, vfs.Target, credential) {}
 
+func (s *Server) sonosSessionOf(credential) string { return "" }
+
 type sonosState struct{}

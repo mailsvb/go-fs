@@ -462,6 +462,50 @@ volume of the whole group. **Search again** looks for speakers again, say after
 rooms were grouped in the Sonos app. The room chosen last is chosen again the
 next time the dialog opens, in the same browser.
 
+### A folder on Sonos
+
+The audio bar at the bottom of the window has a speaker button where Play on
+Sonos is offered. It opens the same dialog on the bar's queue: the file the
+bar plays and the audio files after it, in the order the listing shows them.
+**Play N files** hands the queue to the server, which plays it on the room or
+group chosen, one file after the other, by itself. The browser stops playing,
+and the bar becomes the remote control of the speakers: what they play, how
+far into it, the file's place in the queue, **Previous**, **Pause** or
+**Play**, **Next**, the volume, and **Stop**. **Play on Sonos…** in the row
+menu does the same with the one file.
+
+The browser may then be closed. The listing opens the bar on what the speakers
+play again the next time it is opened, in any browser the account is logged
+in with. Playing a file in the browser takes the bar back; the speakers play
+on, and the bar shows them again on the next page opened. Closing the bar does
+not stop the speakers either; its **Stop** does.
+
+Since a speaker says nothing when a file ends, the server asks the group what
+it does every two seconds, twice a second near the end of a file, and tells
+it the next file once the last one has ended. That leaves a moment of silence
+between files. The queue ends:
+
+- after its last file; a file that is gone by then is passed over,
+- with **Stop**, in the bar or in the dialog, or with Stop in the Sonos app
+  before a file's end,
+- when the group is told to play something else, in the Sonos app or with
+  another Play on Sonos on one of its speakers,
+- when its speakers do not answer five times in a row, or stay paused for
+  six hours,
+- when `http.sonos` is switched off or the account may no longer read the
+  files,
+- and with go-fs: a restart lets the file that plays play to its end, and
+  nothing after it.
+
+Tick several entries and **Play together** has them all play the file in step.
+They do so the way the Sonos app groups rooms: the other entries join the one
+marked *leads* (the one played on last, or else the first ticked), and play
+whatever it plays. The rooms stay grouped afterwards, in the Sonos app too,
+until they are grouped otherwise. **Ungroup**, under the list, has every room
+of the group that leads play on its own again. A room that does not join, say
+because it is switched off, is named in the dialog, and the others play
+anyway.
+
 A speaker is not sent the file. It is told a link, which it then fetches from
 this server itself, with no account:
 
@@ -499,8 +543,16 @@ at port 1400. The dialog names a room by its id and never by an address.
 Playing a file is offered as **Send File…** is: to a session of an account that
 may read the file. The endpoint is `?go-fs=sonos&sonos=<what>` on the file:
 `groups` and `state` (with `&group=<id>`) answer `GET`, and `play`, `resume`,
-`pause`, `stop` and `volume` take a `POST` of `{"group":"<id>"}`, with
-`"volume"` from 0 to 100 for the last.
+`pause`, `stop`, `volume` and `ungroup` take a `POST` of `{"group":"<id>"}`,
+with `"volume"` from 0 to 100 for `volume`. `play` also takes `"join"`, the ids
+of more groups whose speakers join the group first, and `"files"`, the names of
+files of the folder to play in order from this one, which holds its name; its
+answer names the group as it is then, lists in `"failed"` the rooms that did
+not join, and has the queue's `"session"`. The bar asks about that on the
+folder: `session&id=<id>` answers `GET` with what the speakers do, and `skip`,
+with `{"session":"<id>","index":<n>}`, and `end`, with `{"session":"<id>"}`,
+take a `POST`. A queue is the account's own; another account is told it is not
+there.
 
 Playing on Sonos is left out of go-fs-light, and of a binary built with the
 tag `no_sonos`.

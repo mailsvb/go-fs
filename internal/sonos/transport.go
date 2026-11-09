@@ -61,6 +61,23 @@ func (c *Client) Play(ctx context.Context, host, uri string, t Track) error {
 	return c.Resume(ctx, host)
 }
 
+// Join has the speaker at host leave the group it is in and play along with
+// the group whose coordinator has the id coordinator. The speakers that are
+// part of its room, the satellites of a home theatre or the second speaker of
+// a stereo pair, come along. The grouping lasts until it is changed, here or
+// in the Sonos app.
+func (c *Client) Join(ctx context.Context, host, coordinator string) error {
+	_, err := c.call(ctx, host, avTransport, "SetAVTransportURI", instance,
+		arg{"CurrentURI", "x-rincon:" + coordinator}, arg{"CurrentURIMetaData", ""})
+	return err
+}
+
+// Leave has the speaker at host leave its group and play on its own.
+func (c *Client) Leave(ctx context.Context, host string) error {
+	_, err := c.call(ctx, host, avTransport, "BecomeCoordinatorOfStandaloneGroup", instance)
+	return err
+}
+
 // Resume plays on what the group was playing.
 func (c *Client) Resume(ctx context.Context, host string) error {
 	_, err := c.call(ctx, host, avTransport, "Play", instance, arg{"Speed", "1"})
@@ -89,6 +106,10 @@ type State struct {
 	URI string `json:"-"`
 	// Volume is the volume of the group, 0 to 100.
 	Volume int `json:"volume"`
+	// Position is how far into what it plays the group is, and Duration
+	// how long that is, in seconds; 0 where the speaker does not say.
+	Position int `json:"position"`
+	Duration int `json:"duration"`
 }
 
 // State reads what the group whose coordinator is at host is doing.
@@ -101,11 +122,33 @@ func (c *Client) State(ctx context.Context, host string) (State, error) {
 	if pos, err := c.call(ctx, host, avTransport, "GetPositionInfo", instance); err == nil {
 		st.URI = pos["TrackURI"]
 		st.Title = titleOf(pos["TrackMetaData"])
+		st.Position = clock(pos["RelTime"])
+		st.Duration = clock(pos["TrackDuration"])
 	}
 	if vol, err := c.GroupVolume(ctx, host); err == nil {
 		st.Volume = vol
 	}
 	return st, nil
+}
+
+// clock is the seconds of a time as a speaker gives it, H:MM:SS, 0 for
+// anything else, NOT_IMPLEMENTED of a stream with no end among it.
+func clock(text string) int {
+	parts := strings.Split(strings.TrimSpace(text), ":")
+	if len(parts) != 3 {
+		return 0
+	}
+	total := 0
+	for _, part := range parts {
+		// a fraction of a second, 0:01:02.500, is left out
+		whole, _, _ := strings.Cut(part, ".")
+		n, err := strconv.Atoi(whole)
+		if err != nil || n < 0 {
+			return 0
+		}
+		total = total*60 + n
+	}
+	return total
 }
 
 // titleOf is the dc:title of a DIDL-Lite description, "" where there is none.

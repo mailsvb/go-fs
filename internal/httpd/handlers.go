@@ -76,9 +76,13 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		if allowed.Send {
 			send = sendViewOf(serversFor(set, cred.user))
 		}
+		who := s.sessionViewFor(set, r, cred)
+		if allowed.Sonos {
+			who.Sonos = s.sonosSessionOf(cred)
+		}
 		page, err := listingPage(localPlace(vfs.AsFolder(target.Virtual)), entries,
 			parseSort(r.URL.Query()), allowed, send,
-			s.sessionViewFor(set, r, cred), nonce, set.cfg)
+			who, nonce, set.cfg)
 		if err != nil {
 			s.log.Error("http cannot render the listing", "path", target.Virtual, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)

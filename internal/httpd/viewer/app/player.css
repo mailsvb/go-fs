@@ -53,6 +53,16 @@ body {
 
 .controls { flex: 1; min-width: 0; }
 
+/* while speakers play the queue, the bar is their remote control */
+.remote { display: flex; flex: 1; align-items: center; gap: 0.35rem; min-width: 0; }
+.remote .clock { flex: none; color: var(--faint); font-size: 0.85em; font-variant-numeric: tabular-nums; }
+.remote .progress { flex: 1; min-width: 2rem; height: 0.3rem; border-radius: 2px; background: color-mix(in srgb, var(--faint) 35%, transparent); overflow: hidden; }
+.remote .done { width: 0; height: 100%; background: var(--accent); }
+.remote input[type="range"] { flex: none; width: 6rem; accent-color: var(--accent); }
+.remote .vol { margin-left: 0.4rem; color: var(--faint); font-size: 1.1rem; }
+button.plain:disabled { opacity: 0.35; cursor: default; }
+button.plain:disabled:hover { background: transparent; color: var(--faint); }
+
 button.plain {
   display: inline-flex;
   align-items: center;
@@ -123,4 +133,8 @@ button.plain:focus-visible { outline: 2px solid var(--accent); outline-offset: 1
   .video-js .vjs-current-time,
   .video-js .vjs-time-divider,
   .video-js .vjs-duration { display: none; }
+  .remote { flex: none; gap: 0.1rem; }
+  .remote .clock, .remote input[type="range"], .remote .vol { display: none; }
+  .remote .progress { position: fixed; top: 0; left: 0; right: 0; height: 0.2rem; border-radius: 0; }
+  .remote button.plain { width: 2rem; }
 }

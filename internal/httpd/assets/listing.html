@@ -298,7 +298,7 @@
 {{end}}
 
 {{if .Rights.Sonos}}
-<dialog id="sonos-dialog" class="sonos" aria-labelledby="sonos-title">
+<dialog id="sonos-dialog" class="sonos" aria-labelledby="sonos-title"{{if .Session.Sonos}} data-session="{{.Session.Sonos}}"{{end}}>
   <form method="dialog">
     <h2 id="sonos-title">Play on Sonos</h2>
     <p class="where"></p>
@@ -307,7 +307,8 @@
       <span class="spinner" hidden></span>
       <button class="plain" type="button" data-sonos="refresh">Search again</button>
     </div>
-    <div class="sonos-groups" role="radiogroup" aria-labelledby="sonos-speakers"></div>
+    <div class="sonos-groups" role="group" aria-labelledby="sonos-speakers" aria-describedby="sonos-together"></div>
+    <p class="sonos-together" id="sonos-together" hidden>Tick several to play them together: they join the one marked, and stay grouped until ungrouped.</p>
     <p class="sonos-none" hidden>No speakers answered. They have to be on the network this server is on, or be named in http.sonosSpeakers.</p>
     <fieldset class="sonos-now" disabled>
       <legend>Now</legend>
@@ -316,6 +317,7 @@
         <button class="plain" type="button" data-sonos="resume">Resume</button>
         <button class="plain" type="button" data-sonos="pause">Pause</button>
         <button class="plain" type="button" data-sonos="stop">Stop</button>
+        <button class="plain" type="button" data-sonos="ungroup" disabled>Ungroup</button>
       </div>
       <div class="sonos-volume">
         <label for="sonos-volume">Volume</label>

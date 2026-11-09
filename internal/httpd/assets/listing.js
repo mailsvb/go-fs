@@ -597,6 +597,12 @@
   // follow that frame, and the history of the browser walks it, back to the
   // page as it was before the shell. The listing in the shell hands what it
   // plays up to the shell.
+  //
+  // The bar may hand its queue to Sonos speakers: it asks for the dialog of
+  // Play on Sonos, which the page at the top shows, over the shell too. The
+  // server then plays the queue by itself, and the bar is the remote control
+  // of that, also after the page was closed and opened again: the listing
+  // says what the account has speakers play, and the bar is opened on it.
   if (viewer && viewer.dataset.player) {
     audio = (function (page) {
       var message = "go-fs-player";
@@ -677,6 +683,9 @@
           pause: function () {
             host.postMessage({ type: message, action: "pause" }, location.origin);
           },
+          remote: function (session) {
+            host.postMessage({ type: message, action: "remote", session: session }, location.origin);
+          },
           keepsPlaying: function () {
             return false;
           },
@@ -689,28 +698,43 @@
       var bar = null;
       var ready = false;
       // pending is what the bar is told once it is ready
-      var pending = null;
+      var pending = [];
 
       function toBar(data) {
         data.type = message;
         if (ready) {
           bar.contentWindow.postMessage(data, location.origin);
         } else {
-          pending = data;
+          pending.push(data);
         }
       }
 
-      function play(queue, index) {
-        if (!bar) {
-          bar = document.createElement("iframe");
-          bar.className = "player";
-          bar.title = "Player";
-          bar.src = page;
-          ready = false;
-          document.body.append(bar);
-          document.body.classList.add("playing");
+      function openBar() {
+        if (bar) {
+          return;
         }
-        toBar({ action: "play", queue: queue, index: index });
+        bar = document.createElement("iframe");
+        bar.className = "player";
+        bar.title = "Player";
+        bar.src = page;
+        ready = false;
+        pending = [];
+        document.body.append(bar);
+        document.body.classList.add("playing");
+      }
+
+      function play(queue, index) {
+        openBar();
+        toBar({ action: "play", queue: queue, index: index, sonos: !!document.getElementById("sonos-dialog") });
+      }
+
+      // remote has the bar show what speakers play, and control them
+      function remote(session) {
+        if (!session || !session.id) {
+          return;
+        }
+        openBar();
+        toBar({ action: "remote", session: session });
       }
 
       function pause() {
@@ -726,7 +750,7 @@
         bar.remove();
         bar = null;
         ready = false;
-        pending = null;
+        pending = [];
         document.body.classList.remove("playing");
       }
 
@@ -828,13 +852,13 @@
         if (bar && event.source === bar.contentWindow) {
           if (event.data.action === "ready") {
             ready = true;
-            if (pending) {
-              var data = pending;
-              pending = null;
-              toBar(data);
-            }
+            var waiting = pending;
+            pending = [];
+            waiting.forEach(toBar);
           } else if (event.data.action === "closed") {
             closeBar();
+          } else if (event.data.action === "sonos" && sonosPlaying && Array.isArray(event.data.queue)) {
+            sonosPlaying.openQueue(event.data.queue, event.data.index);
           }
           return;
         }
@@ -843,9 +867,21 @@
             play(event.data.queue, event.data.index);
           } else if (event.data.action === "pause") {
             pause();
+          } else if (event.data.action === "remote") {
+            remote(event.data.session);
           }
         }
       });
+
+      // what the account has speakers play comes back with the page
+      var playingOn = document.getElementById("sonos-dialog");
+      if (playingOn && playingOn.dataset.session) {
+        try {
+          remote(JSON.parse(playingOn.dataset.session));
+        } catch (ignored) {
+          // a page that cannot read it shows no bar for it
+        }
+      }
 
       return {
         play: function (link) {
@@ -853,6 +889,7 @@
           play(wanted.queue, wanted.index);
         },
         pause: pause,
+        remote: remote,
         keepsPlaying: function () {
           return !!bar;
         },
@@ -2782,8 +2819,15 @@
   // Play on Sonos in the menu of an audio file lists the groups of speakers
   // the server finds on its network. The one chosen plays the file: the
   // server tells it a link to fetch the file by, which needs no login and
-  // runs out by itself. Under the list is what the group chosen is doing,
-  // with buttons that pause it, play on and stop it, and its volume.
+  // runs out by itself. Several groups ticked play together: the others join
+  // the one that leads, which the server groups them with as the Sonos app
+  // does, until Ungroup splits that group into its rooms again. Under the
+  // list is what the group that leads is doing, with buttons that pause it,
+  // play on and stop it, and its volume.
+  //
+  // The bar opens the dialog on its queue, openQueue, and the server plays
+  // that queue on from the file the bar plays. Either way the server plays
+  // by itself once told, and the bar becomes the remote control of that.
 
   var sonosPlaying = (function () {
     var dialog = document.getElementById("sonos-dialog");
@@ -2794,6 +2838,8 @@
     var where = dialog.querySelector(".where");
     var list = dialog.querySelector(".sonos-groups");
     var none = dialog.querySelector(".sonos-none");
+    var together = dialog.querySelector(".sonos-together");
+    var ungroup = dialog.querySelector("[data-sonos='ungroup']");
     var spinner = dialog.querySelector(".sonos-head .spinner");
     var refresh = dialog.querySelector("[data-sonos='refresh']");
     var now = dialog.querySelector(".sonos-now");
@@ -2802,17 +2848,22 @@
     var volumeShown = dialog.querySelector(".sonos-volume output");
     var status = dialog.querySelector(".status");
     var play = form.querySelector("button[value='play']");
+    var heading = document.getElementById("sonos-title");
     var remembered = "go-fs-sonos-group";
     var states = { PLAYING: "Playing", PAUSED_PLAYBACK: "Paused", STOPPED: "Stopped", TRANSITIONING: "Starting" };
-    // name is the file the dialog is open on; turn counts the times it was
-    // opened and closed, so that an answer to an earlier one is dropped
+    // name is the file the dialog is open on, and base its path as a URL
+    // path; files is the queue it plays on from there, names of files of its
+    // folder, or null for the file alone. turn counts the times the dialog
+    // was opened and closed, so that an answer to an earlier one is dropped
     var name = "";
+    var base = "";
+    var files = null;
     var turn = 0;
     var sliding = false;
     var later = null;
 
     function link(op, extra) {
-      return folder + encodeURIComponent(name) + "?go-fs=sonos&sonos=" + op + (extra || "");
+      return base + "?go-fs=sonos&sonos=" + op + (extra || "");
     }
 
     function json(res) {
@@ -2824,9 +2875,55 @@
       status.classList.toggle("bad", !!bad);
     }
 
+    function ticked() {
+      return Array.prototype.slice.call(list.querySelectorAll("input:checked"));
+    }
+
+    // lead is the group ticked that the others join: the one chosen last,
+    // which likely plays already, or else the first ticked
+    function lead() {
+      var inputs = ticked();
+      var want = recalled();
+      for (var i = 0; i < inputs.length; i++) {
+        if (inputs[i].value === want) {
+          return inputs[i];
+        }
+      }
+      return inputs[0] || null;
+    }
+
     function chosen() {
-      var input = list.querySelector("input:checked");
+      var input = lead();
       return input ? input.value : "";
+    }
+
+    // others is the groups ticked that join the one that leads
+    function others() {
+      var first = chosen();
+      return ticked().map(function (input) {
+        return input.value;
+      }).filter(function (id) {
+        return id !== first;
+      });
+    }
+
+    // marked shows which group leads, where several are ticked, and offers
+    // Ungroup on a group of several rooms
+    function marked() {
+      var first = lead();
+      var several = ticked().length > 1;
+      list.querySelectorAll(".lead").forEach(function (tag) {
+        tag.hidden = !several || !first || tag.parentNode !== first.parentNode;
+      });
+      ungroup.disabled = !first || first.dataset.rooms === "1";
+      play.disabled = !first;
+      if (several) {
+        play.textContent = "Play together";
+      } else if (files && files.length > 1) {
+        play.textContent = "Play " + files.length + " files";
+      } else {
+        play.textContent = "Play this file";
+      }
     }
 
     // the group chosen last is chosen again, in this browser
@@ -2846,16 +2943,17 @@
       }
     }
 
-    function showGroups(groups) {
+    function showGroups(groups, again) {
       list.textContent = "";
       var want = recalled();
       var pick = null;
       groups.forEach(function (group) {
         var label = document.createElement("label");
         var input = document.createElement("input");
-        input.type = "radio";
+        input.type = "checkbox";
         input.name = "sonos-group";
         input.value = group.id;
+        input.dataset.rooms = String((group.rooms || []).length || 1);
         var room = document.createElement("span");
         room.className = "room";
         room.textContent = group.name;
@@ -2867,26 +2965,32 @@
           rooms.textContent = group.rooms.join(", ");
           label.appendChild(rooms);
         }
+        var tag = document.createElement("span");
+        tag.className = "lead";
+        tag.textContent = "leads";
+        tag.hidden = true;
+        label.appendChild(tag);
         list.appendChild(label);
         if (!pick || group.id === want) {
           pick = input;
         }
       });
       none.hidden = groups.length > 0;
+      together.hidden = groups.length < 2;
       if (pick) {
         pick.checked = true;
       }
-      play.disabled = !pick;
-      return showState();
+      marked();
+      return showState(again);
     }
 
-    function loadGroups(fresh) {
+    function loadGroups(fresh, again) {
       var mine = turn;
       spinner.hidden = false;
       refresh.disabled = true;
       return askJSON("sonos", "GET", link("groups", fresh ? "&refresh=1" : "")).then(json).then(function (view) {
         if (mine === turn) {
-          return showGroups(view.groups || []);
+          return showGroups(view.groups || [], again);
         }
       }).catch(function (err) {
         if (mine === turn) {
@@ -2961,12 +3065,46 @@
     }
 
     function open(row) {
+      show(row.dataset.name, folder + encodeURIComponent(row.dataset.name), null, shown + row.dataset.name);
+    }
+
+    // openQueue opens the dialog on the queue of the bar: the files of a
+    // folder, of which the one at index plays
+    function openQueue(queue, index) {
+      var track = queue[index];
+      var path = track && typeof track.src === "string" ? track.src.split("?")[0] : "";
+      if (path.charAt(0) !== "/" || path.charAt(1) === "/" || path.charAt(1) === "\\") {
+        return;
+      }
+      var names = queue.map(function (item) {
+        return String((item && item.name) || "");
+      }).filter(function (item) {
+        return sonosPlayable.test(item);
+      });
+      var after = names.length - 1 - names.indexOf(String(track.name));
+      var text;
+      try {
+        text = decodeURIComponent(path);
+      } catch (err) {
+        text = path;
+      }
+      if (after > 0) {
+        text += after === 1 ? ", then the next file" : ", then the " + after + " files after it";
+      }
+      show(String(track.name), path, names, text);
+    }
+
+    function show(file, at, queue, text) {
       turn++;
-      name = row.dataset.name;
-      where.textContent = shown + name;
+      name = file;
+      base = at;
+      files = queue;
+      heading.textContent = files && files.length > 1 ? "Play folder on Sonos" : "Play on Sonos";
+      where.textContent = text;
       tell("");
       list.textContent = "";
       none.hidden = true;
+      together.hidden = true;
       now.disabled = true;
       playing.textContent = "";
       play.disabled = true;
@@ -2981,8 +3119,29 @@
 
     list.addEventListener("change", function () {
       tell("");
-      play.disabled = !chosen();
+      marked();
       showState();
+    });
+
+    ungroup.addEventListener("click", function () {
+      var id = chosen();
+      if (!id) {
+        return;
+      }
+      var mine = turn;
+      ungroup.disabled = true;
+      tell("");
+      askJSON("sonos", "POST", link("ungroup"), { group: id }).catch(function (err) {
+        if (mine === turn) {
+          tell(err.message, true);
+        }
+      }).then(function () {
+        // the list shows what is grouped now, also where some room did not
+        // leave
+        if (mine === turn) {
+          return loadGroups(false);
+        }
+      });
     });
 
     dialog.querySelectorAll("[data-sonos='resume'], [data-sonos='pause'], [data-sonos='stop']").forEach(function (button) {
@@ -3014,14 +3173,37 @@
         return;
       }
       var mine = turn;
+      var join = others();
       play.disabled = true;
-      tell("Telling the speaker to play " + name + "…");
-      askJSON("sonos", "POST", link("play"), { group: id }).then(json).then(function (answer) {
+      tell((join.length ? "Grouping the speakers to play " : "Telling the speaker to play ") + name + "…");
+      var asked = { group: id, join: join };
+      if (files) {
+        asked.files = files;
+      }
+      askJSON("sonos", "POST", link("play"), asked).then(json).then(function (answer) {
         if (mine !== turn) {
           return;
         }
         remember(answer.group);
-        tell("Playing on " + answer.name + ".");
+        var failed = answer.failed || [];
+        // the bar is the remote control of what the speakers play now; the
+        // dialog stays open only to say which rooms did not join
+        if (audio && audio.remote && answer.session) {
+          audio.remote(answer.session);
+          if (!failed.length) {
+            dialog.close();
+            return;
+          }
+        }
+        if (failed.length) {
+          tell("Playing on " + answer.name + ", without: " + failed.join(" "), true);
+        } else {
+          tell("Playing on " + answer.name + ".");
+        }
+        // a group that others joined is listed as one now
+        if (join.length) {
+          return loadGroups(false, true);
+        }
         return showState(true);
       }).catch(function (err) {
         if (mine === turn) {
@@ -3029,7 +3211,7 @@
         }
       }).then(function () {
         if (mine === turn) {
-          play.disabled = !chosen();
+          marked();
         }
       });
     });
@@ -3038,9 +3220,11 @@
       turn++;
       clearTimeout(later);
       name = "";
+      base = "";
+      files = null;
     });
 
-    return { open: open };
+    return { open: open, openQueue: openQueue };
   })();
 
   // --- editing MP3 tags ------------------------------------------------
