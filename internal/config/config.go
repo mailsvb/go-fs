@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -918,6 +919,18 @@ type HTTP struct {
 	// on the local network, by a broadcast to UDP port 7359, with the address
 	// of this one, while there is a jellyfin repository.
 	JellyfinDiscovery bool `toml:"jellyfinDiscovery" feature:"jellyfin"`
+	// Sonos offers Play on Sonos on the audio files of the listing, to a
+	// session of an account that may read them. The server finds the
+	// speakers of the local network by SSDP and tells one to play a file,
+	// which the speaker then fetches from this server by a link that needs no
+	// login and lasts for a few hours: the plain listener, or
+	// general.internalAddress where that is set, has to be reachable from the
+	// speakers.
+	Sonos bool `toml:"sonos" feature:"sonos"`
+	// SonosSpeakers are addresses of speakers, as host or host:port, which
+	// are asked directly besides those a search finds: for speakers on a
+	// network the search does not reach.
+	SonosSpeakers []string `toml:"sonosSpeakers" feature:"sonos"`
 
 	MaxConnections int `toml:"maxConnections"`
 	// ReadTimeout, WriteTimeout and IdleTimeout are seconds, 0 disables one.
@@ -1825,6 +1838,11 @@ func (c Config) validateHTTP() error {
 			return fmt.Errorf("http.trustedProxies[%d]: %w", i, err)
 		}
 	}
+	for i, speaker := range h.SonosSpeakers {
+		if _, err := SonosSpeaker(speaker); err != nil {
+			return fmt.Errorf("http.sonosSpeakers[%d]: %w", i, err)
+		}
+	}
 	if h.MaxUploadSize < 0 {
 		return errors.New("http.maxUploadSize cannot be negative")
 	}
@@ -1980,6 +1998,26 @@ func overlaps(a, b string) bool {
 		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 	}
 	return inside(a, b) || inside(b, a)
+}
+
+// SonosSpeaker reads one entry of http.sonosSpeakers: a host name or an
+// address, with or without a port, which is 1400 where none is given. It
+// returns host:port.
+func SonosSpeaker(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	host, port := raw, "1400"
+	if h, p, err := net.SplitHostPort(raw); err == nil {
+		host, port = h, p
+	} else if ip := net.ParseIP(strings.Trim(raw, "[]")); ip != nil {
+		host = ip.String()
+	}
+	if host == "" || strings.ContainsAny(host, "/?#@ ") {
+		return "", fmt.Errorf("%q is not a host or an address", raw)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("%q names no port", raw)
+	}
+	return net.JoinHostPort(host, port), nil
 }
 
 // ParseProxy reads one entry of http.trustedProxies: an address, or a CIDR

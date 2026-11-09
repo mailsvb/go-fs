@@ -139,41 +139,11 @@ func (s *Server) answerDiscovery(conn net.PacketConn, stopped chan struct{}) {
 }
 
 // discoveryAddress is the address a client is told to reach the server at:
-// the url of a jellyfin repository, or else the plain listener, or the TLS one
-// when there is no plain one, at http.address or, where that binds every
-// interface, at the address of the interface the client is reached through.
+// the url of a jellyfin repository, or else the address of the listener on
+// the network the client is on; see reachableAddress.
 func (s *Server) discoveryAddress(set *settings, client net.Addr) string {
 	if set.cfg.JellyfinURL != "" {
 		return set.cfg.JellyfinURL
 	}
-	scheme, listener := "http", s.plain
-	if listener == nil {
-		scheme, listener = "https", s.secure
-	}
-	if listener == nil {
-		return ""
-	}
-	host := set.cfg.Address
-	if host == "" || net.ParseIP(host).IsUnspecified() {
-		host = localAddressTowards(client)
-		if host == "" {
-			return ""
-		}
-	}
-	return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(listenPort(listener)))
-}
-
-// localAddressTowards is the address of the interface this host reaches a
-// client through, "" when it cannot. Connecting a UDP socket only picks the
-// route; nothing is sent.
-func localAddressTowards(client net.Addr) string {
-	conn, err := net.Dial("udp", client.String())
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = conn.Close() }()
-	if local, ok := conn.LocalAddr().(*net.UDPAddr); ok {
-		return local.IP.String()
-	}
-	return ""
+	return s.reachableAddress(set, client)
 }

@@ -418,6 +418,31 @@ dialog .targets { display: flex; flex-direction: column; gap: 0.3rem; }
 dialog .targets label { display: flex; align-items: center; gap: 0.4rem; }
 dialog .targets input[type="text"] { flex: 1; min-width: 0; }
 dialog .targets input.invalid { border-color: var(--bad); }
+/* Play on Sonos: the groups of speakers to choose from, and what the one
+   chosen is doing, with its buttons and its volume. */
+dialog.sonos form { width: min(32rem, calc(100vw - 2rem)); }
+dialog.sonos .sonos-head { display: flex; align-items: center; gap: 0.5rem; min-height: 1.75rem; }
+dialog.sonos .sonos-head .label { color: var(--faint); font-size: 0.8rem; }
+dialog.sonos .sonos-head .plain { margin-left: auto; height: 1.6rem; font-size: 0.8rem; }
+dialog.sonos .sonos-groups { display: flex; flex-direction: column; max-height: 40vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; }
+dialog.sonos .sonos-groups:empty { display: none; }
+dialog.sonos .sonos-groups label { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--line); cursor: pointer; }
+dialog.sonos .sonos-groups label:last-child { border-bottom: 0; }
+dialog.sonos .sonos-groups label:has(input:checked) { background: var(--ground); }
+dialog.sonos .sonos-groups .room { flex: none; font-weight: 600; }
+dialog.sonos .sonos-groups .meta { min-width: 0; overflow: hidden; color: var(--faint); font-size: 0.8rem; text-overflow: ellipsis; white-space: nowrap; }
+dialog.sonos fieldset.sonos-now { display: flex; flex-direction: column; gap: 0.5rem; margin: 0; padding: 0.5rem 0.75rem 0.65rem; border: 1px solid var(--line); border-radius: 6px; }
+dialog.sonos fieldset.sonos-now:disabled { opacity: 0.55; }
+dialog.sonos fieldset.sonos-now legend { padding: 0 0.25rem; color: var(--faint); font-size: 0.8rem; }
+dialog.sonos .playing { color: var(--ink); }
+dialog.sonos .playing:empty { display: none; }
+dialog.sonos .sonos-buttons { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+dialog.sonos .sonos-buttons .plain { height: 1.9rem; min-width: 4.5rem; }
+dialog.sonos .sonos-volume { display: flex; align-items: center; gap: 0.6rem; font-size: 0.85rem; }
+dialog.sonos .sonos-volume label { color: var(--faint); font-size: 0.8rem; }
+dialog.sonos .sonos-volume input { flex: 1; min-width: 0; accent-color: var(--accent); }
+dialog.sonos .sonos-volume output { width: 2rem; text-align: right; font-variant-numeric: tabular-nums; }
+dialog.sonos .status:empty { display: none; }
 /* The MP3 tag editor: the fields of one file beside its cover, or a table of
    every MP3 file of the folder; under either, the volume. */
 dialog.mp3 .mp3-file { display: grid; grid-template-columns: minmax(0, 1fr) 10rem; gap: 1rem; align-items: start; }

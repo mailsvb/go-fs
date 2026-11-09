@@ -899,6 +899,10 @@
   var editing = menu.querySelector("[data-do='edit']");
   // Edit MP3 Tag is there for an MP3 file where the account may replace it
   var mp3Item = menu.querySelector("[data-do='mp3tag']");
+  // Play on Sonos is there for a file a Sonos speaker plays, by the
+  // extensions sonosTypes in sonos.go names
+  var sonosItem = menu.querySelector("[data-do='sonos']");
+  var sonosPlayable = /\.(mp3|m4a|aac|flac|ogg|oga|wav)$/i;
   var archiveName = /\.(tar|tgz|tzst|txz|tbz2?|tar\.(gz|zst|xz|bz2))$/i;
   var opener = null;
 
@@ -934,6 +938,9 @@
     }
     if (mp3Item) {
       mp3Item.hidden = isFolder || !/\.mp3$/i.test(row.dataset.name);
+    }
+    if (sonosItem) {
+      sonosItem.hidden = isFolder || !sonosPlayable.test(row.dataset.name);
     }
     if (importing) {
       importing.hidden = isFolder || !archiveName.test(row.dataset.name);
@@ -1046,6 +1053,8 @@
       remoteFetching.open(row);
     } else if (item.dataset.do === "mp3tag" && mp3Editing) {
       mp3Editing.open(row);
+    } else if (item.dataset.do === "sonos" && sonosPlaying) {
+      sonosPlaying.open(row);
     } else if (item.dataset.do === "edit" && openViewer) {
       openViewer(row.querySelector("a") || row, row.dataset.name, row.dataset.edit, "text", "edit");
     }
@@ -2764,6 +2773,272 @@
       dialog.showModal();
       browse(at ? at.path : "/");
     }
+
+    return { open: open };
+  })();
+
+  // --- playing on Sonos ------------------------------------------------
+  //
+  // Play on Sonos in the menu of an audio file lists the groups of speakers
+  // the server finds on its network. The one chosen plays the file: the
+  // server tells it a link to fetch the file by, which needs no login and
+  // runs out by itself. Under the list is what the group chosen is doing,
+  // with buttons that pause it, play on and stop it, and its volume.
+
+  var sonosPlaying = (function () {
+    var dialog = document.getElementById("sonos-dialog");
+    if (!dialog) {
+      return null;
+    }
+    var form = dialog.querySelector("form");
+    var where = dialog.querySelector(".where");
+    var list = dialog.querySelector(".sonos-groups");
+    var none = dialog.querySelector(".sonos-none");
+    var spinner = dialog.querySelector(".sonos-head .spinner");
+    var refresh = dialog.querySelector("[data-sonos='refresh']");
+    var now = dialog.querySelector(".sonos-now");
+    var playing = dialog.querySelector(".playing");
+    var volume = document.getElementById("sonos-volume");
+    var volumeShown = dialog.querySelector(".sonos-volume output");
+    var status = dialog.querySelector(".status");
+    var play = form.querySelector("button[value='play']");
+    var remembered = "go-fs-sonos-group";
+    var states = { PLAYING: "Playing", PAUSED_PLAYBACK: "Paused", STOPPED: "Stopped", TRANSITIONING: "Starting" };
+    // name is the file the dialog is open on; turn counts the times it was
+    // opened and closed, so that an answer to an earlier one is dropped
+    var name = "";
+    var turn = 0;
+    var sliding = false;
+    var later = null;
+
+    function link(op, extra) {
+      return folder + encodeURIComponent(name) + "?go-fs=sonos&sonos=" + op + (extra || "");
+    }
+
+    function json(res) {
+      return res.json();
+    }
+
+    function tell(text, bad) {
+      status.textContent = text || "";
+      status.classList.toggle("bad", !!bad);
+    }
+
+    function chosen() {
+      var input = list.querySelector("input:checked");
+      return input ? input.value : "";
+    }
+
+    // the group chosen last is chosen again, in this browser
+    function recalled() {
+      try {
+        return window.localStorage.getItem(remembered) || "";
+      } catch (err) {
+        return "";
+      }
+    }
+
+    function remember(id) {
+      try {
+        window.localStorage.setItem(remembered, id);
+      } catch (err) {
+        // a browser that keeps nothing chooses the first group next time
+      }
+    }
+
+    function showGroups(groups) {
+      list.textContent = "";
+      var want = recalled();
+      var pick = null;
+      groups.forEach(function (group) {
+        var label = document.createElement("label");
+        var input = document.createElement("input");
+        input.type = "radio";
+        input.name = "sonos-group";
+        input.value = group.id;
+        var room = document.createElement("span");
+        room.className = "room";
+        room.textContent = group.name;
+        label.appendChild(input);
+        label.appendChild(room);
+        if (group.rooms && group.rooms.length > 1) {
+          var rooms = document.createElement("span");
+          rooms.className = "meta";
+          rooms.textContent = group.rooms.join(", ");
+          label.appendChild(rooms);
+        }
+        list.appendChild(label);
+        if (!pick || group.id === want) {
+          pick = input;
+        }
+      });
+      none.hidden = groups.length > 0;
+      if (pick) {
+        pick.checked = true;
+      }
+      play.disabled = !pick;
+      return showState();
+    }
+
+    function loadGroups(fresh) {
+      var mine = turn;
+      spinner.hidden = false;
+      refresh.disabled = true;
+      return askJSON("sonos", "GET", link("groups", fresh ? "&refresh=1" : "")).then(json).then(function (view) {
+        if (mine === turn) {
+          return showGroups(view.groups || []);
+        }
+      }).catch(function (err) {
+        if (mine === turn) {
+          tell(err.message, true);
+        }
+      }).then(function () {
+        if (mine === turn) {
+          spinner.hidden = true;
+          refresh.disabled = false;
+        }
+      });
+    }
+
+    function stateText(state) {
+      var text = states[state.transport] || state.transport || "";
+      if (state.title) {
+        text += ": " + state.title;
+      }
+      return state.file ? text + " (this file)" : text;
+    }
+
+    // showState asks what the group chosen is doing, and asks again a moment
+    // later, by when a speaker that was just told something has started
+    function showState(again) {
+      var id = chosen();
+      var mine = turn;
+      clearTimeout(later);
+      if (!id) {
+        now.disabled = true;
+        playing.textContent = "";
+        return Promise.resolve();
+      }
+      return askJSON("sonos", "GET", link("state", "&group=" + encodeURIComponent(id))).then(json).then(function (state) {
+        if (mine !== turn || id !== chosen()) {
+          return;
+        }
+        playing.textContent = stateText(state);
+        if (!sliding) {
+          volume.value = state.volume;
+          volumeShown.value = state.volume;
+        }
+        now.disabled = false;
+        if (again) {
+          later = setTimeout(showState, 1500);
+        }
+      }).catch(function (err) {
+        if (mine === turn && id === chosen()) {
+          now.disabled = true;
+          tell(err.message, true);
+        }
+      });
+    }
+
+    function command(op, body) {
+      var id = chosen();
+      if (!id) {
+        return;
+      }
+      var mine = turn;
+      body = body || {};
+      body.group = id;
+      tell("");
+      askJSON("sonos", "POST", link(op), body).then(function () {
+        if (mine === turn) {
+          return showState(true);
+        }
+      }).catch(function (err) {
+        if (mine === turn) {
+          tell(err.message, true);
+        }
+      });
+    }
+
+    function open(row) {
+      turn++;
+      name = row.dataset.name;
+      where.textContent = shown + name;
+      tell("");
+      list.textContent = "";
+      none.hidden = true;
+      now.disabled = true;
+      playing.textContent = "";
+      play.disabled = true;
+      dialog.showModal();
+      loadGroups(false);
+    }
+
+    refresh.addEventListener("click", function () {
+      tell("");
+      loadGroups(true);
+    });
+
+    list.addEventListener("change", function () {
+      tell("");
+      play.disabled = !chosen();
+      showState();
+    });
+
+    dialog.querySelectorAll("[data-sonos='resume'], [data-sonos='pause'], [data-sonos='stop']").forEach(function (button) {
+      button.addEventListener("click", function () {
+        command(button.dataset.sonos);
+      });
+    });
+
+    volume.addEventListener("input", function () {
+      sliding = true;
+      volumeShown.value = volume.value;
+    });
+
+    volume.addEventListener("change", function () {
+      sliding = false;
+      command("volume", { volume: parseInt(volume.value, 10) || 0 });
+    });
+
+    // The submit event rather than close, for the reason the other dialogs
+    // give: which button was pressed is only known there.
+    form.addEventListener("submit", function (event) {
+      var pressed = event.submitter ? event.submitter.value : "play";
+      if (pressed === "cancel") {
+        return;
+      }
+      event.preventDefault();
+      var id = chosen();
+      if (!id || play.disabled) {
+        return;
+      }
+      var mine = turn;
+      play.disabled = true;
+      tell("Telling the speaker to play " + name + "…");
+      askJSON("sonos", "POST", link("play"), { group: id }).then(json).then(function (answer) {
+        if (mine !== turn) {
+          return;
+        }
+        remember(answer.group);
+        tell("Playing on " + answer.name + ".");
+        return showState(true);
+      }).catch(function (err) {
+        if (mine === turn) {
+          tell(err.message, true);
+        }
+      }).then(function () {
+        if (mine === turn) {
+          play.disabled = !chosen();
+        }
+      });
+    });
+
+    dialog.addEventListener("close", function () {
+      turn++;
+      clearTimeout(later);
+      name = "";
+    });
 
     return { open: open };
   })();

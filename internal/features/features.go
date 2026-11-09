@@ -46,6 +46,9 @@ const (
 	// NBD is the NBD server, which serves the disk images of the Disks page
 	// to QEMU and other NBD clients, and the Disks page itself.
 	NBD = "nbd"
+	// Sonos is playing audio files of the file listing on the Sonos speakers
+	// of the local network.
+	Sonos = "sonos"
 )
 
 // built holds the parts this binary has. It is filled by the init functions
@@ -90,6 +93,6 @@ func List() []string {
 
 // All is every optional part there is, whether built or not.
 func All() []string {
-	all := []string{TFTP, FTP, SFTP, SFTPRemote, SMB, RPM, FDroid, Jellyfin, Cryptomator, WebDAV, NBD}
+	all := []string{TFTP, FTP, SFTP, SFTPRemote, SMB, RPM, FDroid, Jellyfin, Cryptomator, WebDAV, NBD, Sonos}
 	return slices.Sorted(slices.Values(all))
 }

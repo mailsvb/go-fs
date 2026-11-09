@@ -70,6 +70,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		allowed.Import = s.registrySession(set, r) != nil
 		allowed.Share = cred.user != nil
 		allowed.Send = maySend(cred, target.Virtual)
+		allowed.Sonos = sonosOn(set) && allowed.Send
 		allowed.Trash = trashOn(set)
 		var send sendView
 		if allowed.Send {

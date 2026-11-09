@@ -21,7 +21,8 @@ HTTP server serves to its admins.
   clients can play from, and VM disks that QEMU attaches over NBD.
 - **A real browser UI.** A built-in viewer for PDF, Word, Excel, PowerPoint,
   text and images that needs nothing from the web, video playback, an audio
-  player that keeps playing while you browse, share links, a trash, folder
+  player that keeps playing while you browse, play on Sonos speakers, share
+  links, a trash, folder
   downloads, fetch from a URL (the video or audio of a YouTube link too, with
   yt-dlp), send to SFTP, SMB or Artifactory (in a
   Cryptomator vault if you like), and scheduled two-way sync.
@@ -78,7 +79,7 @@ or on the admin page. Every key is explained in
 | [VM disks over NBD](docs/NBD.md) | the Disks page, certificates, QEMU and libvirt, space and locking |
 | [Container registry](docs/REGISTRY.md) | pushing and pulling images, multi-platform tags |
 | [Repositories](docs/REPOSITORIES.md) | rpm and F-Droid repositories, Jellyfin music library |
-| [Browser](docs/BROWSER.md) | browser login, document viewer, audio and video, MP3 tags and volume, trash, folder download, share links, fetch from URL |
+| [Browser](docs/BROWSER.md) | browser login, document viewer, audio and video, MP3 tags and volume, trash, folder download, share links, play on Sonos, fetch from URL |
 | [Remote servers](docs/REMOTE-SERVERS.md) | send to SFTP, SMB or Artifactory, Cryptomator vaults, sync |
 | [Logging](docs/LOGGING.md) | log levels and format, reading the log |
 | [Development](docs/DEVELOPMENT.md) | building, versioning, releases, go-fs-light |

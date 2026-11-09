@@ -131,6 +131,8 @@ type Server struct {
 	dav davState
 	// jellyfin keeps what the Jellyfin clients played; see jellyfin.go.
 	jellyfin jellyfinState
+	// sonos keeps the speakers found last; see sonos.go.
+	sonos sonosState
 }
 
 // New prepares a server. The base folder has to exist and every configured
@@ -663,6 +665,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleGet(set, w, r, target, credential{method: "share"})
 		return
 	}
+	// and so does the link a Sonos speaker was told to play a file by
+	if s.sonosFile(set, r, target) {
+		s.log.Debug("http sonos link used", "file", target.Virtual,
+			"address", clientAddress(set, r))
+		s.handleGet(set, w, r, target, credential{method: "sonos"})
+		return
+	}
 
 	method := r.Method
 	if dlsReader(w, r) {
@@ -702,6 +711,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and so does the MP3 tag editor of the listing
 	if mp3tagsAction(r) {
 		s.handleMP3Tags(set, w, r, target, cred)
+		return
+	}
+	// and so does playing a file on a Sonos speaker
+	if sonosAction(r) {
+		s.handleSonos(set, w, r, target, cred)
 		return
 	}
 	// and so does browsing a stored server

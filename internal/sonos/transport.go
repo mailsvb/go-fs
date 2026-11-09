@@ -1,0 +1,147 @@
+package sonos
+
+import (
+	"context"
+	"encoding/xml"
+	"strconv"
+	"strings"
+)
+
+// Track is what a speaker is told of the file it plays, which its app shows.
+type Track struct {
+	Title  string
+	Artist string
+	Album  string
+	// MIME is the type of the file, audio/mpeg and the like.
+	MIME string
+}
+
+// didl is the DIDL-Lite description of a file at uri, as the metadata of
+// SetAVTransportURI carries it.
+func didl(uri string, t Track) string {
+	var b strings.Builder
+	esc := func(s string) {
+		_ = xml.EscapeText(&b, []byte(s))
+	}
+	b.WriteString(`<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" ` +
+		`xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" ` +
+		`xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" ` +
+		`xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">` +
+		`<item id="-1" parentID="-1" restricted="true">`)
+	b.WriteString(`<res protocolInfo="http-get:*:`)
+	esc(t.MIME)
+	b.WriteString(`:*">`)
+	esc(uri)
+	b.WriteString(`</res><dc:title>`)
+	esc(t.Title)
+	b.WriteString(`</dc:title>`)
+	if t.Artist != "" {
+		b.WriteString(`<dc:creator>`)
+		esc(t.Artist)
+		b.WriteString(`</dc:creator>`)
+	}
+	if t.Album != "" {
+		b.WriteString(`<upnp:album>`)
+		esc(t.Album)
+		b.WriteString(`</upnp:album>`)
+	}
+	b.WriteString(`<upnp:class>object.item.audioItem.musicTrack</upnp:class></item></DIDL-Lite>`)
+	return b.String()
+}
+
+var instance = arg{"InstanceID", "0"}
+
+// Play has the group whose coordinator is at host play the file at uri,
+// in place of whatever it played; its queue is left as it was.
+func (c *Client) Play(ctx context.Context, host, uri string, t Track) error {
+	if _, err := c.call(ctx, host, avTransport, "SetAVTransportURI", instance,
+		arg{"CurrentURI", uri}, arg{"CurrentURIMetaData", didl(uri, t)}); err != nil {
+		return err
+	}
+	return c.Resume(ctx, host)
+}
+
+// Resume plays on what the group was playing.
+func (c *Client) Resume(ctx context.Context, host string) error {
+	_, err := c.call(ctx, host, avTransport, "Play", instance, arg{"Speed", "1"})
+	return err
+}
+
+// Pause pauses the group.
+func (c *Client) Pause(ctx context.Context, host string) error {
+	_, err := c.call(ctx, host, avTransport, "Pause", instance)
+	return err
+}
+
+// Stop stops the group.
+func (c *Client) Stop(ctx context.Context, host string) error {
+	_, err := c.call(ctx, host, avTransport, "Stop", instance)
+	return err
+}
+
+// State is what a group is doing.
+type State struct {
+	// Transport is PLAYING, PAUSED_PLAYBACK, STOPPED or TRANSITIONING.
+	Transport string `json:"transport"`
+	// Title is the title of what it plays, when its metadata names one.
+	Title string `json:"title,omitempty"`
+	// URI is what it plays.
+	URI string `json:"-"`
+	// Volume is the volume of the group, 0 to 100.
+	Volume int `json:"volume"`
+}
+
+// State reads what the group whose coordinator is at host is doing.
+func (c *Client) State(ctx context.Context, host string) (State, error) {
+	info, err := c.call(ctx, host, avTransport, "GetTransportInfo", instance)
+	if err != nil {
+		return State{}, err
+	}
+	st := State{Transport: info["CurrentTransportState"]}
+	if pos, err := c.call(ctx, host, avTransport, "GetPositionInfo", instance); err == nil {
+		st.URI = pos["TrackURI"]
+		st.Title = titleOf(pos["TrackMetaData"])
+	}
+	if vol, err := c.GroupVolume(ctx, host); err == nil {
+		st.Volume = vol
+	}
+	return st, nil
+}
+
+// titleOf is the dc:title of a DIDL-Lite description, "" where there is none.
+func titleOf(meta string) string {
+	if meta == "" || meta == "NOT_IMPLEMENTED" {
+		return ""
+	}
+	var doc struct {
+		Item struct {
+			Title string `xml:"http://purl.org/dc/elements/1.1/ title"`
+		} `xml:"item"`
+	}
+	if xml.Unmarshal([]byte(meta), &doc) != nil {
+		return ""
+	}
+	return strings.TrimSpace(doc.Item.Title)
+}
+
+// GroupVolume reads the volume of the group, 0 to 100.
+func (c *Client) GroupVolume(ctx context.Context, host string) (int, error) {
+	out, err := c.call(ctx, host, groupRendering, "GetGroupVolume", instance)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(out["CurrentVolume"])
+}
+
+// SetGroupVolume sets the volume of the group, keeping the volumes of its
+// rooms in the proportion they were in.
+func (c *Client) SetGroupVolume(ctx context.Context, host string, volume int) error {
+	volume = min(max(volume, 0), 100)
+	// the proportions are taken from a snapshot, which has to be made first
+	if _, err := c.call(ctx, host, groupRendering, "SnapshotGroupVolume", instance); err != nil {
+		return err
+	}
+	_, err := c.call(ctx, host, groupRendering, "SetGroupVolume", instance,
+		arg{"DesiredVolume", strconv.Itoa(volume)})
+	return err
+}

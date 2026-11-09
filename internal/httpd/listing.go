@@ -273,6 +273,10 @@ type rights struct {
 	// Send is Send File on a file, which uploads it to another host. It is
 	// offered to a session that may read the files here; see maySend.
 	Send bool
+	// Sonos is Play on Sonos on an audio file, which has a speaker of the
+	// local network play it: offered, while http.sonos is on, where Send
+	// is; see sonos.go.
+	Sonos bool
 	// RemoteFetch is Fetch on a file of the page of a stored server, which
 	// stores it in a folder of the served tree. It is offered to a session
 	// that may create files; the folder chosen decides the rest.

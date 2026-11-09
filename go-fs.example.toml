@@ -672,6 +672,20 @@ webdavClients = ["Microsoft-WebDAV-MiniRedir", "WebDAVFS", "WebDAVLib", "Microso
 # 127.0.0.1, where no other host is answered.
 jellyfinDiscovery = false
 
+# Offer "Play on Sonos" on the audio files of the listing (MP3, AAC, FLAC,
+# Ogg and WAV), to a session of an account that may read them. The server
+# finds the speakers of the local network by SSDP, on UDP port 1900, and
+# tells the one chosen to play the file. The speaker then fetches it from
+# this server, by a link that needs no login and lasts twelve hours, at
+# general.internalAddress if set, or else at this listener's address on the
+# network the speaker is on: so address must not be 127.0.0.1, and a speaker
+# reaches https only with a certificate it trusts.
+sonos = false
+# Addresses of speakers, "192.168.1.20" or "192.168.1.20:1400", asked
+# directly besides those the search finds, for speakers on a network that
+# multicast does not reach.
+sonosSpeakers = []
+
 # maximum simultaneous connections
 maxConnections = 100
 # Seconds, 0 disables one. writeTimeout is off by default because it would cap

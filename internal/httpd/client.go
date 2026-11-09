@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 )
 
@@ -90,4 +91,42 @@ func secureRequest(set *settings, r *http.Request) bool {
 	}
 	proto, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
 	return strings.EqualFold(strings.TrimSpace(proto), "https")
+}
+
+// reachableAddress is the address another host on the network reaches this
+// server at, scheme and host and port: the plain listener, or the TLS one when
+// there is no plain one, at http.address or, where that binds every
+// interface, at the address of the interface the host is reached through.
+// It is "" while neither listens, or the route to the host is not known.
+func (s *Server) reachableAddress(set *settings, towards net.Addr) string {
+	scheme, listener := "http", s.plain
+	if listener == nil {
+		scheme, listener = "https", s.secure
+	}
+	if listener == nil {
+		return ""
+	}
+	host := set.cfg.Address
+	if host == "" || net.ParseIP(host).IsUnspecified() {
+		host = localAddressTowards(towards)
+		if host == "" {
+			return ""
+		}
+	}
+	return scheme + "://" + net.JoinHostPort(host, strconv.Itoa(listenPort(listener)))
+}
+
+// localAddressTowards is the address of the interface this host reaches
+// another through, "" when it cannot. Connecting a UDP socket only picks the
+// route; nothing is sent.
+func localAddressTowards(other net.Addr) string {
+	conn, err := net.Dial("udp", other.String())
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = conn.Close() }()
+	if local, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+		return local.IP.String()
+	}
+	return ""
 }

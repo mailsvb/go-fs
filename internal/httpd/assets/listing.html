@@ -90,6 +90,7 @@
   {{if .Rights.Download}}<a role="menuitem" data-do="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>{{end}}
   {{if .Rights.Share}}<button type="button" role="menuitem" data-do="share"><svg class="ic"><use href="#i-link"/></svg>Share&#8230;</button>{{end}}
   {{if .Rights.Send}}<button type="button" role="menuitem" data-do="send"><svg class="ic"><use href="#i-send"/></svg>Send File&#8230;</button>{{end}}
+  {{if .Rights.Sonos}}<button type="button" role="menuitem" data-do="sonos" hidden><svg class="ic"><use href="#i-speaker"/></svg>Play on Sonos&#8230;</button>{{end}}
   {{if .Rights.RemoteFetch}}<button type="button" role="menuitem" data-do="remote-fetch"{{if .Rights.RemoteFetchFolder}} data-folders="1"{{end}}><svg class="ic"><use href="#i-download"/></svg>Fetch&#8230;</button>{{end}}
   {{if and .Rights.Import .Session.Registry}}<a role="menuitem" data-do="import" data-registry="{{.Session.Registry}}" hidden><svg class="ic"><use href="#i-box"/></svg><span>Import into registry&#8230;</span></a>{{end}}
   {{if and .Viewer .Rights.Overwrite}}<button type="button" role="menuitem" data-do="edit" hidden><svg class="ic"><use href="#i-pencil"/></svg>Edit&#8230;</button>{{end}}
@@ -291,6 +292,41 @@
     </div>
     <div class="row">
       <button class="plain" type="submit" value="cancel">Close</button>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+{{if .Rights.Sonos}}
+<dialog id="sonos-dialog" class="sonos" aria-labelledby="sonos-title">
+  <form method="dialog">
+    <h2 id="sonos-title">Play on Sonos</h2>
+    <p class="where"></p>
+    <div class="sonos-head">
+      <span class="label" id="sonos-speakers">Speakers</span>
+      <span class="spinner" hidden></span>
+      <button class="plain" type="button" data-sonos="refresh">Search again</button>
+    </div>
+    <div class="sonos-groups" role="radiogroup" aria-labelledby="sonos-speakers"></div>
+    <p class="sonos-none" hidden>No speakers answered. They have to be on the network this server is on, or be named in http.sonosSpeakers.</p>
+    <fieldset class="sonos-now" disabled>
+      <legend>Now</legend>
+      <p class="playing" role="status" aria-live="polite"></p>
+      <div class="sonos-buttons">
+        <button class="plain" type="button" data-sonos="resume">Resume</button>
+        <button class="plain" type="button" data-sonos="pause">Pause</button>
+        <button class="plain" type="button" data-sonos="stop">Stop</button>
+      </div>
+      <div class="sonos-volume">
+        <label for="sonos-volume">Volume</label>
+        <input id="sonos-volume" type="range" min="0" max="100" step="1" value="0">
+        <output for="sonos-volume">0</output>
+      </div>
+    </fieldset>
+    <p class="status" role="status" aria-live="polite"></p>
+    <div class="row">
+      <button class="go" type="submit" value="play" disabled>Play this file</button>
+      <button class="plain" type="submit" value="cancel" formnovalidate>Close</button>
     </div>
   </form>
 </dialog>

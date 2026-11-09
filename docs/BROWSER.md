@@ -449,6 +449,62 @@ shows it read-only. Changing it by hand revokes every link handed out so far.
 If the file cannot be written, a key is made for this run only, and the links
 stop working at the next restart.
 
+## Playing on Sonos
+
+With `http.sonos = true`, **Play on Sonos…** in the row menu of an `.mp3`,
+`.m4a`, `.aac`, `.flac`, `.ogg`, `.oga` or `.wav` file plays it on a Sonos
+speaker of the local network. The dialog lists the rooms the server finds, a
+group of rooms that play together as one entry named after its first room.
+**Play this file** has the room chosen play the file, in place of what it
+played; the queue of the Sonos app stays as it was. Below the list the dialog
+shows what the room is doing, with **Resume**, **Pause**, **Stop** and the
+volume of the whole group. **Search again** looks for speakers again, say after
+rooms were grouped in the Sonos app. The room chosen last is chosen again the
+next time the dialog opens, in the same browser.
+
+A speaker is not sent the file. It is told a link, which it then fetches from
+this server itself, with no account:
+
+```text
+http://192.168.1.5:8080/music/song.mp3?go-fs-play=1767225600.3f9c…
+```
+
+The link goes to `general.internalAddress` where that is set, or else to the
+plain HTTP listener, or the HTTPS one when there is no plain one, at
+`http.address`. Where that is `0.0.0.0`, the address is the one this host
+reaches the speaker from. The speakers have to reach it: with `http.address`
+at `127.0.0.1` the dialog refuses to play. A speaker fetches over HTTPS only
+from a certificate it trusts, which go-fs's own certificate is not, so serve
+the speakers over plain HTTP on the local network or name a trusted address in
+`general.internalAddress`.
+
+The key is an HMAC-SHA256, keyed by `http.shareLinkSecret`, over the file's
+path, the time it runs out, and the file's modification time and size. Like a
+share link it answers only `GET` and `HEAD` of the one file, with ranges, so a
+speaker can seek. Unlike a share link it runs out by itself, twelve hours after
+it was handed out. It stops working as soon as the file changes, and while
+`http.sonos` is off.
+
+The server finds the speakers by SSDP: it sends a search to
+`239.255.255.250:1900` on every interface that takes multicast and waits two
+seconds for the answers. It then asks one speaker of each household how the
+rooms are grouped. A network that multicast does not cross, a VLAN of its own
+say, is reached by naming its speakers in `http.sonosSpeakers`, as
+`"192.168.20.31"` or `"192.168.20.31:1400"`, which are asked directly. What
+was found is kept for 30 seconds. The server only talks to the speakers it
+found or that `http.sonosSpeakers` names, and believes an answer to its search
+only where the speaker's description is on the address the answer came from,
+at port 1400. The dialog names a room by its id and never by an address.
+
+Playing a file is offered as **Send File…** is: to a session of an account that
+may read the file. The endpoint is `?go-fs=sonos&sonos=<what>` on the file:
+`groups` and `state` (with `&group=<id>`) answer `GET`, and `play`, `resume`,
+`pause`, `stop` and `volume` take a `POST` of `{"group":"<id>"}`, with
+`"volume"` from 0 to 100 for the last.
+
+Playing on Sonos is left out of go-fs-light, and of a binary built with the
+tag `no_sonos`.
+
 ## Fetching a file from a URL
 
 An account that has logged in through the form, and may create files in a
