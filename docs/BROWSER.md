@@ -647,10 +647,10 @@ title, or the track where the site names one; the artist, which most videos
 do not name, so their channel stands in for it; the album, its artist and
 the track number where the site has them, as YouTube Music does; the year it
 was released, or else uploaded; and the address of the video as the comment.
-Its cover is the thumbnail of the video, cut to the square in its middle. An
-audio the site sends as an MP3 already is tagged without being converted
-again, and a thumbnail ffmpeg cannot read leaves the file without a cover
-rather than fail the fetch. The tags can be changed afterwards with
+Its cover is the thumbnail of the video in its own shape, shrunk where its
+longer side is more than 768 pixels. An audio the site sends as an MP3
+already is tagged without being converted again, and a thumbnail ffmpeg
+cannot read leaves the file without a cover rather than fail the fetch. The tags can be changed afterwards with
 [Edit MP3 Tag…](#editing-mp3-tags).
 
 The file is named `Title [id].ext` after the video, and lands in the folder

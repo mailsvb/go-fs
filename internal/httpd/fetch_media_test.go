@@ -227,7 +227,7 @@ func TestMediaFetchStoresWhatYtDlpMade(t *testing.T) {
 		{mediaAudio, true, "A Song [abc123].mp3",
 			[]string{"-f\nba/b\n", "--write-thumbnail", "thumbnail:meta/cover.%(ext)s", "--print-to-file\n%(.{title,",
 				"--ffmpeg--", "libmp3lame", "-q:a\n0", "-progress\npipe:1", ".m4a\n", ".mp3.part",
-				string(filepath.Separator) + filepath.Join(mediaMeta, "cover.webp") + "\n-map\n0:a:0\n-map\n1:v:0", "crop='min(iw,ih)':'min(iw,ih)'", "attached_pic",
+				string(filepath.Separator) + filepath.Join(mediaMeta, "cover.webp") + "\n-map\n0:a:0\n-map\n1:v:0", "-vf\n" + coverFilter + "\n", "attached_pic",
 				"-map_metadata\n-1\n-id3v2_version\n3",
 				"-metadata\ntitle=A Song | Live\n", "-metadata\nartist=Jawed\n", "-metadata\ndate=2026\n",
 				"-metadata\ncomment=" + youTubeURL + "\n"},

@@ -25,13 +25,21 @@ import (
 // The same run tags the MP3: yt-dlp leaves in meta/ of its folder the
 // thumbnail of the video and a few fields of what it knows of it, and ffmpeg
 // writes them as ID3v2.3, which more players read than 2.4, the thumbnail
-// cut to its middle square as the front cover. A video that names no artist,
-// as most do, takes its channel for one.
+// as the front cover, in its own shape and shrunk where its longer side is
+// more than coverSide. A video that names no artist, as most do, takes its
+// channel for one.
 
 // mediaMeta is the folder in the work folder of a fetch that yt-dlp writes
 // the thumbnail and the fields of the video to; mediaFile looks no deeper
 // than the work folder, so neither is taken for the download.
 const mediaMeta = "meta"
+
+// coverSide is the most pixels the longer side of the cover of an MP3 is;
+// a thumbnail is shrunk to it, keeping its shape, but never enlarged.
+const coverSide = 768
+
+// coverFilter is the ffmpeg filter that shrinks a thumbnail to coverSide.
+var coverFilter = fmt.Sprintf("scale='min(%[1]d,iw)':'min(%[1]d,ih)':force_original_aspect_ratio=decrease:flags=lanczos", coverSide)
 
 // mediaTagsTemplate has yt-dlp write the fields of the video the tags are
 // made of as one JSON object, those it does not know left out or null.
@@ -170,7 +178,7 @@ func findCover(work string) string {
 
 // mp3Args are the arguments ffmpeg is run with to make an MP3 at out of the
 // audio in, at the highest VBR quality or, where copy says in is an MP3
-// already, as it is, tagged with tags and with the middle square of cover as
+// already, as it is, tagged with tags and with cover, shrunk to coverSide, as
 // its front cover where there is a cover. It says its progress on stdout.
 func mp3Args(in, cover, out string, tags mediaTags, copy bool) []string {
 	args := []string{"-hide_banner", "-nostdin", "-nostats", "-y", "-i", "file:" + in}
@@ -180,7 +188,7 @@ func mp3Args(in, cover, out string, tags mediaTags, copy bool) []string {
 	args = append(args, "-map", "0:a:0")
 	if cover != "" {
 		args = append(args, "-map", "1:v:0", "-c:v", "mjpeg", "-q:v", "2",
-			"-vf", "crop='min(iw,ih)':'min(iw,ih)'", "-disposition:v:0", "attached_pic",
+			"-vf", coverFilter, "-disposition:v:0", "attached_pic",
 			"-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)")
 	}
 	if copy {
