@@ -190,6 +190,8 @@ func sonosServer(t *testing.T, sp *speaker, tune func(*httpConfig)) *testServer 
 	t.Cleanup(func() { _ = silent.Close() })
 	client := sonos.New()
 	client.Search = silent.LocalAddr().String()
+	// a sweep would reach the real speakers of the network the test runs on
+	client.Subnets = nil
 	server.sonos.client = client
 	server.sonos.wait = 20 * time.Millisecond
 	server.sonos.pollEvery = 10 * time.Millisecond

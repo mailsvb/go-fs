@@ -378,7 +378,7 @@ data connection owes nothing on the control one.
 | `users[].ftp`, `users[].sftp`, `users[].http`, `users[].s3` | `false` | an account logs in only to the servers it switches on |
 | `http.enableS3` | `true` | the S3 API is there wherever the HTTP server is, and serves only the accounts that set `s3` |
 | `http.jellyfinDiscovery` | `false` | answering broadcasts opens a UDP port on every interface, so being found on the network is switched on deliberately |
-| `http.sonos` | `false` | playing on a speaker hands it a link that fetches the file without an account, and searches the network by multicast, so it is switched on deliberately |
+| `http.sonos` | `false` | playing on a speaker hands it a link that fetches the file without an account, and searches the network by multicast, or else tries port 1400 on its addresses, so it is switched on deliberately |
 | `http.webdav` | `false` | a WebDAV client deletes folders recursively and moves across them, so mounting the folder as a drive is switched on deliberately |
 | `users[].allowUser*` | `false` | an account is granted only the rights its table lists |
 | `http.enabled` | `true` | the one server that is on, so the admin interface can be reached to set up the rest |

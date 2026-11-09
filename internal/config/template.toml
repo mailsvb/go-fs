@@ -683,7 +683,8 @@ jellyfinDiscovery = false
 sonos = false
 # Addresses of speakers, "192.168.1.20" or "192.168.1.20:1400", asked
 # directly besides those the search finds, for speakers on a network that
-# multicast does not reach.
+# multicast does not reach. When neither finds one, the server tries port
+# 1400 on the addresses of the private networks it is on.
 sonosSpeakers = []
 
 # maximum simultaneous connections

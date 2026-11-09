@@ -235,6 +235,12 @@ func (s *Server) sonosGroups(ctx context.Context, set *settings, fresh bool) ([]
 			players = append(players, p)
 		}
 	}
+	if len(players) == 0 && searchErr == nil {
+		// no speaker answered the search: multicast may not reach them, or
+		// a firewall drops their answers
+		players = client.Sweep(ctx)
+		s.log.Debug("http sonos search found no speaker, tried the port on the network", "speakers", len(players))
+	}
 	if len(players) == 0 && searchErr != nil {
 		return nil, searchErr
 	}

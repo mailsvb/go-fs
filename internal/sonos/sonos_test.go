@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -133,6 +134,7 @@ func testClient(ssdp, port string) *Client {
 	c := New()
 	c.Search = ssdp
 	c.port = port
+	c.Subnets = nil
 	return c
 }
 
@@ -493,3 +495,50 @@ func TestProbeAddsThePort(t *testing.T) {
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestSweepFindsASpeakerByItsPort(t *testing.T) {
+	speaker := newFakeSpeaker(t, "RINCON_000E58A0B1C201400", "Kitchen")
+	c := testClient(ssdpGroup, speaker.port())
+	if players := c.Sweep(context.Background()); players != nil {
+		t.Fatalf("a client without subnets swept and found %+v", players)
+	}
+	c.Subnets = func() []netip.Prefix { return []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")} }
+	players := c.Sweep(context.Background())
+	want := Player{UUID: "RINCON_000E58A0B1C201400", Room: "Kitchen", Model: "Sonos One", Host: speaker.host()}
+	if len(players) != 1 || players[0] != want {
+		t.Errorf("found %+v, want %+v", players, want)
+	}
+}
+
+func TestSweepAddrs(t *testing.T) {
+	for _, tc := range []struct {
+		prefix      string
+		n           int
+		first, last string
+	}{
+		{"192.168.0.10/24", 254, "192.168.0.1", "192.168.0.254"},
+		{"10.1.2.3/22", 1022, "10.1.0.1", "10.1.3.254"},
+		// larger than a /22: the /24 the server is in
+		{"10.20.30.40/8", 254, "10.20.30.1", "10.20.30.254"},
+		{"192.168.5.6/31", 2, "192.168.5.6", "192.168.5.7"},
+		{"192.168.5.6/32", 1, "192.168.5.6", "192.168.5.6"},
+		{"fd00::1/64", 0, "", ""},
+	} {
+		addrs := sweepAddrs(netip.MustParsePrefix(tc.prefix))
+		if len(addrs) != tc.n {
+			t.Errorf("%s: %d addresses, want %d", tc.prefix, len(addrs), tc.n)
+			continue
+		}
+		if tc.n > 0 && (addrs[0].String() != tc.first || addrs[len(addrs)-1].String() != tc.last) {
+			t.Errorf("%s: %s to %s, want %s to %s", tc.prefix, addrs[0], addrs[len(addrs)-1], tc.first, tc.last)
+		}
+	}
+}
+
+func TestLocalSubnetsArePrivate(t *testing.T) {
+	for _, p := range localSubnets() {
+		if !p.Addr().Is4() || !p.Addr().IsPrivate() {
+			t.Errorf("%s is swept, though it is no private IPv4 network", p)
+		}
+	}
+}

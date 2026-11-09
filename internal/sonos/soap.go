@@ -17,6 +17,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 )
@@ -35,6 +36,9 @@ type Client struct {
 	// Search is where a search is sent: the SSDP group, or in a test a
 	// socket on the loopback interface that stands in for the speakers.
 	Search string
+	// Subnets is the networks a Sweep tries, those of the interfaces of the
+	// server; nil tries none.
+	Subnets func() []netip.Prefix
 	// port is the port an answer to a search has to name, Port but in a
 	// test.
 	port string
@@ -60,8 +64,9 @@ func New() *Client {
 				return http.ErrUseLastResponse
 			},
 		},
-		Search: ssdpGroup,
-		port:   Port,
+		Search:  ssdpGroup,
+		Subnets: localSubnets,
+		port:    Port,
 	}
 }
 

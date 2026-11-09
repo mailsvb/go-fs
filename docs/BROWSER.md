@@ -532,9 +532,17 @@ it was handed out. It stops working as soon as the file changes, and while
 The server finds the speakers by SSDP: it sends a search to
 `239.255.255.250:1900` on every interface that takes multicast and waits two
 seconds for the answers. It then asks one speaker of each household how the
-rooms are grouped. A network that multicast does not cross, a VLAN of its own
-say, is reached by naming its speakers in `http.sonosSpeakers`, as
-`"192.168.20.31"` or `"192.168.20.31:1400"`, which are asked directly. What
+rooms are grouped. When neither the search nor `http.sonosSpeakers` finds a
+speaker, the server tries port 1400 on every address of the private IPv4
+networks it is on, a /22 at most and else the /24 it is in, and keeps the
+addresses that describe themselves as Sonos speakers. That finds them where
+the router does not pass multicast from the wired network to the wireless
+one, or where the server's firewall drops the answers to the search, which
+come from the speakers rather than from the group the search went to. A
+network the server is not on, a VLAN of its own say, is reached by naming its
+speakers in `http.sonosSpeakers`, as `"192.168.20.31"` or
+`"192.168.20.31:1400"`, which are asked directly; one speaker of a household
+is enough, as it knows every room. What
 was found is kept for 30 seconds. The server only talks to the speakers it
 found or that `http.sonosSpeakers` names, and believes an answer to its search
 only where the speaker's description is on the address the answer came from,
