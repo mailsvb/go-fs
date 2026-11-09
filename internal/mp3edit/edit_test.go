@@ -81,6 +81,13 @@ func sourceOfPath(t *testing.T, path string) Source {
 			f, err := os.Open(path)
 			return f, f, err
 		},
+		Stat: func() (int64, time.Time, error) {
+			info, err := os.Stat(path)
+			if err != nil {
+				return 0, time.Time{}, err
+			}
+			return info.Size(), info.ModTime(), nil
+		},
 	}
 }
 
@@ -110,6 +117,9 @@ func (m *memory) source() Source {
 			m.data = got
 			m.modTime = m.modTime.Add(time.Second)
 			return nil
+		},
+		Stat: func() (int64, time.Time, error) {
+			return int64(len(m.data)), m.modTime, nil
 		},
 	}
 }

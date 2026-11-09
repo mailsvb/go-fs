@@ -2,10 +2,14 @@
 
 package mp3edit
 
+import "log/slog"
+
 // Compiled says the binary was built without the part.
 const Compiled = false
 
 func Genres() []string { return nil }
+
+func Persist(Bucket, *slog.Logger) {}
 
 func Read(Source) (Info, error) { return Info{}, ErrUnavailable }
 

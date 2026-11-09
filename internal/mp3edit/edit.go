@@ -4,14 +4,18 @@ package mp3edit
 
 import (
 	"container/list"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/mailsvb/go-tag/mp3gain"
 	"github.com/mailsvb/go-tag/mp3tags"
@@ -43,6 +47,7 @@ func Read(src Source) (Info, error) {
 	if t.Cover != nil && len(t.Cover.Data) > 0 {
 		info.Cover = &Cover{MIME: coverType(t.Cover), Size: len(t.Cover.Data)}
 	}
+	_, info.Measured = cached(src)
 	return info, nil
 }
 
@@ -154,11 +159,16 @@ func Save(src Source, e Edit) error {
 	case e.RemoveCover:
 		t.Cover = nil
 	}
+	// measured is what the audio was measured at before this save, which
+	// the file keeps under its new version, shifted by the change
+	var measured mp3gain.Result
+	var known bool
 	if e.Steps != 0 || e.ReplayGain || e.Album != nil {
 		res, err := analysisFrom(src, r)
 		if err != nil {
 			return err
 		}
+		measured, known = res, true
 		if e.Steps > res.MaxUp() || -e.Steps > res.MaxDown() {
 			return ErrOutOfRange
 		}
@@ -177,6 +187,8 @@ func Save(src Source, e Edit) error {
 			t.Gain.AlbumGain, t.Gain.AlbumPeak = "", ""
 		}
 		t.Gain.Steps += e.Steps
+	} else {
+		measured, known = cached(src)
 	}
 	if t.Equal(before) {
 		return nil
@@ -186,7 +198,17 @@ func Save(src Source, e Edit) error {
 	if steps := e.Steps; steps != 0 {
 		transform = func(audio []byte) error { return applyGain(audio, steps) }
 	}
-	defer forget(src)
+	err = write(src, r, t, transform, closeOnce)
+	forget(src)
+	if err == nil && known {
+		carry(src, measured, e.Steps)
+	}
+	return err
+}
+
+// write replaces the file with its new tags, and its audio changed by
+// transform where that is not nil.
+func write(src Source, r io.ReaderAt, t mp3tags.Tags, transform func([]byte) error, closeOnce func() error) error {
 	if src.Path != "" {
 		// the file is rewritten beside itself and renamed over what was read,
 		// which some systems refuse while it is still open
@@ -288,7 +310,9 @@ func analysisFrom(src Source, r io.ReaderAt) (mp3gain.Result, error) {
 var decoding = make(chan struct{}, max(1, runtime.NumCPU()))
 
 // The analyses of the files measured last, by the file and its version, so
-// that planning an album and saving it do not decode its files again.
+// that planning an album and saving it do not decode its files again. Behind
+// the memory, the persistent data file keeps them, so that they outlast the
+// process and a file is measured once for as long as it stays as it is.
 const cacheSize = 256
 
 var cache = struct {
@@ -302,14 +326,141 @@ type cacheEntry struct {
 	res mp3gain.Result
 }
 
+// keepFor is how long the persistent data file keeps an analysis after it was
+// last used; one of a file that changed is no longer used and runs out.
+const keepFor = 180 * 24 * time.Hour
+
+// storedVersion is the version of the records of the persistent data file:
+// one of another version is not used, and its file is measured again.
+const storedVersion = 1
+
+var persisted struct {
+	sync.RWMutex
+	bucket Bucket
+	logger *slog.Logger
+}
+
+// now is the clock the records of the persistent data file run out by.
+var now = time.Now
+
+// Persist keeps analyses in a bucket of the persistent data file beyond the
+// memory of the process; nil keeps them in memory only.
+func Persist(b Bucket, logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	persisted.Lock()
+	defer persisted.Unlock()
+	persisted.bucket, persisted.logger = b, logger
+}
+
+func persistence() (Bucket, *slog.Logger) {
+	persisted.RLock()
+	defer persisted.RUnlock()
+	return persisted.bucket, persisted.logger
+}
+
+// stored is an analysis as the persistent data file keeps it: the loudness
+// nil for silence, which JSON has no number for, and the energies of the
+// blocks as float32 in little-endian order, which keeps a minute of audio in
+// 2.4 KB and the loudness of an album within far less than a step.
+type stored struct {
+	V          int       `json:"v"`
+	Frames     int       `json:"frames"`
+	SampleRate int       `json:"sampleRate"`
+	Mono       bool      `json:"mono,omitempty"`
+	MinGain    int       `json:"minGain"`
+	MaxGain    int       `json:"maxGain"`
+	Loudness   *float64  `json:"loudness"`
+	Peak       float64   `json:"peak"`
+	Blocks     []byte    `json:"blocks"`
+	Until      time.Time `json:"until"`
+}
+
+func toStored(res mp3gain.Result, until time.Time) stored {
+	s := stored{V: storedVersion, Frames: res.Frames, SampleRate: res.SampleRate, Mono: res.Mono,
+		MinGain: res.MinGain, MaxGain: res.MaxGain, Peak: res.Peak, Until: until,
+		Blocks: make([]byte, 4*len(res.Blocks))}
+	if !math.IsInf(res.Loudness, -1) {
+		loudness := res.Loudness
+		s.Loudness = &loudness
+	}
+	for i, b := range res.Blocks {
+		binary.LittleEndian.PutUint32(s.Blocks[4*i:], math.Float32bits(float32(b)))
+	}
+	return s
+}
+
+// result is the analysis a record keeps, false for one of another version.
+func (s stored) result() (mp3gain.Result, bool) {
+	if s.V != storedVersion || s.Frames <= 0 || len(s.Blocks)%4 != 0 {
+		return mp3gain.Result{}, false
+	}
+	res := mp3gain.Result{
+		Stats: mp3gain.Stats{Frames: s.Frames, SampleRate: s.SampleRate, Mono: s.Mono,
+			MinGain: s.MinGain, MaxGain: s.MaxGain},
+		Loudness: math.Inf(-1), Peak: s.Peak, Blocks: make([]float64, len(s.Blocks)/4),
+	}
+	if s.Loudness != nil {
+		res.Loudness = *s.Loudness
+	}
+	for i := range res.Blocks {
+		res.Blocks[i] = float64(math.Float32frombits(binary.LittleEndian.Uint32(s.Blocks[4*i:])))
+	}
+	return res, true
+}
+
 func versionOf(src Source) string {
 	return src.Key + "\x00" + strconv.FormatInt(src.Size, 10) + "\x00" + strconv.FormatInt(src.ModTime.UnixNano(), 10)
 }
 
+// nameOf is the key of a file as a log shows it.
+func nameOf(src Source) string {
+	return strings.ReplaceAll(src.Key, "\x00", " ")
+}
+
+// cached is what the file as it is was measured at, from the memory or the
+// persistent data file, false where it was not measured.
 func cached(src Source) (mp3gain.Result, bool) {
+	key := versionOf(src)
+	if res, ok := recalled(key); ok {
+		return res, true
+	}
+	bucket, logger := persistence()
+	if bucket == nil {
+		return mp3gain.Result{}, false
+	}
+	var s stored
+	found, err := bucket.Get(key, &s)
+	if err != nil {
+		logger.Warn("mp3edit: reading a kept analysis", "file", nameOf(src), "err", err)
+		return mp3gain.Result{}, false
+	}
+	if !found {
+		return mp3gain.Result{}, false
+	}
+	res, ok := s.result()
+	if !ok {
+		return mp3gain.Result{}, false
+	}
+	memorize(key, res)
+	if s.Until.Sub(now()) < keepFor/2 {
+		persist(src, key, res)
+	}
+	return res, true
+}
+
+// remember keeps what the file as it is was measured at.
+func remember(src Source, res mp3gain.Result) {
+	key := versionOf(src)
+	memorize(key, res)
+	persist(src, key, res)
+}
+
+func recalled(key string) (mp3gain.Result, bool) {
 	cache.Lock()
 	defer cache.Unlock()
-	el, ok := cache.byKey[versionOf(src)]
+	el, ok := cache.byKey[key]
 	if !ok {
 		return mp3gain.Result{}, false
 	}
@@ -317,8 +468,7 @@ func cached(src Source) (mp3gain.Result, bool) {
 	return el.Value.(*cacheEntry).res, true
 }
 
-func remember(src Source, res mp3gain.Result) {
-	key := versionOf(src)
+func memorize(key string, res mp3gain.Result) {
 	cache.Lock()
 	defer cache.Unlock()
 	if el, ok := cache.byKey[key]; ok {
@@ -334,15 +484,83 @@ func remember(src Source, res mp3gain.Result) {
 	}
 }
 
+// persist writes an analysis to the persistent data file. A failure is
+// logged and nothing else: the analysis holds all the same, and the file is
+// measured again where it is not found next time.
+func persist(src Source, key string, res mp3gain.Result) {
+	bucket, logger := persistence()
+	if bucket == nil {
+		return
+	}
+	until := now().Add(keepFor)
+	if err := bucket.PutUntil(key, toStored(res, until), until); err != nil {
+		logger.Warn("mp3edit: keeping an analysis", "file", nameOf(src), "err", err)
+	}
+}
+
 // forget drops the analysis of a version of a file that is being replaced.
 func forget(src Source) {
 	key := versionOf(src)
 	cache.Lock()
-	defer cache.Unlock()
 	if el, ok := cache.byKey[key]; ok {
 		cache.order.Remove(el)
 		delete(cache.byKey, key)
 	}
+	cache.Unlock()
+	bucket, logger := persistence()
+	if bucket == nil {
+		return
+	}
+	if err := bucket.Delete(key); err != nil {
+		logger.Warn("mp3edit: dropping a kept analysis", "file", nameOf(src), "err", err)
+	}
+}
+
+// carry keeps what a file was measured at before a save under the version
+// the save left, changed by the steps the save changed its volume by, so that
+// the file is not measured again. Where the new version is not known, the
+// file is measured again next time.
+func carry(src Source, res mp3gain.Result, steps int) {
+	if src.Stat == nil {
+		return
+	}
+	res, ok := shifted(res, steps)
+	if !ok {
+		return
+	}
+	size, modTime, err := src.Stat()
+	if err != nil {
+		return
+	}
+	next := src
+	next.Size, next.ModTime = size, modTime
+	remember(next, res)
+}
+
+// shifted is what audio measured at res measures at once its global gains
+// are changed by steps: each step scales the samples by 2^(1/4), their
+// energies by 2^(1/2). False where the louder audio would clip, which the
+// decoder cuts and so changes what it measures.
+func shifted(res mp3gain.Result, steps int) (mp3gain.Result, bool) {
+	if steps == 0 {
+		return res, true
+	}
+	peak := res.Peak * math.Pow(2, float64(steps)/4)
+	if peak > 1 {
+		return mp3gain.Result{}, false
+	}
+	energy := math.Pow(2, float64(steps)/2)
+	blocks := make([]float64, len(res.Blocks))
+	for i, b := range res.Blocks {
+		blocks[i] = b * energy
+	}
+	stats := res.Stats
+	if stats.MaxGain != 0 {
+		// a gain of 0 is silence, which no change touches
+		stats.MinGain += steps
+		stats.MaxGain += steps
+	}
+	return mp3gain.Result{Stats: stats, Loudness: mp3gain.Loudness(blocks), Peak: peak, Blocks: blocks}, true
 }
 
 // locks are the files being saved, each with how many saves wait for it.

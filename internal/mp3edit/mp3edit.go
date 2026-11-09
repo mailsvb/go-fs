@@ -64,6 +64,18 @@ type Source struct {
 	// Put replaces the file, whole, with body. It must leave the file as it
 	// was when body fails.
 	Put func(body io.Reader) error
+	// Stat tells the size and the time of change of the file as it is now,
+	// for a save to keep what the file was measured at under its new
+	// version; nil where that is not known, and a save forgets it.
+	Stat func() (size int64, modTime time.Time, err error)
+}
+
+// Bucket is where analyses are kept beyond the memory of the process, as a
+// bucket of the persistent data file keeps them.
+type Bucket interface {
+	Get(key string, v any) (bool, error)
+	PutUntil(key string, v any, expires time.Time) error
+	Delete(key string) error
 }
 
 // Fields are the tag fields the editor changes.
@@ -102,6 +114,9 @@ type Info struct {
 	// Cover is nil for a file without one.
 	Cover *Cover `json:"cover"`
 	Gain  Gain   `json:"gain"`
+	// Measured says the file as it is was measured before, so that Analyze
+	// answers without decoding it again.
+	Measured bool `json:"measured"`
 }
 
 // Change is a planned volume change.

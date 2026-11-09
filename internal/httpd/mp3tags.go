@@ -163,7 +163,18 @@ func localMP3(file string, info fs.FileInfo) mp3edit.Source {
 			}
 			return f, f, nil
 		},
+		Stat: func() (int64, time.Time, error) {
+			return statOf(os.Stat(file))
+		},
 	}
+}
+
+// statOf is the size and the time of change of a file a stat found.
+func statOf(info fs.FileInfo, err error) (int64, time.Time, error) {
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	return info.Size(), info.ModTime(), nil
 }
 
 // remoteMP3Tags answers the editor on a stored server, once it was logged in
@@ -256,6 +267,9 @@ func remoteMP3(q *remoteRequest, file string, info fs.FileInfo) mp3edit.Source {
 		Put: func(body io.Reader) error {
 			_, err := q.fs.Put(file, body, -1)
 			return err
+		},
+		Stat: func() (int64, time.Time, error) {
+			return statOf(q.fs.Stat(file))
 		},
 	}
 }

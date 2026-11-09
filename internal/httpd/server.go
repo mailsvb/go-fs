@@ -32,6 +32,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/httpd/viewer"
 	"github.com/mailsvb/go-fs/internal/logging"
+	"github.com/mailsvb/go-fs/internal/mp3edit"
 	"github.com/mailsvb/go-fs/internal/service"
 	"github.com/mailsvb/go-fs/internal/store"
 	"github.com/mailsvb/go-fs/internal/tlsconf"
@@ -311,6 +312,14 @@ func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.
 	if err != nil {
 		return nil, err
 	}
+
+	// measured MP3s are kept, so that a file is decoded once for as long as
+	// it stays as it is, across restarts too
+	var measured mp3edit.Bucket
+	if data != nil {
+		measured = data.Bucket("mp3gain")
+	}
+	mp3edit.Persist(measured, logger)
 
 	// kept, so that a digest client is not refused the nonce it was handed
 	// before a restart

@@ -2962,6 +2962,9 @@
           });
           showCover(info.cover ? link(name, "cover") : null);
           applied.textContent = appliedText(info.gain);
+          if (info.measured) {
+            measured.textContent = "Measured before: Analyze shows it at once.";
+          }
           busy(false);
           tell("");
           field("title").focus();
@@ -3288,8 +3291,26 @@
           if (mine === session) {
             busy(false);
             tell("");
+            measured.textContent = measuredBefore();
           }
         });
+      }
+
+      // measuredBefore says how many files were measured before, which
+      // Analyze all shows at once
+      function measuredBefore() {
+        var count = files.filter(function (file) {
+          return file.info && file.info.measured;
+        }).length;
+        if (!count) {
+          return "";
+        }
+        if (count === files.length) {
+          return (count === 1 ? "The file was" : "All " + count + " files were") +
+            " measured before: Analyze all shows them at once.";
+        }
+        return count + " of " + files.length + " files were measured before: Analyze all reuses " +
+          (count === 1 ? "that measurement." : "those measurements.");
       }
 
       // A value typed into the first row is every file's; emptied again,

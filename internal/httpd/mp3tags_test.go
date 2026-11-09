@@ -163,12 +163,18 @@ func TestMP3VolumeIsMeasuredAndChanged(t *testing.T) {
 	if res := mp3Do(t, server, http.MethodPost, link+"analyze", "kim", struct{}{}, nil); res.StatusCode != http.StatusForbidden {
 		t.Errorf("measuring by an account that may not replace the file answered %d", res.StatusCode)
 	}
+	if info := mp3Info(t, mp3Do(t, server, http.MethodGet, link+"tags", "john", nil, nil)); info.Measured {
+		t.Error("a file never measured is said to be measured")
+	}
 	res := mp3Do(t, server, http.MethodPost, link+"analyze", "john", struct{}{}, nil)
 	var analysis struct {
 		MaxUp int `json:"maxUp"`
 	}
 	if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&analysis) != nil || analysis.MaxUp != 255 {
 		t.Fatalf("measuring answered %d, %+v", res.StatusCode, analysis)
+	}
+	if info := mp3Info(t, mp3Do(t, server, http.MethodGet, link+"tags", "john", nil, nil)); !info.Measured {
+		t.Error("a measured file is not said to be measured")
 	}
 	res = mp3Do(t, server, http.MethodPost, "/music/?go-fs=mp3tags&mp3tags=album", "john",
 		map[string]any{"names": []string{"a.mp3", "b.mp3"}}, nil)

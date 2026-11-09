@@ -359,9 +359,17 @@ removes the album values, which no longer apply.
 
 Measuring decodes the whole file, which takes a core for about as long as the
 decoder needs; go-fs measures at most as many files at once as the machine has
-cores, keeps what it measured until the file changes, and refuses files larger
-than 512 MiB. A Jellyfin library reads a file again once it was saved, as it
-does any changed file.
+cores, and refuses files larger than 512 MiB. A Jellyfin library reads a file
+again once it was saved, as it does any changed file.
+
+What a measurement found is kept in the
+[persistent data file](INSTALL.md#run), not in the file: measuring never
+writes to a file, and only a save writes the ReplayGain values. Analyze, and
+Analyze all, then answer at once for a file measured before, also after a
+restart, for as long as the file stays as it is; the editors say which files
+that is. A save keeps the measurement of the file it changes, moved by the
+change of the volume, unless the louder audio would clip. A measurement nobody
+used for 180 days is dropped.
 
 The editor is left out of go-fs-light, and of a binary built with the tag
 `no_mp3tags`.

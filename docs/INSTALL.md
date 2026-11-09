@@ -141,6 +141,9 @@ Besides share links and playback progress, the file keeps:
   other;
 * what each repository read of its packages, so that a restart reads only the
   files that changed meanwhile and writes no metadata when nothing did;
+* the loudness of each MP3 file measured in the
+  [tag editor](BROWSER.md#the-volume), so that it is not decoded again while
+  it stays as it is; a measurement not used for 180 days is dropped;
 * what each account did in the [Jellyfin music library](REPOSITORIES.md#jellyfin-music-library):
   play counts, favorites, resume positions, the views its clients set, the
   history of every track it played, and the tokens its clients logged out
