@@ -84,12 +84,19 @@ func bySeq(sessions []*Session) {
 }
 
 // Close ends the session for the reason given.
-func (s *Session) Close(reason string) {
+func (s *Session) Close(reason string) { s.close(reason) }
+
+// close ends the session and reports whether this call ended it: one that
+// was closed before stays registered until it lets go of the image, and
+// closing it again does nothing.
+func (s *Session) close(reason string) (first bool) {
 	s.closeOnce.Do(func() {
+		first = true
 		if s.closer != nil {
 			s.closer(reason)
 		}
 	})
+	return first
 }
 
 // AddRead and AddWritten count the bytes the session moved.

@@ -481,3 +481,36 @@ func TestOpensOfOneFolderShareTheLocks(t *testing.T) {
 		t.Errorf("the other open deletes an attached disk: %v", err)
 	}
 }
+
+// A session closed a moment ago is listed until it lets go of the image, and
+// disconnecting it again finds nothing more to close.
+func TestDisconnectingTwiceClosesOnce(t *testing.T) {
+	f := folder(t)
+	create(t, f, "vm.raw", mib)
+	closes := 0
+	slow := NewSession(func(string) { closes++ })
+	slow.Writable = true
+	file, lease, err := f.Attach("vm.raw", slow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the file has to be closed, or Windows cannot remove the test's folder
+	defer file.Close()
+	defer lease.Release()
+	if !f.Disconnect(slow.ID) {
+		t.Fatal("Disconnect found nothing")
+	}
+	if len(f.Sessions()) != 1 {
+		t.Fatal("the session went before it let go of the image")
+	}
+	if f.Disconnect(slow.ID) {
+		t.Error("disconnecting a session already closed reported it closed again")
+	}
+	if closes != 1 {
+		t.Errorf("the session was closed %d times", closes)
+	}
+	lease.Release()
+	if f.Disconnect(slow.ID) {
+		t.Error("disconnecting a session that is gone reported it closed")
+	}
+}

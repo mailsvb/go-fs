@@ -399,12 +399,13 @@ func (f *Folder) OpenRead(name string) (*os.File, *Lease, error) {
 // Sessions are the NBD sessions of the folder, in the order they began.
 func (f *Folder) Sessions() []*Session { return f.reg.sessions() }
 
-// Disconnect closes the NBD session id, reporting whether there was one.
+// Disconnect closes the NBD session id, reporting whether there was one
+// still open: a session closed a moment ago is listed until its connection
+// lets go of the image, and is not closed twice.
 func (f *Folder) Disconnect(id string) bool {
 	for _, session := range f.reg.sessions() {
 		if session.ID == id {
-			session.Close("it was disconnected on the Disks page")
-			return true
+			return session.close("it was disconnected on the Disks page")
 		}
 	}
 	return false
