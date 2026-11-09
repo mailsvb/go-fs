@@ -32,6 +32,13 @@ import (
 // reads them, so a video or audio fetch takes neither; the configuration
 // files yt-dlp would read are ignored, so that what it does is what this file
 // says.
+//
+// YouTube asks for a login, "Sign in to confirm you're not a bot", of every
+// client yt-dlp poses as when it comes over many an IPv6 address, home
+// connections included, and lets the same machine in over IPv4. So a YouTube
+// link is fetched over IPv4, as Java programs such as JDownloader do by
+// default, and needs no cookies; any other site is reached as the network
+// prefers.
 
 const (
 	mediaVideo = "video"
@@ -73,6 +80,9 @@ func mediaArgs(set *settings, fetch fetchRequest, work string) []string {
 	if fetch.skipVerify {
 		args = append(args, "--no-check-certificates")
 	}
+	if isYouTube(fetch.url.Hostname()) {
+		args = append(args, "--force-ipv4")
+	}
 	ffmpeg := set.cfg.FFmpeg
 	if ffmpeg.Found() {
 		args = append(args, "--ffmpeg-location", ffmpeg.Path)
@@ -91,6 +101,19 @@ func mediaArgs(set *settings, fetch fetchRequest, work string) []string {
 		args = append(args, "-f", "b")
 	}
 	return append(args, "--", fetch.url.String())
+}
+
+// isYouTube says host is YouTube's: youtu.be, youtube.com and its subdomains
+// such as www., m. and music., and youtube-nocookie.com, which embeds use. It
+// is the check listing.js makes to pick Video, and the embed domain.
+func isYouTube(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	switch {
+	case host == "youtu.be", host == "youtube.com", host == "youtube-nocookie.com":
+		return true
+	default:
+		return strings.HasSuffix(host, ".youtube.com") || strings.HasSuffix(host, ".youtube-nocookie.com")
+	}
 }
 
 // mediaJobName is what a video or audio fetch is listed as until yt-dlp

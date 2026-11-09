@@ -619,7 +619,10 @@ above, **Video** and **Audio only** have yt-dlp take the video, or its sound,
 out of the page the URL names, such as a YouTube video. Typing a YouTube link
 (`youtube.com`, `m.`/`music.youtube.com`, `youtu.be`) picks **Video** by
 itself; yt-dlp knows many other sites as well, which are fetched by choosing
-**Video** or **Audio only** by hand.
+**Video** or **Audio only** by hand. YouTube links are fetched over IPv4:
+over many IPv6 connections, home ones included, YouTube answers yt-dlp with
+`Sign in to confirm you're not a bot`, while over IPv4 it needs no login or
+cookies.
 
 What is fetched depends on whether go-fs also found ffmpeg:
 

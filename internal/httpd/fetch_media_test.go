@@ -325,3 +325,56 @@ func TestMediaJobName(t *testing.T) {
 		}
 	}
 }
+
+func TestIsYouTube(t *testing.T) {
+	for host, want := range map[string]bool{
+		"youtube.com":              true,
+		"www.youtube.com":          true,
+		"m.youtube.com":            true,
+		"music.youtube.com":        true,
+		"WWW.YouTube.COM":          true,
+		"www.youtube.com.":         true,
+		"youtu.be":                 true,
+		"www.youtube-nocookie.com": true,
+		"notyoutube.com":           false,
+		"youtube.com.example.com":  false,
+		"vimeo.com":                false,
+		"127.0.0.1":                false,
+		"":                         false,
+	} {
+		if got := isYouTube(host); got != want {
+			t.Errorf("isYouTube(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+// YouTube asks yt-dlp to sign in over many IPv6 addresses, so its links are
+// fetched over IPv4, and only its links.
+func TestMediaArgsForceIPv4ForYouTube(t *testing.T) {
+	set := &settings{cfg: config.HTTP{UploadStagingFolder: t.TempDir()}}
+	for raw, want := range map[string]bool{
+		"https://www.youtube.com/watch?v=jNQXAC9IVRw":     true,
+		"https://m.youtube.com/watch?v=jNQXAC9IVRw":       true,
+		"https://music.youtube.com/watch?v=jNQXAC9IVRw":   true,
+		"https://youtu.be/jNQXAC9IVRw":                    true,
+		"https://WWW.YOUTUBE.COM:443/watch?v=jNQXAC9IVRw": true,
+		"https://vimeo.com/76979871":                      false,
+		"https://notyoutube.com/watch?v=jNQXAC9IVRw":      false,
+		"http://127.0.0.1:18182/x.mp4":                    false,
+	} {
+		u, _ := url.Parse(raw)
+		args := mediaArgs(set, fetchRequest{url: u, media: mediaVideo}, t.TempDir())
+		got := false
+		for _, arg := range args {
+			if arg == "--force-ipv4" {
+				got = true
+			}
+		}
+		if got != want {
+			t.Errorf("%s: --force-ipv4 is passed %v, want %v", raw, got, want)
+		}
+		if args[len(args)-1] != u.String() || args[len(args)-2] != "--" {
+			t.Errorf("%s: the URL is not last after --: %q", raw, args)
+		}
+	}
+}
