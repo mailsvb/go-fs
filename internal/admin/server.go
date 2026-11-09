@@ -116,6 +116,9 @@ type state struct {
 	// Summaries describes the values that hold key material, keyed
 	// "ftps.cert", so the page shows what a base64 blob actually is.
 	Summaries map[string]string `json:"summaries,omitempty"`
+	// Placeholders are what the empty box of a key says, keyed
+	// "general.tools.ytDlp": what leaving it empty does on this machine.
+	Placeholders map[string]string `json:"placeholders,omitempty"`
 	// Protocols are what the dialog of a remote server offers.
 	Protocols []config.ServerType `json:"protocols"`
 	// Vaults reports whether the dialog of a remote server offers a vault of
@@ -306,13 +309,14 @@ func (h *Handler) handleState(w http.ResponseWriter) {
 
 	values := h.schema.Values(cfg)
 	body := state{
-		Schema:    h.schema,
-		Values:    values,
-		Path:      h.path,
-		Reload:    cfg.General.ReloadConfig,
-		Summaries: h.schema.Summaries(values),
-		Protocols: config.ServerTypes,
-		Vaults:    features.Has(features.Cryptomator),
+		Schema:       h.schema,
+		Values:       values,
+		Path:         h.path,
+		Reload:       cfg.General.ReloadConfig,
+		Summaries:    h.schema.Summaries(values),
+		Placeholders: toolPlaceholders(),
+		Protocols:    config.ServerTypes,
+		Vaults:       features.Has(features.Cryptomator),
 
 		RepositoryTypes: config.RepositoryTypes,
 		Repositories:    repositoryViews(cfg),

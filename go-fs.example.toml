@@ -151,6 +151,21 @@ banner = []
 #
 # banner = ["Authorized use only.", "Every login is logged."]
 
+# Programs of the OS that go-fs uses when it finds them. An empty path is looked
+# for at startup and at every reload, on the PATH and in the folders package
+# managers install to (/opt/homebrew/bin, /usr/local/bin, /usr/bin, ~/.local/bin
+# and the like). A path that is set has to be absolute and name the program
+# itself: go-fs runs it with its version flag, and refuses a file that does not
+# answer as that program. What needs a program is on while it is found.
+[general.tools]
+# yt-dlp, which lets Fetch download the video or the audio of a YouTube link.
+# Empty looks for it.
+ytDlp = ""
+# ffmpeg, which yt-dlp uses to join the best video with the best audio and to
+# turn audio into MP3; without it Fetch takes the best single file a site
+# offers. Empty looks for it.
+ffmpeg = ""
+
 # Folders that are kept from growing without bound: once an hour everything but
 # the newest "keep" files in them is deleted. No entry means no sweep. Paths
 # are relative to general.baseFolderFiles, and the sweep runs whichever servers

@@ -220,6 +220,7 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 			"sections", strings.Join(changedSections(s.current, cfg), ","))
 	}
 	s.applyLog(cfg.General)
+	s.logTools(cfg)
 
 	// a service that could not be brought up leaves the remembered
 	// configuration alone, so that the next reload sees a change and tries it

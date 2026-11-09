@@ -257,6 +257,10 @@ type rights struct {
 	// Fetch is the Fetch button, which downloads a URL into the folder. It
 	// is offered to a session only; see mayFetch.
 	Fetch bool
+	// FetchMedia is Download as in the Fetch dialog, which fetches the video
+	// or the audio of a page such as a YouTube video, by yt-dlp: offered with
+	// Fetch while yt-dlp was found.
+	FetchMedia bool
 	// Downloads is the status of the transfers of the account in the header,
 	// shown to a session wherever it is; see mayFollowFetches.
 	Downloads bool

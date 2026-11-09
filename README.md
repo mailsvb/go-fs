@@ -22,7 +22,8 @@ HTTP server serves to its admins.
 - **A real browser UI.** A built-in viewer for PDF, Word, Excel, PowerPoint,
   text and images that needs nothing from the web, video playback, an audio
   player that keeps playing while you browse, share links, a trash, folder
-  downloads, fetch from a URL, send to SFTP, SMB or Artifactory (in a
+  downloads, fetch from a URL (the video or audio of a YouTube link too, with
+  yt-dlp), send to SFTP, SMB or Artifactory (in a
   Cryptomator vault if you like), and scheduled two-way sync.
 - **Safe by default.** Listens on `127.0.0.1` only, generates its own
   certificates and host key, offers bearer tokens for scripts, and only

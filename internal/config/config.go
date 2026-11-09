@@ -136,9 +136,32 @@ type General struct {
 	// to another host from the listing.
 	SSH SSH `toml:"ssh" feature:"sftp,sftp-remote"`
 
+	// Tools are the programs of the OS go-fs uses when it finds them, such
+	// as yt-dlp, which lets Fetch download video and audio. An empty path is
+	// looked for at startup and at every reload; a path that is set has to
+	// be that program. A program found switches on what needs it.
+	Tools Tools `toml:"tools"`
+
 	// Cleanup are the folders kept from growing without bound, relative to
 	// BaseFolderFiles. They are swept whichever servers are enabled.
 	Cleanup []Cleanup `toml:"cleanup"`
+}
+
+// Tools are the paths of the programs of the OS go-fs uses when they are
+// there. An empty path is looked for on the PATH and in the folders such a
+// program is usually installed to; a path that is set has to be absolute and
+// name the program itself, which is checked by running it with its version
+// flag. Whatever needs a program is on while it is found, and off otherwise.
+type Tools struct {
+	// YtDlp is the path to yt-dlp, which lets Fetch download the video or the
+	// audio of a YouTube link, and of the many other sites yt-dlp knows.
+	// Empty looks for it.
+	YtDlp string `toml:"ytDlp"`
+	// FFmpeg is the path to ffmpeg, which yt-dlp uses to join the best video
+	// with the best audio and to turn audio into MP3. Without it a video is
+	// fetched as the best single file the site offers, and audio as the
+	// site sends it. Empty looks for it.
+	FFmpeg string `toml:"ffmpeg"`
 }
 
 // SSH configures the SSH transport: the algorithms go-fs offers, for the SFTP
@@ -937,6 +960,11 @@ type HTTP struct {
 	// hands both to the server.
 	JellyfinName string `toml:"-"`
 	JellyfinURL  string `toml:"-"`
+	// YtDlp and FFmpeg are the programs of general.tools that were found,
+	// with the version they report, or nothing for one that was not; Resolved
+	// hands them to the server. Fetch offers video and audio while YtDlp is.
+	YtDlp  Tool `toml:"-"`
+	FFmpeg Tool `toml:"-"`
 	// SessionTokenLifetime is how long a browser that logged in with the
 	// login form stays logged in without being used, in seconds. Every
 	// request it makes in the second half of that window renews its token,
@@ -1352,6 +1380,8 @@ func (c Config) Resolved() Config {
 	c.HTTP.ShareExternalAddress = shareAddressOr(c.General.ExternalAddress)
 	c.HTTP.JellyfinFolders = c.JellyfinFolders()
 	c.HTTP.JellyfinName, c.HTTP.JellyfinURL = c.JellyfinServer()
+	c.HTTP.YtDlp = FindTool(ToolYtDlp, c.General.Tools.YtDlp)
+	c.HTTP.FFmpeg = FindTool(ToolFFmpeg, c.General.Tools.FFmpeg)
 	return c
 }
 
@@ -1449,6 +1479,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.validateDisks(); err != nil {
+		return err
+	}
+	if err := c.General.Tools.validate(); err != nil {
 		return err
 	}
 	if _, err := ShareAddress(c.General.InternalAddress); err != nil {

@@ -29,8 +29,8 @@ func TestANestedTableIsASubsection(t *testing.T) {
 			t.Errorf("%s has subsections %v", section.Key, section.Subsections)
 		}
 	}
-	if len(general.Subsections) != 1 || general.Subsections[0].Key != "ssh" {
-		t.Fatalf("general has the subsections %+v, want ssh alone", general.Subsections)
+	if len(general.Subsections) != 2 || general.Subsections[0].Key != "ssh" || general.Subsections[1].Key != "tools" {
+		t.Fatalf("general has the subsections %+v, want ssh and tools", general.Subsections)
 	}
 	ssh := general.Subsections[0]
 	if ssh.Label != "ssh" || !strings.Contains(ssh.Help, "2 MB") {

@@ -1625,9 +1625,36 @@
     var go = form.querySelector("button[value='start']");
     var stop = form.querySelector("button[value='stop']");
     var close = form.querySelector("button[value='cancel']");
+    // media is Download as, there while the server has yt-dlp: a video or
+    // its audio takes no login and no headers, which are hidden for it
+    var media = form.elements.media || null;
+    var plainOnly = dialog.querySelectorAll(".plain-only");
     // job is the fetch the dialog waits on until its download begins, null
     // while it waits on none
     var job = null;
+
+    function chosenMedia() {
+      return media ? media.value : "";
+    }
+
+    function showMedia() {
+      var hide = chosenMedia() !== "";
+      Array.prototype.forEach.call(plainOnly, function (element) {
+        element.hidden = hide;
+      });
+    }
+
+    // youTube says a URL is a YouTube video, which is fetched as one rather
+    // than as the page it is
+    function youTube(text) {
+      var host;
+      try {
+        host = new URL(text.trim()).hostname.toLowerCase();
+      } catch (e) {
+        return false;
+      }
+      return host === "youtu.be" || host === "youtube.com" || /\.youtube\.com$/.test(host);
+    }
 
     function field(name) {
       return form.elements[name];
@@ -1664,7 +1691,7 @@
     }
 
     function busy(on) {
-      Array.prototype.forEach.call(form.querySelectorAll("input, textarea"), function (input) {
+      Array.prototype.forEach.call(form.querySelectorAll("input, textarea, select"), function (input) {
         input.disabled = on;
       });
       go.hidden = on;
@@ -1687,6 +1714,7 @@
     function fresh() {
       form.reset();
       headers.open = false;
+      showMedia();
       quiet();
     }
 
@@ -1752,16 +1780,18 @@
       if (job) {
         return;
       }
+      var kind = chosenMedia();
       var body = {
         url: field("url").value.trim(),
-        username: field("username").value.trim(),
-        password: field("password").value,
-        headers: field("headers").value,
-        skipVerify: !field("verify").checked
+        username: kind ? "" : field("username").value.trim(),
+        password: kind ? "" : field("password").value,
+        headers: kind ? "" : field("headers").value,
+        skipVerify: !field("verify").checked,
+        media: kind
       };
       busy(true);
       bar.removeAttribute("value");
-      tell("Connecting…");
+      tell(kind ? "Looking up the " + kind + "…" : "Connecting…");
       askFetch("POST", folder + "?go-fs=fetch", body).then(function (res) {
         return res.json();
       }).then(function (view) {
@@ -1783,6 +1813,17 @@
         downloads.refresh();
       }
     });
+
+    if (media) {
+      media.addEventListener("change", showMedia);
+      // a YouTube link is a video, unless Download as was chosen otherwise
+      field("url").addEventListener("input", function () {
+        if (media.value === "" && youTube(field("url").value)) {
+          media.value = "video";
+          showMedia();
+        }
+      });
+    }
 
     button.addEventListener("click", function () {
       clear();

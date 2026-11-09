@@ -12,6 +12,8 @@ let values = null;
 // what each stored certificate or key actually is, keyed "ftps.cert", since
 // base64 on its own tells the reader nothing
 let summaries = {};
+// placeholders are what the empty box of a key says, by its path in the file
+let placeholders = {};
 // the tab that is open, kept across a reload so that Apply does not send the
 // reader back to the first one
 let selected = 0;
@@ -86,6 +88,7 @@ async function load() {
   schema = state.schema;
   values = state.values;
   summaries = state.summaries || {};
+  placeholders = state.placeholders || {};
   protocols = state.protocols || [];
   vaults = state.vaults === true;
   repositoryTypes = state.repositoryTypes || [];
@@ -470,7 +473,7 @@ function fieldGrid(fields, holder, section) {
     label.textContent = field.label;
     const input = field.upload
       ? materialEditor(field, holder, section)
-      : editor(field, holder);
+      : editor(field, holder, section ? section + "." + field.key : "");
     label.htmlFor = input.id;
     grid.append(label, input.element, ...helpCells(field));
   });
@@ -1849,7 +1852,9 @@ let sequence = 0;
 
 // editor builds the input for one key and wires it straight into the value it
 // edits, so that Apply posts what is on the screen with nothing to collect.
-function editor(field, holder) {
+// path is the key in the file, "general.tools.ytDlp", by which its
+// placeholder is found.
+function editor(field, holder, path) {
   const id = "field-" + ++sequence;
   const set = (value) => (holder[field.key] = value);
 
@@ -1896,6 +1901,9 @@ function editor(field, holder) {
 
   input.type = field.kind === "secret" ? "password" : "text";
   input.value = holder[field.key] ?? "";
+  if (placeholders[path]) {
+    input.placeholder = placeholders[path];
+  }
   input.addEventListener("input", () => set(input.value));
   if (field.readOnly) {
     // made by the server and sent back as it came

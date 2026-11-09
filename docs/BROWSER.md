@@ -493,7 +493,7 @@ SFTP (see [Remote servers](REMOTE-SERVERS.md#sending-a-file-to-another-server)) 
 Fetch is offered to a session only: not to Basic, Digest or bearer
 credentials, which have `PUT` for the same job, and not to anyone where `PUT`
 is public. The endpoints are `?go-fs=fetch` (`POST` of `url`, `username`,
-`password`, `headers` and `skipVerify`) and
+`password`, `headers`, `skipVerify` and `media`, see below) and
 `?go-fs=fetch-job&id=…` (`GET` for the progress, `DELETE` to stop and clear)
 on the folder, and `?go-fs=fetch-jobs` (`GET`), on any folder, for the
 account's fetches and sends that have not been cleared, with `kind`, `name`, `folder`,
@@ -501,3 +501,46 @@ account's fetches and sends that have not been cleared, with `kind`, `name`, `fo
 `bytesTotal` and `bytesPerSecond`. Note that the server connects to whatever host is typed in, from its
 own network, internal addresses included: give the right to create files only
 to accounts that may do that.
+
+### Video and audio
+
+While go-fs has found [yt-dlp](https://github.com/yt-dlp/yt-dlp) (see
+[External tools](CONFIGURATION.md#external-tools)), the Fetch dialog has
+**Download as** below the URL: **File, as the URL serves it** is the fetch
+above, **Video** and **Audio only** have yt-dlp take the video, or its sound,
+out of the page the URL names, such as a YouTube video. Typing a YouTube link
+(`youtube.com`, `m.`/`music.youtube.com`, `youtu.be`) picks **Video** by
+itself; yt-dlp knows many other sites as well, which are fetched by choosing
+**Video** or **Audio only** by hand.
+
+What is fetched depends on whether go-fs also found ffmpeg:
+
+| | with ffmpeg | without ffmpeg |
+|---|---|---|
+| Video | the best video and the best audio, joined into an `.mp4` | the best single file that holds both, often of a lower resolution |
+| Audio only | the best audio, converted to an `.mp3` of the highest VBR quality | the best audio as the site sends it, an `.m4a` where it offers one |
+
+The file is named `Title [id].ext` after the video, and lands in the folder
+under the rules of any fetch: created where the account may create, replacing
+a file only with `allowUserFileOverwrite`, and no larger than `maxUploadSize`.
+It runs as a fetch too, among the eight that run at once, in **Transfers**
+with its progress, its speed and **Stop**; the progress of a video counts its
+video and its audio together, which are downloaded one after the other. The
+dialog waits until yt-dlp has found the video and begun the download, so an
+error such as `Video unavailable` or a video that needs a login is shown
+there.
+
+yt-dlp downloads into a folder of its own in `general.baseFolderTemp`, which
+is removed when the fetch ends, however it ends; Stop ends yt-dlp together
+with the ffmpeg it runs. It keeps a cache of what it learned of a site in
+`yt-dlp-cache` there. It is run without a shell, with `--ignore-config`, so no
+configuration file of yt-dlp changes what it does, and with `--no-playlist`
+and one download at most: the link of a video in a playlist fetches that
+video. A video or audio fetch takes no username, password or headers, which
+yt-dlp would have on its command line, visible to every user of the machine.
+
+The endpoint is the same `?go-fs=fetch`, with `media` set to `video` or
+`audio`; it answers `400` while there is no yt-dlp.
+
+Whether a video may be downloaded is up to its site's terms and to copyright,
+which go-fs does not check: offer this to accounts that respect them.

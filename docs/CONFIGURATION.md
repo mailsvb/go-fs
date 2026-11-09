@@ -1,6 +1,6 @@
 # Configuration
 
-One TOML file with a `[general]` section, its `[general.ssh]` table and
+One TOML file with a `[general]` section, its `[general.ssh]` and `[general.tools]` tables and
 `[[general.cleanup]]` list, a `[[users]]` list, an `[ftp]`, an `[ftps]`, an `[sftp]`, an `[http]`, an
 `[https]` and a `[tftp]` section.
 Every key is optional and keeps the documented default when absent, so a
@@ -111,6 +111,39 @@ removal is logged.
 path = "/iso"
 keep = 10
 ```
+
+## External tools
+
+go-fs is one binary and needs nothing else, but it uses a few programs of the
+OS when they are there. `[general.tools]` names them:
+
+```toml
+[general.tools]
+ytDlp = ""    # yt-dlp: Fetch downloads the video or audio of a YouTube link
+ffmpeg = ""   # ffmpeg: yt-dlp joins the best video and audio, and makes MP3
+```
+
+An empty path is looked for, at startup and at every reload: on the `PATH`
+first, then in the folders package managers install to, which the `PATH` of a
+service often lacks — `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`,
+`/snap/bin` and `~/.local/bin`, or on Windows the links of winget, the shims of
+Scoop and Chocolatey's `bin`. A path that is set has to be absolute. Either
+way a program counts only once it has been run with its version flag and
+answered as itself: yt-dlp with the date of its release (`yt-dlp --version`),
+ffmpeg with `ffmpeg version …` (`ffmpeg -version`); it has 15 seconds to do
+so, and is run again only once the file changes. A path that is set and is
+not the program is an error of the file, which the admin interface refuses to
+save. There is nothing to switch on: what needs a program is on while it is
+found, and the log says at startup, and whenever it changes, which were found
+where (`tool found tool=yt-dlp path=… version=…`) and which were not. In the
+admin interface the empty box of each says which program leaving it empty
+takes on this machine. A program installed while go-fs runs is found at the
+next reload, by saving the configuration, or at the next start.
+
+| Program | Used for |
+|---|---|
+| `ytDlp` | **Video** and **Audio only** in the Fetch dialog, see [Video and audio](BROWSER.md#video-and-audio) |
+| `ffmpeg` | the best video joined with the best audio, and audio as MP3, by yt-dlp; without it the best single file |
 
 ## Reloading
 

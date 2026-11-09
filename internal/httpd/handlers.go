@@ -65,6 +65,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		}
 		allowed := s.rightsFor(set, user, target.Virtual)
 		allowed.Fetch = mayFetch(cred, target.Virtual)
+		allowed.FetchMedia = allowed.Fetch && set.cfg.YtDlp.Found()
 		allowed.Downloads = mayFollowFetches(cred)
 		allowed.Import = s.registrySession(set, r) != nil
 		allowed.Share = cred.user != nil

@@ -159,6 +159,10 @@ type fetchBody struct {
 	// SkipVerify takes whatever certificate the remote shows: the dialog's
 	// Validate Connection, unticked.
 	SkipVerify bool `json:"skipVerify"`
+	// Media is what the dialog's Download as chose: empty for the file the
+	// URL answers with, or mediaVideo or mediaAudio for what yt-dlp makes of
+	// the page, such as a YouTube video.
+	Media string `json:"media"`
 }
 
 // fetchRequest is a fetch that was read and found sound.
@@ -167,6 +171,9 @@ type fetchRequest struct {
 	header             http.Header
 	username, password string
 	skipVerify         bool
+	// media is mediaVideo or mediaAudio for a fetch that yt-dlp makes, ""
+	// for a plain one.
+	media string
 }
 
 // request reads what a fetch asks for.
@@ -198,8 +205,19 @@ func (b fetchBody) request() (fetchRequest, error) {
 	if (username != "" || b.Password != "") && header.Get("Authorization") != "" {
 		return fetchRequest{}, errors.New("give either a username and password or an Authorization header, not both")
 	}
+	switch b.Media {
+	case "":
+	case mediaVideo, mediaAudio:
+		// yt-dlp would take them on its command line, where every user of
+		// the machine reads them
+		if username != "" || b.Password != "" || len(header) != 0 {
+			return fetchRequest{}, errors.New("a video or audio fetch takes no username, password or headers")
+		}
+	default:
+		return fetchRequest{}, fmt.Errorf("%q is neither video nor audio", b.Media)
+	}
 	return fetchRequest{url: u, header: header, username: username, password: b.Password,
-		skipVerify: b.SkipVerify}, nil
+		skipVerify: b.SkipVerify, media: b.Media}, nil
 }
 
 // maxFetchHeaders bounds the headers a fetch may add.
@@ -305,11 +323,22 @@ func (s *Server) fetchStart(set *settings, w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if fetch.media != "" && !set.cfg.YtDlp.Found() {
+		http.Error(w, "Fetching video or audio needs yt-dlp, which this server has not found.", http.StatusBadRequest)
+		return
+	}
 	shown := shownURL(fetch.url)
 	address := clientAddress(set, r)
 	job, err := s.startJob(jobFetch, user.name, shown+" → "+folder, func(ctx context.Context, job *registryJob) (string, error) {
-		job.named(cleanFetchedName(fetch.url.Path), folder)
-		message, err := s.fetchFile(ctx, set, job, fetch, folder, user, address)
+		var message string
+		var err error
+		if fetch.media != "" {
+			job.named(mediaJobName(fetch.url), folder)
+			message, err = s.fetchMedia(ctx, set, job, fetch, folder, user, address)
+		} else {
+			job.named(cleanFetchedName(fetch.url.Path), folder)
+			message, err = s.fetchFile(ctx, set, job, fetch, folder, user, address)
+		}
 		if err != nil && ctx.Err() == nil {
 			s.log.Warn("http fetch failed", "url", shown, "folder", folder, "user", user.name,
 				"address", address, "error", err)
@@ -318,7 +347,8 @@ func (s *Server) fetchStart(set *settings, w http.ResponseWriter, r *http.Reques
 	})
 	if err == nil {
 		s.log.Info("http fetch started", "url", shown, "folder", folder, "headers", len(fetch.header),
-			"login", fetch.username != "", "verify", !fetch.skipVerify, "user", user.name, "address", address, "job", job.id)
+			"login", fetch.username != "", "verify", !fetch.skipVerify, "media", fetch.media,
+			"user", user.name, "address", address, "job", job.id)
 	}
 	s.answerStarted(w, job, err)
 }
@@ -433,18 +463,28 @@ func (s *Server) storeFetched(set *settings, job *registryJob, body io.Reader, c
 	if limit > 0 && written > limit {
 		return 0, false, fetchTooLarge(name, limit)
 	}
+	replace, err := s.placeFetched(target, name, stagedPath, user)
+	if err != nil {
+		return 0, false, err
+	}
+	return written, replace, nil
+}
 
+// placeFetched puts a file that was fetched in full into the staging folder
+// where it goes, under the rules an upload of its name keeps, and says
+// whether that replaced a file.
+func (s *Server) placeFetched(target vfs.Target, name, stagedPath string, user *account) (bool, error) {
 	lock := s.uploadLock(target.Path)
 	lock.Lock()
 	defer lock.Unlock()
 	replace, err := fetchReplaces(target, name, user)
 	if err != nil {
-		return 0, false, err
+		return false, err
 	}
 	if err := finalizeUpload(stagedPath, target.Path, replace); err != nil {
-		return 0, false, err
+		return false, err
 	}
-	return written, replace, nil
+	return replace, nil
 }
 
 // fetchReplaces decides whether a fetch may store its file, and whether that
