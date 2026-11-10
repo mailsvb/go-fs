@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -131,6 +132,8 @@ type Server struct {
 	dav davState
 	// jellyfin keeps what the Jellyfin clients played; see jellyfin.go.
 	jellyfin jellyfinState
+	// subsonic keeps what the OpenSubsonic clients played; see subsonic.go.
+	subsonic *subsonicState
 	// sonos keeps the speakers found last; see sonos.go.
 	sonos sonosState
 }
@@ -161,14 +164,17 @@ type settings struct {
 	// registry is off.
 	registry *registryStore
 	// jellyfin says that there is a jellyfin repository, while which the
-	// server answers Jellyfin clients.
+	// server answers Jellyfin clients, and subsonic that there is a
+	// subsonic repository, while which it answers OpenSubsonic clients.
 	jellyfin bool
+	subsonic bool
 	// publicPaths are http.pathsWithoutAuth compiled: the paths a GET or a
 	// HEAD may read without an account. Every other path needs one.
 	publicPaths []*regexp.Regexp
-	// jellyfinPaths are the folders of the jellyfin repositories, which need
-	// an account even where one of publicPaths matches them.
-	jellyfinPaths []*regexp.Regexp
+	// musicPaths are the folders of the jellyfin and the subsonic
+	// repositories, which need an account even where one of publicPaths
+	// matches them.
+	musicPaths []*regexp.Regexp
 	// proxies are http.trustedProxies compiled, the addresses whose
 	// X-Forwarded-For and X-Forwarded-Proto are believed.
 	proxies []netip.Prefix
@@ -240,13 +246,14 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 	// a music library is read by its listeners, who log in to it from their
 	// clients, and nobody else: its folder needs an account even where
 	// pathsWithoutAuth would open it
-	jellyfinPaths := make([]*regexp.Regexp, 0, len(cfg.JellyfinFolders))
-	for _, folder := range cfg.JellyfinFolders {
+	musicFolders := slices.Concat(cfg.JellyfinFolders, cfg.SubsonicFolders)
+	musicPaths := make([]*regexp.Regexp, 0, len(musicFolders))
+	for _, folder := range musicFolders {
 		compiled, err := compilePattern("^"+regexp.QuoteMeta(folder)+"(/|$)", fold)
 		if err != nil {
 			return nil, err
 		}
-		jellyfinPaths = append(jellyfinPaths, compiled)
+		musicPaths = append(musicPaths, compiled)
 	}
 	proxies := make([]netip.Prefix, 0, len(cfg.TrustedProxies))
 	for i, entry := range cfg.TrustedProxies {
@@ -262,7 +269,8 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 	}
 	return &settings{cfg: cfg, https: https, accounts: accounts, tokens: bearers,
 		s3accounts: s3accounts, registryAccounts: registryAccounts, registry: store,
-		jellyfin: len(cfg.JellyfinFolders) > 0, publicPaths: public, jellyfinPaths: jellyfinPaths, proxies: proxies, ssh: sshCfg, servers: servers,
+		jellyfin: len(cfg.JellyfinFolders) > 0, subsonic: len(cfg.SubsonicFolders) > 0, publicPaths: public,
+		musicPaths: musicPaths, proxies: proxies, ssh: sshCfg, servers: servers,
 		disks: disks}, nil
 }
 
@@ -291,6 +299,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, 
 	s.warnAboutNoReader(next)
 	s.warnAboutTheRegistry(next)
 	s.warnAboutJellyfin(next)
+	s.warnAboutSubsonic(next)
 	// the token lifetime needs nothing done to it: it is read from the
 	// snapshot when a token is minted, so a reload changes what is issued from
 	// here on and leaves a live token with the expiry it was signed with. The
@@ -362,6 +371,7 @@ func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.
 		done:          make(chan struct{}),
 		dav:           newDAVState(),
 		jellyfin:      newJellyfinState(data, logger),
+		subsonic:      newSubsonicState(data, logger),
 	}
 	if configPath != "" {
 		// built whether or not the switch is on: the switch is read from the
@@ -447,6 +457,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.warnAboutNoReader(set)
 	s.warnAboutTheRegistry(set)
 	s.warnAboutJellyfin(set)
+	s.warnAboutSubsonic(set)
 	s.discoverJellyfin(set)
 
 	go func() {
@@ -605,6 +616,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// music libraries rather than files
 	if set.jellyfin && isJellyfinRequest(r) {
 		s.serveJellyfin(set, w, r)
+		return
+	}
+
+	// an OpenSubsonic client asks for the methods of the API below /rest,
+	// whose paths name no files
+	if set.subsonic && isSubsonicRequest(r) {
+		s.serveSubsonic(set, w, r)
 		return
 	}
 

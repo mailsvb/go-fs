@@ -401,10 +401,10 @@ func accountNamed(accounts []*account, name string) *account {
 
 // needsAuth decides whether credentials are required at all. Every request
 // needs them, except a reading one whose path matches one of
-// http.pathsWithoutAuth; a folder of a jellyfin repository needs them even
-// then.
+// http.pathsWithoutAuth; a folder of a jellyfin or a subsonic repository
+// needs them even then.
 func (s *Server) needsAuth(set *settings, method, virtual string) bool {
-	return accountMethod(method) || matchesPath(set.jellyfinPaths, virtual) ||
+	return accountMethod(method) || matchesPath(set.musicPaths, virtual) ||
 		!matchesPath(set.publicPaths, virtual)
 }
 

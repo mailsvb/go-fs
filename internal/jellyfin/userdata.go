@@ -14,16 +14,19 @@ import (
 
 // What a listener did is kept in the persistent data file, by account and by
 // item, so that a client finds its favorites and what was played after a
-// restart. The account is the first part of every key, so that what one
-// account has is read in one go: user NUL item for the records, and user NUL
-// time NUL item for the plays, which so come in the order they were played.
+// restart. Each API that answers from the libraries keeps its own, in buckets
+// named after it: jellyfin.userdata and jellyfin.history for the Jellyfin
+// API, subsonic.userdata and subsonic.history for the OpenSubsonic one. The
+// account is the first part of every key, so that what one account has is
+// read in one go: user NUL item for the records, and user NUL time NUL item
+// for the plays, which so come in the order they were played.
 //
 // Records of an account or a file that is gone are kept: a library is built
 // after the start, from its folder, so that an item not found yet is not one
 // that is gone, and an account added again finds what it had.
 const (
-	userDataBucket = "jellyfin.userdata"
-	historyBucket  = "jellyfin.history"
+	userDataBucket = ".userdata"
+	historyBucket  = ".history"
 )
 
 // A play counts once the listener heard half of the track, or four minutes
@@ -58,6 +61,9 @@ type Record struct {
 	// Position is where a track is resumed from, in ticks.
 	Position int64 `json:"position,omitempty"`
 	Favorite bool  `json:"favorite,omitempty"`
+	// FavoriteAt is when the item was made a favorite, where the API says
+	// it: OpenSubsonic shows it, Jellyfin does not keep it.
+	FavoriteAt time.Time `json:"favoriteAt,omitzero"`
 }
 
 // Play is a play of a track that counted, as the history keeps it: with what
@@ -96,6 +102,8 @@ type Report struct {
 // The records of an account are read the first time it is asked about, and
 // written through. With no store, they are kept for this run only.
 type Listeners struct {
+	// api is the API the records are kept for, which names their buckets.
+	api     string
 	data    *store.Bucket
 	history *store.Bucket
 	log     *slog.Logger
@@ -125,11 +133,13 @@ type play struct {
 	counted    bool
 }
 
-// NewListeners keeps what the listeners do in st, which may be nil.
-func NewListeners(st *store.Store, logger *slog.Logger) *Listeners {
+// NewListeners keeps what the listeners of an API, jellyfin or subsonic, do
+// in st, which may be nil.
+func NewListeners(st *store.Store, api string, logger *slog.Logger) *Listeners {
 	return &Listeners{
-		data:    st.Bucket(userDataBucket),
-		history: st.Bucket(historyBucket),
+		api:     api,
+		data:    st.Bucket(api + userDataBucket),
+		history: st.Bucket(api + historyBucket),
 		log:     logger,
 		now:     time.Now,
 		records: map[string]map[string]Record{},
@@ -150,7 +160,7 @@ func (l *Listeners) Get(user, id string) Record {
 	defer l.mu.Unlock()
 	records, err := l.load(user)
 	if err != nil {
-		l.log.Warn("jellyfin cannot read what an account played from the persistent data file",
+		l.log.Warn(l.api+" cannot read what an account played from the persistent data file",
 			"user", user, "error", err)
 	}
 	return records[id]
@@ -164,7 +174,8 @@ func (l *Listeners) Data(user string) func(Item) Record {
 		if !ok {
 			return l.Get(user, item.ItemID())
 		}
-		r := Record{Favorite: l.Get(user, album.ID).Favorite, Played: len(album.Tracks) > 0}
+		own := l.Get(user, album.ID)
+		r := Record{Favorite: own.Favorite, FavoriteAt: own.FavoriteAt, Played: len(album.Tracks) > 0}
 		for _, t := range album.Tracks {
 			tr := l.Get(user, t.ID)
 			r.Played = r.Played && tr.Played
@@ -426,7 +437,7 @@ func (l *Listeners) load(user string) (map[string]Record, error) {
 	})
 	if err != nil {
 		// not kept, so that it is read again next time
-		return records, fmt.Errorf("%s: %w", userDataBucket, err)
+		return records, fmt.Errorf("%s%s: %w", l.api, userDataBucket, err)
 	}
 	l.records[user] = records
 	return records, nil

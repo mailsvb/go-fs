@@ -50,7 +50,7 @@ func newListeners(t *testing.T, st *store.Store) (*Listeners, *clock) {
 		st = openStore(t, filepath.Join(t.TempDir(), "go-fs.db"))
 		t.Cleanup(func() { _ = st.Close() })
 	}
-	l := NewListeners(st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	l := NewListeners(st, "jellyfin", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	c := &clock{now: day}
 	l.now = func() time.Time { return c.now }
 	return l, c
@@ -226,7 +226,7 @@ func TestRecordsAreKept(t *testing.T) {
 	if _, err := l.Update("john", song.ID, func(r *Record) { *r = Record{} }); err != nil {
 		t.Fatal(err)
 	}
-	found, err := st.Bucket(userDataBucket).Get("john\x00"+song.ID, &Record{})
+	found, err := st.Bucket("jellyfin.userdata").Get("john\x00"+song.ID, &Record{})
 	if err != nil || found {
 		t.Errorf("an empty record is kept: %v %v", found, err)
 	}
@@ -298,12 +298,42 @@ func TestQueriesReadTheRecords(t *testing.T) {
 
 func TestWithoutAStoreRecordsLastTheRun(t *testing.T) {
 	song := track(playlist(), "Song")
-	l := NewListeners(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	l := NewListeners(nil, "jellyfin", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	must(t, l.Progress(at("john", song, 2*time.Minute)))
 	if r := l.Get("john", song.ID); r.PlayCount != 1 {
 		t.Errorf("without a store: %+v", r)
 	}
 	if got := plays(t, l, "john"); len(got) != 0 {
 		t.Errorf("history without a store %q", got)
+	}
+}
+
+// TestListenersOfEachAPIKeepTheirOwn checks the records of one API are kept
+// in buckets named after it, apart from those of the other.
+func TestListenersOfEachAPIKeepTheirOwn(t *testing.T) {
+	lib := playlist()
+	song := track(lib, "Song")
+	st := openStore(t, filepath.Join(t.TempDir(), "go-fs.db"))
+	t.Cleanup(func() { _ = st.Close() })
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	jf, sub := NewListeners(st, "jellyfin", logger), NewListeners(st, "subsonic", logger)
+	starred := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	if _, err := sub.Update("john", song.ID, func(r *Record) { r.Favorite, r.FavoriteAt = true, starred }); err != nil {
+		t.Fatal(err)
+	}
+	must(t, sub.MarkPlayed("john", []*Track{song}, starred))
+	if r := jf.Get("john", song.ID); r != (Record{}) {
+		t.Errorf("jellyfin sees what subsonic keeps: %+v", r)
+	}
+	var kept Record
+	if found, err := st.Bucket("subsonic.userdata").Get("john\x00"+song.ID, &kept); err != nil || !found ||
+		!kept.Favorite || !kept.FavoriteAt.Equal(starred) || kept.PlayCount != 1 {
+		t.Errorf("subsonic.userdata holds %+v (%v, %v)", kept, found, err)
+	}
+	if got := plays(t, sub, "john"); !slices.Equal(got, []string{"Song"}) {
+		t.Errorf("the history of subsonic %q", got)
+	}
+	if got := plays(t, jf, "john"); len(got) != 0 {
+		t.Errorf("the history of jellyfin %q", got)
 	}
 }

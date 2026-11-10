@@ -319,16 +319,20 @@ func TestDescribesTheGains(t *testing.T) {
 
 func TestPublish(t *testing.T) {
 	l := library(t)
-	Publish(l)
-	defer Retire("music")
-	if got := Libraries(); len(got) != 1 || got[0] != l {
+	Publish("jellyfin", l)
+	defer Retire("jellyfin", "music")
+	if got := Libraries("jellyfin"); len(got) != 1 || got[0] != l {
 		t.Fatalf("published %v", got)
 	}
-	if Lookup(Libraries(), l.Tracks[0].ID) != l.Tracks[0] {
+	if Lookup(Libraries("jellyfin"), l.Tracks[0].ID) != l.Tracks[0] {
 		t.Error("a track is not found by its id")
 	}
-	Retire("music")
-	if len(Libraries()) != 0 {
+	// the clients of the other API do not see it
+	if got := Libraries("subsonic"); len(got) != 0 {
+		t.Errorf("a jellyfin library is published to subsonic: %v", got)
+	}
+	Retire("jellyfin", "music")
+	if len(Libraries("jellyfin")) != 0 {
 		t.Error("a retired library is still published")
 	}
 }

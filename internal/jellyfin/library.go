@@ -1,8 +1,10 @@
-// Package jellyfin is the music library of a jellyfin repository: the index
-// of its audio files by album, artist and genre, which the repository builds
-// from its folder, and the answers the HTTP server gives Jellyfin clients from
-// it. It knows nothing of HTTP or of accounts: the server asks it what a
-// client may see, and passes in what the account may read.
+// Package jellyfin is the music library of a jellyfin or a subsonic
+// repository: the index of its audio files by album, artist and genre, which
+// the repository builds from its folder, what the listeners did with it, and
+// the answers the HTTP server gives Jellyfin clients from it; internal/subsonic
+// gives those of OpenSubsonic clients from the same index. It knows nothing of
+// HTTP or of accounts: the server asks it what a client may see, and passes in
+// what the account may read.
 //
 // The libraries live here rather than on the repository that builds them,
 // because the server that answers from them is built apart from the
@@ -379,6 +381,10 @@ func byName[T Item](a, b T) int {
 		strings.Compare(a.ItemID(), b.ItemID()))
 }
 
+// SortName is the name an item is sorted by, as the libraries sort: without
+// case, and without the article in front of it.
+func SortName(name string) string { return sortName(name) }
+
 // sortName is the name an item is sorted by: without case, and without the
 // article in front of it, as Jellyfin sorts.
 func sortName(name string) string {
@@ -434,32 +440,40 @@ func newID(parts ...string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// published are the libraries of the running repositories, by name.
+// published are the libraries of the running repositories, by the type of
+// the repository, jellyfin or subsonic, and by name: the clients of one API
+// see the libraries of its repositories only.
 var published = struct {
 	sync.RWMutex
-	byName map[string]*Library
-}{byName: map[string]*Library{}}
+	byKind map[string]map[string]*Library
+}{byKind: map[string]map[string]*Library{}}
 
-// Publish makes a library the one of its repository that clients browse.
-func Publish(l *Library) {
+// Publish makes a library the one of its repository, of type kind, that
+// clients browse.
+func Publish(kind string, l *Library) {
 	published.Lock()
 	defer published.Unlock()
-	published.byName[l.Name] = l
+	if published.byKind[kind] == nil {
+		published.byKind[kind] = map[string]*Library{}
+	}
+	published.byKind[kind][l.Name] = l
 }
 
-// Retire takes the library of a repository away, which is stopped.
-func Retire(name string) {
+// Retire takes the library of a repository of type kind away, which is
+// stopped.
+func Retire(kind, name string) {
 	published.Lock()
 	defer published.Unlock()
-	delete(published.byName, name)
+	delete(published.byKind[kind], name)
 }
 
-// Libraries are the published libraries, by title.
-func Libraries() []*Library {
+// Libraries are the published libraries of the repositories of type kind, by
+// title.
+func Libraries(kind string) []*Library {
 	published.RLock()
 	defer published.RUnlock()
-	out := make([]*Library, 0, len(published.byName))
-	for _, l := range published.byName {
+	out := make([]*Library, 0, len(published.byKind[kind]))
+	for _, l := range published.byKind[kind] {
 		out = append(out, l)
 	}
 	slices.SortFunc(out, byName)

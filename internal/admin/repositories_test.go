@@ -230,3 +230,32 @@ func TestRepositorySaveJellyfin(t *testing.T) {
 		t.Errorf("keep for a library: %d %s", status, body)
 	}
 }
+
+func TestRepositorySaveSubsonic(t *testing.T) {
+	skipWithout(t, features.Subsonic, features.Jellyfin)
+	path := testConfig(t)
+	_, front := testServer(t, path)
+	status, body := postServer(t, front, ActionRepositorySave, repositorySaveBody{Repository: repositoryJSON{
+		Name: "music", Type: "subsonic", Folder: "/music", Title: " Our music ", SigningKey: "c29tZXRoaW5n",
+	}})
+	if status != http.StatusOK {
+		t.Fatalf("save: %d %s", status, body)
+	}
+	repo := loadRepositories(t, path).Repositories[0]
+	if repo.Type != "subsonic" || repo.Title != "Our music" || repo.SigningKey != "" || repo.Keep != 0 {
+		t.Errorf("stored %+v", repo)
+	}
+	// a jellyfin repository may share its folder
+	status, body = postServer(t, front, ActionRepositorySave, repositorySaveBody{Repository: repositoryJSON{
+		Name: "jf", Type: "jellyfin", Folder: "/music",
+	}})
+	if status != http.StatusOK || len(loadRepositories(t, path).Repositories) != 2 {
+		t.Errorf("a jellyfin repository of the folder of a subsonic one: %d %s", status, body)
+	}
+	status, body = postServer(t, front, ActionRepositorySave, repositorySaveBody{Was: "music", Repository: repositoryJSON{
+		Name: "music", Type: "subsonic", Folder: "/music", Keep: 2,
+	}})
+	if status != http.StatusBadRequest || !strings.Contains(body, "keep is 0") {
+		t.Errorf("keep for a library: %d %s", status, body)
+	}
+}

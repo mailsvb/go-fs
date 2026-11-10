@@ -23,6 +23,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/jellyfin"
 	"github.com/mailsvb/go-fs/internal/store"
 )
@@ -147,7 +148,7 @@ type jellyfinState struct {
 
 func newJellyfinState(st *store.Store, logger *slog.Logger) jellyfinState {
 	return jellyfinState{
-		listeners:   jellyfin.NewListeners(st, logger),
+		listeners:   jellyfin.NewListeners(st, "jellyfin", logger),
 		preferences: st.Bucket(jellyfinPreferences),
 		revoked:     st.Bucket(jellyfinRevoked),
 		discovery:   &jellyfinDiscovery{port: jellyfinDiscoveryPort},
@@ -356,7 +357,7 @@ func (s *Server) serveJellyfin(set *settings, w http.ResponseWriter, r *http.Req
 		if j.user != nil {
 			j.libs = j.libraries()
 		} else {
-			j.libs = jellyfin.Libraries()
+			j.libs = jellyfin.Libraries(config.RepositoryTypeJellyfin)
 		}
 		j.image(j.path[1], j.path[3])
 		return
@@ -461,26 +462,14 @@ func (j *jellyfinRequest) login() {
 	})
 }
 
-// libraries are the libraries as much of each as the account may see; a
-// library of which it may see nothing is not shown.
+// libraries are the libraries as much of each as the account may see.
 func (j *jellyfinRequest) libraries() []*jellyfin.Library {
-	key := fmt.Sprintf("%s\x00%v\x00%+v", j.user.name, j.user.paths, j.user.perms)
-	var out []*jellyfin.Library
-	for _, l := range jellyfin.Libraries() {
-		view := l.For(key, j.readable)
-		if len(view.Tracks) == 0 && !j.readable(l.Folder) {
-			continue
-		}
-		out = append(out, view)
-	}
-	return out
+	return musicLibraries(config.RepositoryTypeJellyfin, j.user)
 }
 
-// readable reports whether the account may read a file, as S3 decides it:
-// by its paths and its right to retrieve files, whether or not the path is
-// public, since a client that logged in reads as its account.
+// readable reports whether the account may read a file.
 func (j *jellyfinRequest) readable(virtual string) bool {
-	return j.user.allows(virtual) && granted(j.user.perms, actRead)
+	return musicReadable(j.user, virtual)
 }
 
 func (j *jellyfinRequest) describer() jellyfin.Describer {

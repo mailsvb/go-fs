@@ -25,8 +25,8 @@ type Repository struct {
 	// underscores; unique, whatever its case.
 	Name string `toml:"name"`
 	// Type is the kind of repository: rpm, for zypper and dnf, fdroid, for
-	// the F-Droid app on Android, or jellyfin, a music library Jellyfin
-	// clients browse and play.
+	// the F-Droid app on Android, jellyfin, a music library Jellyfin clients
+	// browse and play, or subsonic, one OpenSubsonic clients do.
 	Type string `toml:"type"`
 	// Folder is where the repository is, a folder of general.baseFolderFiles
 	// as the file listing shows it, such as /rpm/go-fs. It has to exist.
@@ -37,13 +37,13 @@ type Repository struct {
 	// metadata. For fdroid it is a certificate and its private key, PEM, one
 	// after the other, which sign the index; clients add the repository by
 	// the fingerprint of the certificate, so it is not to change. It is kept
-	// as it is, so keep this file private. A jellyfin repository signs
-	// nothing and has none.
+	// as it is, so keep this file private. A jellyfin or a subsonic
+	// repository signs nothing and has none.
 	SigningKey string `toml:"signingKey"`
 	// Keep is how many versions of each package, by name and architecture,
 	// stay in the folder; older ones are removed. 0 keeps every version. An
 	// APK is a version of its package name, by its versionCode. A jellyfin
-	// repository removes nothing, and keep is 0 for it.
+	// or a subsonic repository removes nothing, and keep is 0 for it.
 	Keep int `toml:"keep"`
 	// PollInterval is how often, in seconds, the folder is looked at for
 	// packages that were added, replaced or removed. 60 when not set.
@@ -55,9 +55,9 @@ type Repository struct {
 	// address the client is given and the index names.
 	URL string `toml:"url,omitempty"`
 	// Title is the name the F-Droid app shows of an fdroid repository, or
-	// the name of the library Jellyfin clients show of a jellyfin one; the
-	// name when not set.
-	Title string `toml:"title,omitempty" feature:"fdroid,jellyfin"`
+	// the name of the library music clients show of a jellyfin or a subsonic
+	// one; the name when not set.
+	Title string `toml:"title,omitempty" feature:"fdroid,jellyfin,subsonic"`
 	// Description is the text the F-Droid app shows of an fdroid
 	// repository.
 	Description string `toml:"description,omitempty" feature:"fdroid"`
@@ -110,6 +110,16 @@ const RepositoryTypeFDroid = "fdroid"
 // and play over the HTTP server.
 const RepositoryTypeJellyfin = "jellyfin"
 
+// RepositoryTypeSubsonic is a music library, which OpenSubsonic clients
+// browse and play over the HTTP server.
+const RepositoryTypeSubsonic = "subsonic"
+
+// IsMusicType reports whether a repository of type typ is a music library,
+// which keeps its index in memory and writes nothing into its folder.
+func IsMusicType(typ string) bool {
+	return typ == RepositoryTypeJellyfin || typ == RepositoryTypeSubsonic
+}
+
 // allRepositoryTypes are the kinds a repository may be, whether the binary was
 // built with them or not. Another one is added here and given an
 // implementation in internal/repository.
@@ -117,6 +127,7 @@ var allRepositoryTypes = []RepositoryType{
 	{ID: RepositoryTypeRPM, Label: "rpm (zypper, dnf)", feature: features.RPM},
 	{ID: RepositoryTypeFDroid, Label: "F-Droid (Android)", feature: features.FDroid},
 	{ID: RepositoryTypeJellyfin, Label: "Jellyfin (music)", feature: features.Jellyfin},
+	{ID: RepositoryTypeSubsonic, Label: "OpenSubsonic (music)", feature: features.Subsonic},
 }
 
 // RepositoryTypes are the kinds a repository may be in this binary: those of
@@ -158,9 +169,9 @@ func (c Config) UsableRepositories() []Repository {
 }
 
 // NeedsSigningKey reports whether a repository of type typ signs, and has to
-// have a signingKey: a jellyfin repository writes nothing a client checks.
+// have a signingKey: a music library writes nothing a client checks.
 func NeedsSigningKey(typ string) bool {
-	return typ != RepositoryTypeJellyfin
+	return !IsMusicType(typ)
 }
 
 // SigningKeyKind is the kind of key material a repository of type typ signs
@@ -169,7 +180,7 @@ func SigningKeyKind(typ string) string {
 	switch typ {
 	case RepositoryTypeFDroid:
 		return KindJARKey
-	case RepositoryTypeJellyfin:
+	case RepositoryTypeJellyfin, RepositoryTypeSubsonic:
 		return ""
 	}
 	return KindPGPKey
@@ -178,9 +189,19 @@ func SigningKeyKind(typ string) string {
 // JellyfinFolders are the folders of the jellyfin repositories the binary
 // keeps, which only an account reads.
 func (c Config) JellyfinFolders() []string {
+	return c.foldersOf(RepositoryTypeJellyfin)
+}
+
+// SubsonicFolders are the folders of the subsonic repositories the binary
+// keeps, which only an account reads.
+func (c Config) SubsonicFolders() []string {
+	return c.foldersOf(RepositoryTypeSubsonic)
+}
+
+func (c Config) foldersOf(typ string) []string {
 	var folders []string
 	for _, repo := range c.UsableRepositories() {
-		if repo.Type == RepositoryTypeJellyfin {
+		if repo.Type == typ {
 			folders = append(folders, repo.Folder)
 		}
 	}
@@ -298,7 +319,8 @@ func FindRepository(repositories []Repository, name string) (Repository, bool) {
 // the folder the http server serves, which is where clients read them.
 func (c Config) validateRepositories() error {
 	names := map[string]bool{}
-	var folders []string
+	type kept struct{ onDisk, typ string }
+	var folders []kept
 	for i, repo := range c.Repositories {
 		where := fmt.Sprintf("repositories[%d]", i)
 		if repo.Name == "" {
@@ -336,11 +358,14 @@ func (c Config) validateRepositories() error {
 			return err
 		}
 		for k, other := range folders {
-			if overlaps(comparablePath(onDisk), comparablePath(other)) {
+			// a jellyfin and a subsonic library write nothing into their
+			// folders, so one folder serves both kinds of client
+			shared := IsMusicType(repo.Type) && IsMusicType(other.typ) && repo.Type != other.typ
+			if !shared && overlaps(comparablePath(onDisk), comparablePath(other.onDisk)) {
 				return fmt.Errorf("%s: folder %q overlaps the folder of repositories[%d]", where, folder, k)
 			}
 		}
-		folders = append(folders, onDisk)
+		folders = append(folders, kept{onDisk, repo.Type})
 
 		switch {
 		case !NeedsSigningKey(repo.Type):
@@ -368,7 +393,7 @@ func (c Config) validateRepositories() error {
 		if err := repo.validateFDroid(); err != nil {
 			return fmt.Errorf("%s: %w", where, err)
 		}
-		if err := repo.validateJellyfin(); err != nil {
+		if err := repo.validateMusic(); err != nil {
 			return fmt.Errorf("%s: %w", where, err)
 		}
 	}
@@ -382,8 +407,8 @@ const maxTitle = 50
 // that a repository of another type sets none of it.
 func (r Repository) validateFDroid() error {
 	if r.Type != RepositoryTypeFDroid {
-		if r.Title != "" && r.Type != RepositoryTypeJellyfin {
-			return errors.New("title is for an fdroid or a jellyfin repository only")
+		if r.Title != "" && !IsMusicType(r.Type) {
+			return errors.New("title is for an fdroid, a jellyfin or a subsonic repository only")
 		}
 		for key, value := range map[string]string{"description": r.Description, "icon": r.Icon} {
 			if value != "" {
@@ -419,14 +444,14 @@ func (r Repository) validateFDroid() error {
 	return nil
 }
 
-// validateJellyfin checks what is particular to a jellyfin repository: its
-// files are music, of which there are no versions to remove.
-func (r Repository) validateJellyfin() error {
-	if r.Type != RepositoryTypeJellyfin {
+// validateMusic checks what is particular to a jellyfin or a subsonic
+// repository: its files are music, of which there are no versions to remove.
+func (r Repository) validateMusic() error {
+	if !IsMusicType(r.Type) {
 		return nil
 	}
 	if r.Keep != 0 {
-		return errors.New("keep is 0 for a jellyfin repository, which removes nothing")
+		return fmt.Errorf("keep is 0 for a %s repository, which removes nothing", r.Type)
 	}
 	if len([]rune(r.Title)) > maxTitle {
 		return fmt.Errorf("title has to be at most %d characters", maxTitle)

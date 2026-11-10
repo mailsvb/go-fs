@@ -60,7 +60,7 @@ type Config struct {
 	Servers []Server `toml:"servers"`
 	// Repositories are the package repositories go-fs keeps in folders the
 	// http server serves.
-	Repositories []Repository `toml:"repositories" feature:"rpm,fdroid,jellyfin"`
+	Repositories []Repository `toml:"repositories" feature:"rpm,fdroid,jellyfin,subsonic"`
 	// Syncs keep folders the servers serve and folders of stored servers
 	// alike, on a schedule.
 	Syncs []Sync `toml:"syncs" feature:"sftp-remote"`
@@ -973,6 +973,10 @@ type HTTP struct {
 	// hands both to the server.
 	JellyfinName string `toml:"-"`
 	JellyfinURL  string `toml:"-"`
+	// SubsonicFolders are the folders of the subsonic repositories, which
+	// Resolved hands the server: only an account reads them, and
+	// OpenSubsonic clients are answered while there is one.
+	SubsonicFolders []string `toml:"-"`
 	// YtDlp and FFmpeg are the programs of general.tools that were found,
 	// with the version they report, or nothing for one that was not; Resolved
 	// hands them to the server. Fetch offers video and audio while YtDlp is.
@@ -1398,6 +1402,7 @@ func (c Config) Resolved() Config {
 	c.HTTP.ShareExternalAddress = shareAddressOr(c.General.ExternalAddress)
 	c.HTTP.JellyfinFolders = c.JellyfinFolders()
 	c.HTTP.JellyfinName, c.HTTP.JellyfinURL = c.JellyfinServer()
+	c.HTTP.SubsonicFolders = c.SubsonicFolders()
 	c.HTTP.YtDlp = FindTool(ToolYtDlp, c.General.Tools.YtDlp)
 	c.HTTP.FFmpeg = FindTool(ToolFFmpeg, c.General.Tools.FFmpeg)
 	return c

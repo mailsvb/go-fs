@@ -34,6 +34,8 @@ const (
 	FDroid = "fdroid"
 	// Jellyfin is the music library Jellyfin clients browse and play.
 	Jellyfin = "jellyfin"
+	// Subsonic is the music library OpenSubsonic clients browse and play.
+	Subsonic = "subsonic"
 	// Cryptomator is keeping the files of a stored server in a vault of
 	// Cryptomator.
 	Cryptomator = "cryptomator"
@@ -93,6 +95,6 @@ func List() []string {
 
 // All is every optional part there is, whether built or not.
 func All() []string {
-	all := []string{TFTP, FTP, SFTP, SFTPRemote, SMB, RPM, FDroid, Jellyfin, Cryptomator, WebDAV, NBD, Sonos}
+	all := []string{TFTP, FTP, SFTP, SFTPRemote, SMB, RPM, FDroid, Jellyfin, Subsonic, Cryptomator, WebDAV, NBD, Sonos}
 	return slices.Sorted(slices.Values(all))
 }
