@@ -401,7 +401,7 @@ func TestRegistryValidatesTheConnectionUnlessToldNotTo(t *testing.T) {
 
 func TestRegistryTransfersNeedARegistrySession(t *testing.T) {
 	server := newRegistryServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = nil
+		cfg.PathsWithoutAuth = []string{"^/"}
 		cfg.Users = append(cfg.Users, registryUser("other", "pw"))
 	})
 	server.pushImage(t, "tool", "latest", "linux/amd64", "a")

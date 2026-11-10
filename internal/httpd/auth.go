@@ -399,10 +399,13 @@ func accountNamed(accounts []*account, name string) *account {
 	return nil
 }
 
-// needsAuth decides whether credentials are required at all: because of the
-// method, or because the path is one of the protected ones.
+// needsAuth decides whether credentials are required at all. Every request
+// needs them, except a reading one whose path matches one of
+// http.pathsWithoutAuth; a folder of a jellyfin repository needs them even
+// then.
 func (s *Server) needsAuth(set *settings, method, virtual string) bool {
-	return accountMethod(method) || matchesPath(set.protectedPaths, virtual)
+	return accountMethod(method) || matchesPath(set.jellyfinPaths, virtual) ||
+		!matchesPath(set.publicPaths, virtual)
 }
 
 // accountMethod reports whether a method needs an account wherever it is
@@ -411,7 +414,7 @@ func (s *Server) needsAuth(set *settings, method, virtual string) bool {
 // though it only lists: a WebDAV client sends its credentials only when it is
 // challenged, and a listing answered without one would show the account no
 // more than a stranger sees. What is left — GET, HEAD and OPTIONS — is public
-// unless pathsRequireAuth protects the path.
+// where pathsWithoutAuth lists the path.
 func accountMethod(method string) bool {
 	switch strings.ToUpper(method) {
 	case http.MethodPut, http.MethodDelete, http.MethodPost, methodMkcol, methodMove,

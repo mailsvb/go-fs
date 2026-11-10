@@ -163,7 +163,7 @@ func TestMoveChecksTheDestinationAgainstThePaths(t *testing.T) {
 		scoped := fullUser("john", "doe")
 		scoped.Paths = []string{"^/private/keep/.*"}
 		cfg.Users = []config.User{scoped}
-		cfg.PathsRequireAuth = []string{"^/private/.*"}
+		cfg.PathsWithoutAuth = []string{publicExcept("private")}
 	})
 	server.write(t, "private/keep/one.txt", "x")
 
@@ -274,7 +274,7 @@ func TestWritesFromAnotherOriginAreRefused(t *testing.T) {
 func TestListingOffersOnlyWhatTheAccountMayDo(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
 		cfg.Users = []config.User{fullUser("john", "doe"), readOnlyUser("reader", "pw")}
-		cfg.PathsRequireAuth = []string{"^/.*"}
+		cfg.PathsWithoutAuth = nil
 	})
 	server.write(t, "one.txt", "x")
 
@@ -311,7 +311,7 @@ func TestListingOffersDeletePerRow(t *testing.T) {
 		folders := fullUser("folders", "pw")
 		folders.AllowUserFileDelete = new(false)
 		cfg.Users = []config.User{files, folders}
-		cfg.PathsRequireAuth = []string{"^/.*"}
+		cfg.PathsWithoutAuth = nil
 	})
 	server.write(t, "one.txt", "x")
 	server.mkdir(t, "sub")

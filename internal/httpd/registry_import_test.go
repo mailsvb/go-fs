@@ -214,7 +214,7 @@ func TestRegistryImportsAnUploadedArchive(t *testing.T) {
 }
 
 func TestRegistryImportsAFileOfTheFolder(t *testing.T) {
-	server := importServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = []string{"^/private/.*"} })
+	server := importServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{publicExcept("private")} })
 	data, img := appArchive(t)
 	server.write(t, "images/app.tar", string(data))
 	server.write(t, "private/secret.tar", string(data))
@@ -477,7 +477,7 @@ func TestRegistryImportOfWhatIsNoImage(t *testing.T) {
 }
 
 func TestRegistryPageOffersTheImport(t *testing.T) {
-	server := importServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := importServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	if _, body := pageRequest(t, server, http.MethodGet, "/?go-fs=registry", nil); strings.Contains(body, `id="import-image"`) {
 		t.Error("an anonymous visitor is offered the import")
 	}
@@ -498,7 +498,7 @@ func TestRegistryPageOffersTheImport(t *testing.T) {
 }
 
 func TestTheListingOffersTheImportToTheRegistry(t *testing.T) {
-	server := importServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := importServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	server.write(t, "app.tar", "not really")
 	john := login(t, server, "/", "john", "doe")
 	if _, body := pageRequest(t, server, http.MethodGet, "/", john); strings.Contains(body, `data-do="import"`) {

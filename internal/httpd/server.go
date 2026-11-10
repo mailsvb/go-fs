@@ -163,9 +163,12 @@ type settings struct {
 	// jellyfin says that there is a jellyfin repository, while which the
 	// server answers Jellyfin clients.
 	jellyfin bool
-	// protectedPaths are http.pathsRequireAuth compiled, and the folders of
-	// the jellyfin repositories.
-	protectedPaths []*regexp.Regexp
+	// publicPaths are http.pathsWithoutAuth compiled: the paths a GET or a
+	// HEAD may read without an account. Every other path needs one.
+	publicPaths []*regexp.Regexp
+	// jellyfinPaths are the folders of the jellyfin repositories, which need
+	// an account even where one of publicPaths matches them.
+	jellyfinPaths []*regexp.Regexp
 	// proxies are http.trustedProxies compiled, the addresses whose
 	// X-Forwarded-For and X-Forwarded-Proto are believed.
 	proxies []netip.Prefix
@@ -226,23 +229,24 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 	if err != nil {
 		return nil, err
 	}
-	protected := make([]*regexp.Regexp, 0, len(cfg.PathsRequireAuth))
-	for i, pattern := range cfg.PathsRequireAuth {
+	public := make([]*regexp.Regexp, 0, len(cfg.PathsWithoutAuth))
+	for i, pattern := range cfg.PathsWithoutAuth {
 		compiled, err := compilePattern(pattern, fold)
 		if err != nil {
-			return nil, fmt.Errorf("http.pathsRequireAuth[%d]: %w", i, err)
+			return nil, fmt.Errorf("http.pathsWithoutAuth[%d]: %w", i, err)
 		}
-		protected = append(protected, compiled)
+		public = append(public, compiled)
 	}
 	// a music library is read by its listeners, who log in to it from their
-	// clients, and nobody else: its folder is protected as pathsRequireAuth
-	// protects one
+	// clients, and nobody else: its folder needs an account even where
+	// pathsWithoutAuth would open it
+	jellyfinPaths := make([]*regexp.Regexp, 0, len(cfg.JellyfinFolders))
 	for _, folder := range cfg.JellyfinFolders {
 		compiled, err := compilePattern("^"+regexp.QuoteMeta(folder)+"(/|$)", fold)
 		if err != nil {
 			return nil, err
 		}
-		protected = append(protected, compiled)
+		jellyfinPaths = append(jellyfinPaths, compiled)
 	}
 	proxies := make([]netip.Prefix, 0, len(cfg.TrustedProxies))
 	for i, entry := range cfg.TrustedProxies {
@@ -258,7 +262,7 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 	}
 	return &settings{cfg: cfg, https: https, accounts: accounts, tokens: bearers,
 		s3accounts: s3accounts, registryAccounts: registryAccounts, registry: store,
-		jellyfin: len(cfg.JellyfinFolders) > 0, protectedPaths: protected, proxies: proxies, ssh: sshCfg, servers: servers,
+		jellyfin: len(cfg.JellyfinFolders) > 0, publicPaths: public, jellyfinPaths: jellyfinPaths, proxies: proxies, ssh: sshCfg, servers: servers,
 		disks: disks}, nil
 }
 
@@ -284,6 +288,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, 
 		// a broken account or pattern leaves the running one in place
 		return err
 	}
+	s.warnAboutNoReader(next)
 	s.warnAboutTheRegistry(next)
 	s.warnAboutJellyfin(next)
 	// the token lifetime needs nothing done to it: it is read from the
@@ -439,6 +444,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	s.warnAboutTheAdminInterface(set)
+	s.warnAboutNoReader(set)
 	s.warnAboutTheRegistry(set)
 	s.warnAboutJellyfin(set)
 	s.discoverJellyfin(set)
@@ -468,6 +474,17 @@ func (s *Server) Start(ctx context.Context) error {
 		s.runCleanup(ctx)
 	}()
 	return nil
+}
+
+// warnAboutNoReader says that the file tree cannot be read by anyone: every
+// path needs an account unless http.pathsWithoutAuth lists it, and there is
+// neither an account nor a token. Shares and the pages that decide for
+// themselves still work, which is why it is not refused.
+func (s *Server) warnAboutNoReader(set *settings) {
+	if len(set.accounts) == 0 && len(set.tokens) == 0 && len(set.publicPaths) == 0 {
+		s.log.Warn("no [[users]] entry sets http, there is no bearer token and http.pathsWithoutAuth is empty, " +
+			"so nobody can read the files over http")
+	}
 }
 
 // warnAboutTheAdminInterface says, at the moment the listeners are bound, what

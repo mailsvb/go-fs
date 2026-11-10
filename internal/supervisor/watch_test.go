@@ -46,7 +46,6 @@ enabled = false
 enabled = true
 port = ` + strconv.Itoa(port) + `
 loginFailureDelay = 0
-pathsRequireAuth = ["^/private/.*"]
 ` + users
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)

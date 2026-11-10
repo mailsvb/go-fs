@@ -378,7 +378,7 @@ func TestConfinement(t *testing.T) {
 // inside a pattern and then climb out of it again.
 func TestPathPatternsCannotBeWalkedAround(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = []string{"^/.*"}
+		cfg.PathsWithoutAuth = nil
 		cfg.Users = []config.User{{
 			Username: "john", Password: "doe", HTTP: true, Paths: []string{"^/public/.*"},
 			AllowUserFileRetrieve: new(true),
@@ -460,7 +460,7 @@ func TestUploadTooLargeIsReportedAsSuch(t *testing.T) {
 // The links in a listing are relative, so a folder reached without its trailing
 // slash is redirected to the form they are relative to.
 func TestFolderRedirectsToTheSlashedForm(t *testing.T) {
-	server := newServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := newServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	server.write(t, "photos/sub/inside.txt", "inside")
 
 	client := &http.Client{

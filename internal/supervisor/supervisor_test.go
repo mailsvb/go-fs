@@ -85,7 +85,8 @@ func baseConfig(t *testing.T) config.Config {
 	cfg.HTTP.Port = 0
 	cfg.HTTP.Basefolder = folder
 	cfg.HTTP.LoginFailureDelay = 0
-	cfg.HTTP.PathsRequireAuth = []string{"^/private/.*"}
+	// every path needs an account but the one file a test downloads without
+	cfg.HTTP.PathsWithoutAuth = []string{`^/big\.bin$`}
 	cfg.Users = []config.User{{
 		Username: "john", Password: "doe", HTTP: true, Paths: []string{"^/.*"},
 		AllowUserFileRetrieve: new(true),

@@ -15,6 +15,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -151,7 +153,7 @@ func newServerWith(t *testing.T, tune func(*httpConfig), tuneTLS func(*config.HT
 	// every test's client is 127.0.0.1, so the login lock is off unless a
 	// test is about it
 	cfg.LoginAttempts = 0
-	cfg.PathsRequireAuth = []string{"^/private/.*"}
+	cfg.PathsWithoutAuth = []string{publicExcept("private")}
 	cfg.Users = []config.User{fullUser("john", "doe")}
 	if tune != nil {
 		tune(&cfg)
@@ -330,7 +332,52 @@ var _ = url.PathEscape
 // publicServer makes reading everything public, which is what the listing tests need:
 // they are about the page rather than about who may see it.
 func publicServer(cfg *httpConfig) {
-	cfg.PathsRequireAuth = nil
+	cfg.PathsWithoutAuth = []string{"^/"}
+}
+
+// publicExcept is the http.pathsWithoutAuth pattern that opens every path but
+// the named top level folders and what is in them. RE2 has no lookahead, so
+// "not under /private" is spelled out a character at a time: a path is public
+// where it ends before it has spelled out a name, leaves the name's spelling,
+// or carries on past it with anything but a slash.
+func publicExcept(folders ...string) string {
+	return "^/" + notPrefixed(folders)
+}
+
+func notPrefixed(names []string) string {
+	next := map[byte][]string{}
+	for _, name := range names {
+		if name == "" {
+			// the folder itself is spelled out: only a longer name is public
+			return "[^/]"
+		}
+		next[name[0]] = append(next[name[0]], name[1:])
+	}
+	firsts := make([]byte, 0, len(next))
+	for first := range next {
+		firsts = append(firsts, first)
+	}
+	slices.Sort(firsts)
+	alternatives := []string{"$", "[^" + string(firsts) + "]"}
+	for _, first := range firsts {
+		alternatives = append(alternatives, regexp.QuoteMeta(string(first))+notPrefixed(next[first]))
+	}
+	return "(?:" + strings.Join(alternatives, "|") + ")"
+}
+
+func TestPublicExceptOpensEverythingButTheFolders(t *testing.T) {
+	pattern := regexp.MustCompile(publicExcept("private", "other"))
+	for path, public := range map[string]bool{
+		"/": true, "/a.txt": true, "/pri": true, "/privatex": true, "/privatex/a": true,
+		"/ot": true, "/others/a": true, "/p": true, "/o": true, "/pri/x": true,
+		"/private": false, "/private/": false, "/private/a.txt": false,
+		"/other": false, "/other/x/y": false,
+	} {
+		got := matchesPath([]*regexp.Regexp{pattern}, path)
+		if got != public {
+			t.Errorf("%s public = %v, want %v (pattern %s)", path, got, public, pattern)
+		}
+	}
 }
 
 // readOnlyUser may reach everything and change nothing.

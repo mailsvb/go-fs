@@ -46,7 +46,7 @@ func pushMultiArch(t *testing.T, server *testServer, repo, tag string) digest.Di
 }
 
 func TestTheListingOffersTheRegistry(t *testing.T) {
-	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	body := bodyOf(t, browserGet(t, server, "/"))
 	index := strings.Index(body, "go-fs=registry")
 	if index < 0 {
@@ -57,7 +57,7 @@ func TestTheListingOffersTheRegistry(t *testing.T) {
 		t.Errorf("the Registry button is hidden until the script runs: %s", tag)
 	}
 
-	plain := newServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	plain := newServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	if strings.Contains(bodyOf(t, browserGet(t, plain, "/")), "go-fs=registry") {
 		t.Error("the listing offers a registry that is off")
 	}
@@ -67,7 +67,7 @@ func TestTheListingOffersTheRegistry(t *testing.T) {
 }
 
 func TestRegistryListShowsEveryTagWithItsPlatforms(t *testing.T) {
-	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	pushMultiArch(t, server, "team/app", "1.0")
 	server.pushImage(t, "tool", "latest", "linux/arm/v7", "c")
 
@@ -109,7 +109,7 @@ func TestRegistryListShowsEveryTagWithItsPlatforms(t *testing.T) {
 }
 
 func TestRegistryListShowsAFewPlatforms(t *testing.T) {
-	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	for i, platform := range []string{"linux/386", "linux/ppc64le", "linux/arm64", "linux/s390x", "linux/amd64"} {
 		server.pushImage(t, "app", "1.0", platform, string(rune('a'+i)))
 	}
@@ -145,7 +145,7 @@ func TestRegistryListShowsAFewPlatforms(t *testing.T) {
 }
 
 func TestRegistryLeavesOutTheAttestations(t *testing.T) {
-	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	img := server.buildImage(t, "app", "linux/amd64", "a", false)
 	res, body := server.pushManifest(t, "app", img.digest.String(), img.mediaType, img.manifest)
 	expectStatus(t, res, body, http.StatusCreated)
@@ -174,7 +174,7 @@ func TestRegistryLeavesOutTheAttestations(t *testing.T) {
 }
 
 func TestRegistryFolderView(t *testing.T) {
-	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	pushMultiArch(t, server, "team/app", "1.0")
 	server.pushImage(t, "team/app", "2.0", "linux/amd64", "c")
 	server.pushImage(t, "tool", "latest", "linux/amd64", "d")
@@ -218,7 +218,7 @@ func TestRegistryFolderView(t *testing.T) {
 }
 
 func TestRegistrySortsByPushTime(t *testing.T) {
-	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	server.pushImage(t, "a", "1", "linux/amd64", "a")
 	ageRegistry(t, server)
 	server.pushImage(t, "b", "1", "linux/amd64", "b")
@@ -235,7 +235,7 @@ func TestRegistrySortsByPushTime(t *testing.T) {
 
 func TestRegistryPageTakesARegistrySessionWithoutAnonymousRead(t *testing.T) {
 	server := newRegistryServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = []string{"^/private/.*"}
+		cfg.PathsWithoutAuth = []string{publicExcept("private")}
 		cfg.RegistryAnonymousRead = false
 	})
 	server.pushImage(t, "app", "1.0", "linux/amd64", "a")
@@ -313,7 +313,7 @@ func TestRegistryPageTakesARegistrySessionWithoutAnonymousRead(t *testing.T) {
 }
 
 func TestRegistryImageDetails(t *testing.T) {
-	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	index := pushMultiArch(t, server, "team/app", "1.0")
 	res, body := server.reg(t, http.MethodPut, "/v2/team/app/manifests/stable",
 		manifestOf(t, server, "team/app", index), asPusher, withHeader("Content-Type", v1.MediaTypeImageIndex))
@@ -366,7 +366,7 @@ func manifestOf(t *testing.T, server *testServer, repo string, d digest.Digest) 
 }
 
 func TestRegistryPageDeletesATag(t *testing.T) {
-	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	index := pushMultiArch(t, server, "team/app", "1.0")
 	server.pushImage(t, "team/app", "2.0", "linux/amd64", "c")
 	path := "/?go-fs=registry&repository=team/app&tag=1.0"
@@ -403,7 +403,7 @@ func TestRegistryPageDeletesATag(t *testing.T) {
 }
 
 func TestRegistryPageCleansUpNow(t *testing.T) {
-	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsRequireAuth = nil })
+	server := newRegistryServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = []string{"^/"} })
 	img := server.pushImage(t, "app", "latest", "linux/amd64", "1")
 	content := []byte("pushed an hour ago, never referenced")
 	orphan := server.pushBlob(t, "app", content)

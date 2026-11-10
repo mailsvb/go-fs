@@ -596,12 +596,12 @@ idleTimeout = 600
 loginFailureDelay = 1
 
 # The HTTP file server: browse and download with GET, upload with PUT, remove
-# with DELETE. Access has two layers. Every request that changes something
-# (PUT, DELETE, POST, MKCOL, MOVE and the writes of WebDAV) and every WebDAV
-# listing (PROPFIND) needs an account; GET and HEAD need one where the path
-# matches one of pathsRequireAuth. Such a request has to be answered by one of
-# the [[users]] entries that set http = true, whose own paths and rights then
-# decide what it may do.
+# with DELETE. Access has two layers. Every request needs an account, except a
+# GET or a HEAD whose path matches one of pathsWithoutAuth: every request that
+# changes something (PUT, DELETE, POST, MKCOL, MOVE and the writes of WebDAV)
+# and every WebDAV listing (PROPFIND) always needs one. Such a request has to
+# be answered by one of the [[users]] entries that set http = true, whose own
+# paths and rights then decide what it may do.
 [http]
 # Serve the plain port. The TLS listener has its own switch in [https];
 # everything else in this section applies to both of them.
@@ -739,14 +739,16 @@ loginLockout = 60
 # session cookie Secure. From anywhere else both headers are ignored.
 trustedProxies = []
 
-# Regular expressions; a request whose path matches one of these needs an
-# account whatever its method. Reading everything else is public; "^/" makes
-# the whole server private. A dls_directory_reader POST that carries the DLS
-# scanner's fixed credentials in its form is protected as the GET of the
-# folder it lists. On a filesystem that ignores case (the default on Windows
-# and macOS) these and the users' paths ignore case too, so "^/private/" also
-# protects /PRIVATE.
-pathsRequireAuth = []
+# Regular expressions; a GET or a HEAD whose path matches one of these needs
+# no account. Every other path needs one, so the empty list makes the whole
+# server private and "^/" makes reading everything public; writing always
+# needs an account. The folders of a jellyfin repository need one even where a
+# pattern here matches them. A dls_directory_reader POST that carries the DLS
+# scanner's fixed credentials in its form is treated as the GET of the folder
+# it lists. On a filesystem that ignores case (the default on Windows and
+# macOS) these and the users' paths ignore case too, so "^/public/" also opens
+# /PUBLIC. This replaces pathsRequireAuth, which is ignored with a warning.
+pathsWithoutAuth = []
 
 # The TLS interface of the same HTTP server: it serves the folder, accounts and
 # limits of [http] above.

@@ -858,11 +858,11 @@ type SFTP struct {
 // uploading with PUT, removing with DELETE, creating a folder with MKCOL and
 // renaming with MOVE.
 //
-// Access has two layers. A request that changes something, or a WebDAV
-// listing, always needs an account; a GET or a HEAD needs one where its path
-// matches one of PathsRequireAuth. Such a request has to be answered by one of
-// the [[users]] entries that set http, and that account's own paths and rights
-// then decide what it may do.
+// Access has two layers. Every request needs an account, except a GET or a
+// HEAD whose path matches one of PathsWithoutAuth: a request that changes
+// something, or a WebDAV listing, always needs one. Such a request has to be
+// answered by one of the [[users]] entries that set http, and that account's
+// own paths and rights then decide what it may do.
 type HTTP struct {
 	// Enabled serves the plain port. The TLS listener has its own switch in
 	// [https]; the rest of this section applies to both.
@@ -1020,10 +1020,12 @@ type HTTP struct {
 	// is marked Secure. From anywhere else both headers are ignored.
 	TrustedProxies []string `toml:"trustedProxies"`
 
-	// PathsRequireAuth are regular expressions; a request whose path matches
-	// one of them needs an account whatever its method. "^/" makes the whole
-	// server private.
-	PathsRequireAuth []string `toml:"pathsRequireAuth"`
+	// PathsWithoutAuth are regular expressions; a GET or a HEAD whose path
+	// matches one of them needs no account. Every other path needs one
+	// whatever its method, which is the default: an empty list makes the whole
+	// server private and "^/" makes reading everything public. A folder of a
+	// jellyfin repository needs an account even where one of these matches it.
+	PathsWithoutAuth []string `toml:"pathsWithoutAuth"`
 }
 
 // S3Region is the one region the S3 API of the HTTP server answers for. It is
@@ -1289,7 +1291,10 @@ var retired = map[string]string{
 	"http.cleanup": "[[general.cleanup]], whose paths are relative to general.baseFolderFiles",
 	// every write and every WebDAV listing needs an account, and what an
 	// account may do is decided by its rights
-	"http.methodsRequireAuth": "http.pathsRequireAuth to protect reading, \"^/\" for the whole server",
+	"http.methodsRequireAuth": "nothing: every path needs an account unless http.pathsWithoutAuth lists it",
+	// every path needs an account by default, and the paths that do not are
+	// listed instead
+	"http.pathsRequireAuth": "http.pathsWithoutAuth: every path needs an account unless it matches one of those",
 	// every server serves the one folder
 	"ftp.basefolder":  "general.baseFolderFiles",
 	"sftp.basefolder": "general.baseFolderFiles",
@@ -1852,9 +1857,9 @@ func (c Config) validateHTTP() error {
 	if h.MaxUploadSize > 0 && h.MaxChunkSize > 0 && h.MaxChunkSize > h.MaxUploadSize {
 		return errors.New("http.maxChunkSize cannot be larger than http.maxUploadSize")
 	}
-	for i, pattern := range h.PathsRequireAuth {
+	for i, pattern := range h.PathsWithoutAuth {
 		if _, err := regexp.Compile(pattern); err != nil {
-			return fmt.Errorf("http.pathsRequireAuth[%d]: %w", i, err)
+			return fmt.Errorf("http.pathsWithoutAuth[%d]: %w", i, err)
 		}
 	}
 	if err := c.validateRegistry(); err != nil {

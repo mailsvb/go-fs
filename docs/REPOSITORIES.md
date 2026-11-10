@@ -56,8 +56,8 @@ sudo zypper addrepo https://files.example.com/rpm/go-fs/go-fs.repo
 sudo dnf config-manager addrepo --from-repofile=https://files.example.com/rpm/go-fs/go-fs.repo
 ```
 
-zypper and dnf read the folder without logging in, so it has to be public: not
-in `pathsRequireAuth`. Uploading to it is protected as any upload is.
+zypper and dnf read the folder without logging in, so it has to be public:
+listed in `pathsWithoutAuth`. Uploading to it is protected as any upload is.
 
 ## F-Droid repository
 
@@ -188,8 +188,8 @@ It differs from the package repositories in these ways:
   password changes, or when the client logs out with it. An account sees the tracks it may read, by its `paths` and
   `allowUserFileRetrieve`, and the albums, artists and genres of those. A
   library it can read nothing of is not shown to it.
-- **The folder needs an account.** It is protected as if it were in
-  `pathsRequireAuth`, over HTTP and WebDAV. TFTP knows no accounts and serves
+- **The folder needs an account,** over HTTP and WebDAV, even where a pattern of
+  `pathsWithoutAuth` matches it. TFTP knows no accounts and serves
   it like any other folder, so keep TFTP off, or its folder elsewhere, where
   the music is private.
 - **What an account plays is kept** in the

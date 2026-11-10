@@ -101,9 +101,9 @@ func TestNewRejectsBadConfiguration(t *testing.T) {
 
 	cfg = config.Default().HTTP
 	cfg.Basefolder = base
-	cfg.PathsRequireAuth = []string{"([unclosed"}
+	cfg.PathsWithoutAuth = []string{"([unclosed"}
 	if _, err := New(cfg, config.HTTPS{}, config.Default().General.SSH, nil, nil, nil, "", nil, nil, discardLogger()); err == nil {
-		t.Error("a broken pathsRequireAuth pattern has to be refused")
+		t.Error("a broken pathsWithoutAuth pattern has to be refused")
 	}
 
 	cfg = config.Default().HTTP

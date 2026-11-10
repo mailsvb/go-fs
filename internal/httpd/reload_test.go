@@ -83,7 +83,7 @@ func TestReloadKeepsTheRunningConfigurationOnError(t *testing.T) {
 	server.write(t, "private/hello.txt", "hello")
 
 	next := server.settings().cfg
-	next.PathsRequireAuth = []string{"([unclosed"}
+	next.PathsWithoutAuth = []string{"([unclosed"}
 	if err := server.Reload(next, server.settings().https, server.settings().ssh, []config.User{fullUser("john", "doe")}, nil, nil); err == nil {
 		t.Fatal("a broken pattern has to be refused")
 	}

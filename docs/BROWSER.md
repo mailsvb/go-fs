@@ -387,8 +387,8 @@ curl -u john:doe -o photos.tar.xz 'https://example.com/photos/?go-fs=archive'
 The archive is packed while it is sent, so nothing is staged on the server and
 the answer carries no `Content-Length`. It needs the right that listing the
 folder needs, and what goes into it is decided entry by entry as a `GET` of that
-entry would be: a sub-folder that `pathsRequireAuth` or the account's `paths`
-keep from the requester is left out. A symbolic link goes in as the file it
+entry would be: a sub-folder that `pathsWithoutAuth` leaves out, or the
+account's `paths` keep from the requester, is left out. A symbolic link goes in as the file it
 points to while that file is inside `general.baseFolderFiles`; a link to a folder, or to
 anything outside, is left out. Compressing takes one CPU core of the server:
 text and other data that compresses well packs at around 80 MB/s, but data that

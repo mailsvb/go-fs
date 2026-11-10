@@ -81,7 +81,7 @@ func TestTheDirectoryReaderNeedsAnAccount(t *testing.T) {
 // the file is there at all. A server that protects GET protects HEAD with it.
 func TestHeadIsProtectedAlongWithGet(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = []string{"^/"}
+		cfg.PathsWithoutAuth = nil
 	})
 	server.write(t, "file.txt", "content")
 
@@ -118,7 +118,7 @@ func caseInsensitive(t *testing.T, dir string) bool {
 // protects one has to protect the other.
 func TestProtectedPathsCoverOtherCases(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = []string{"^/private/.*"}
+		cfg.PathsWithoutAuth = []string{publicExcept("private")}
 	})
 	if !caseInsensitive(t, server.base) {
 		t.Skip("the filesystem is case sensitive, so /PRIVATE is another folder")
@@ -140,7 +140,7 @@ func TestProtectedPathsCoverOtherCases(t *testing.T) {
 // under whatever case the client spells it in, as the filesystem does.
 func TestAccountPathsCoverOtherCases(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = []string{"^/"}
+		cfg.PathsWithoutAuth = nil
 		cfg.Users = []config.User{scopedUser("jane", "roe")}
 	})
 	if !caseInsensitive(t, server.base) {
@@ -160,7 +160,7 @@ func TestWindowsPathVariantsAreRefused(t *testing.T) {
 		t.Skip("backslashes, colons and trailing dots are ordinary name characters here")
 	}
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = []string{"^/private/.*"}
+		cfg.PathsWithoutAuth = []string{publicExcept("private")}
 	})
 	server.write(t, "private/secret.txt", "secret")
 
@@ -267,7 +267,7 @@ func TestDLSCredentialsKeepProtectedFoldersClosed(t *testing.T) {
 // A server that protects GET protects every listing, the reader's included.
 func TestDLSCredentialsDoNotOpenAProtectedGet(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = []string{"^/"}
+		cfg.PathsWithoutAuth = nil
 	})
 	server.write(t, "phonesoftware/firmware.bin", "firmware")
 

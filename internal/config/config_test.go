@@ -285,8 +285,8 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		}, "tokens[0].paths[0]"},
 		{"broken protected path pattern", func(c *Config) {
 			c.HTTP.Enabled = true
-			c.HTTP.PathsRequireAuth = []string{"([bad"}
-		}, "http.pathsRequireAuth[0]"},
+			c.HTTP.PathsWithoutAuth = []string{"([bad"}
+		}, "http.pathsWithoutAuth[0]"},
 		{"cleanup without a path", func(c *Config) {
 			c.General.BaseFolderFiles = folder
 			c.General.Cleanup = []Cleanup{{Keep: 3}}
@@ -1178,8 +1178,24 @@ func TestRetiredKeysAreReported(t *testing.T) {
 	}
 	// the methods that need an account are fixed; reading is protected by path
 	found = RetiredKeys([]byte("[http]\nmethodsRequireAuth = [\"GET\", \"PUT\"]\n"))
-	if len(found) != 1 || !strings.Contains(found[0], "http.methodsRequireAuth is ignored, use http.pathsRequireAuth") {
-		t.Errorf("RetiredKeys = %q, want methodsRequireAuth pointed at pathsRequireAuth", found)
+	if len(found) != 1 || !strings.Contains(found[0], "http.methodsRequireAuth is ignored, use nothing") ||
+		!strings.Contains(found[0], "http.pathsWithoutAuth") {
+		t.Errorf("RetiredKeys = %q, want methodsRequireAuth pointed at pathsWithoutAuth", found)
+	}
+	// every path needs an account now, and the public ones are listed instead
+	found = RetiredKeys([]byte("[http]\npathsRequireAuth = [\"^/private/.*\"]\n"))
+	if len(found) != 1 || !strings.Contains(found[0], "http.pathsRequireAuth is ignored, use http.pathsWithoutAuth") {
+		t.Errorf("RetiredKeys = %q, want pathsRequireAuth pointed at pathsWithoutAuth", found)
+	}
+	// and a file that still sets it loads, with every path needing an account
+	retiredFile := filepath.Join(t.TempDir(), "go-fs.toml")
+	if err := os.WriteFile(retiredFile, []byte("[general]\nbaseFolderFiles = '"+t.TempDir()+"'\n[http]\npathsRequireAuth = [\"^/private/.*\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := Load(retiredFile); err != nil {
+		t.Errorf("Load of a file that sets pathsRequireAuth: %v", err)
+	} else if len(cfg.HTTP.PathsWithoutAuth) != 0 {
+		t.Errorf("PathsWithoutAuth = %q, want none", cfg.HTTP.PathsWithoutAuth)
 	}
 	// [[users]] is an array of tables; a key set in any entry is reported once
 	users := "[[users]]\nusername = \"john\"\ncookie = true\n" +

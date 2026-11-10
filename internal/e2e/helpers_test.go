@@ -131,7 +131,7 @@ func newCluster(t *testing.T, users []config.User, tune func(*config.Config)) *c
 	// every path needs an account, so that an account's rights decide every
 	// request as they do over FTP and SFTP, where there is no such thing as a
 	// public request
-	cfg.HTTP.PathsRequireAuth = []string{"^/"}
+	cfg.HTTP.PathsWithoutAuth = nil
 
 	cfg.FTP.Enabled = true
 	cfg.FTP.Port = 0

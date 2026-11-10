@@ -432,7 +432,7 @@ func TestTypeOf(t *testing.T) {
 // The header says who is looking at the page, and offers the way in or out.
 func TestTheListingShowsWhoIsSignedIn(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = nil
+		cfg.PathsWithoutAuth = []string{"^/"}
 		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 	server.write(t, "notes.txt", "hello")
@@ -466,7 +466,7 @@ func TestTheListingShowsWhoIsSignedIn(t *testing.T) {
 // browser's copy to another.
 func TestTheListingVariesOnTheCookie(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = nil
+		cfg.PathsWithoutAuth = []string{"^/"}
 		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 	res, _ := get(t, server, "/")
@@ -479,7 +479,7 @@ func TestTheListingVariesOnTheCookie(t *testing.T) {
 // logout may be one of the things that only work once the script has run.
 func TestTheLoginControlsWorkWithoutJavaScript(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = nil
+		cfg.PathsWithoutAuth = []string{"^/"}
 		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 

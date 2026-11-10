@@ -187,7 +187,7 @@ func TestArchiveFollowsTheAccountsPaths(t *testing.T) {
 		scoped := fullUser("scoped", "pw")
 		scoped.Paths = []string{"^/sub/(open/.*)?$"}
 		cfg.Users = []config.User{scoped}
-		cfg.PathsRequireAuth = []string{"^/.*"}
+		cfg.PathsWithoutAuth = nil
 	})
 	server.write(t, "sub/open/a.txt", "a")
 	server.write(t, "sub/closed/b.txt", "b")

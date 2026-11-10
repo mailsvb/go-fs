@@ -170,7 +170,7 @@ allowUserFolderDelete = true
 [http]
 enabled = true
 port = 8080
-pathsRequireAuth = ["^/private/.*"]
+pathsWithoutAuth = ["^/public/.*"]
 httpSessionTokenLifetime = 28800   # idle timeout, renewed while in use
 httpSessionMaxLifetime = 604800    # a login lasts a week at most
 httpSessionTokenSecret = ""        # generated at the first start
@@ -180,12 +180,17 @@ loginLockout = 60
 trustedProxies = []
 ```
 
-**Reading is public** — `GET` and `HEAD` — unless the path matches one of
-`pathsRequireAuth`; `pathsRequireAuth = ["^/"]` makes the whole server
-private. **Everything else always needs an account**: every method that changes
-something (`PUT`, `DELETE`, `POST`, `MKCOL`, `MOVE`, and WebDAV's `COPY`,
-`LOCK`, `UNLOCK` and `PROPPATCH`) and WebDAV's listing, `PROPFIND`. There is no
-public upload. Such a request has to be answered by one of
+**Every path needs an account** unless it matches one of `pathsWithoutAuth`,
+where reading — `GET` and `HEAD` — needs none. The default, an empty list,
+makes the whole server private; `pathsWithoutAuth = ["^/"]` makes reading
+everything public. The folders of a `jellyfin` repository need an account even
+where a pattern matches them. **Everything else always needs an account**,
+listed path or not: every method that changes something (`PUT`, `DELETE`,
+`POST`, `MKCOL`, `MOVE`, and WebDAV's `COPY`, `LOCK`, `UNLOCK` and
+`PROPPATCH`) and WebDAV's listing, `PROPFIND`. There is no public upload. The
+login page, share links, Sonos links, the document viewer below `/.go-fs/`,
+the S3 API and the container registry decide for themselves, as described in
+their sections. Such a request has to be answered by one of
 the `[[users]]` entries that set `http = true`, and that account's own `paths`
 then decide what it may reach, and its rights what it may do there: the same
 `allowUser*` flags as on the other servers, mapped as the table under Accounts
@@ -196,16 +201,18 @@ the other, create and delete both for `MOVE`, and `allowUserFileRetrieve` for
 reading and listing, all false unless set. A path an account may not reach is
 `403`, not another challenge.
 
-`methodsRequireAuth` is gone: a file that still sets it loads, and the key is
-ignored with a warning at startup. A file that listed `GET` there, to keep the
-whole server private, needs `pathsRequireAuth = ["^/"]` instead.
+`pathsRequireAuth` is gone, and so is `methodsRequireAuth`: a file that still
+sets either loads, and the key is ignored with a warning at startup. Without
+it every path needs an account, so a server that was public needs its public
+paths listed in `pathsWithoutAuth` instead: `pathsRequireAuth = []` becomes
+`pathsWithoutAuth = ["^/"]`, `pathsRequireAuth = ["^/"]` needs nothing, and a
+list of private folders becomes a list of the public ones.
 
 `paths` are matched against the request path **after** it has been normalized,
 so `/private/../secret` is tested as `/secret` and cannot be used to slip past a
 pattern. A pattern is tested against the path both with and without a trailing
-slash, so `^/private/.*` covers the listing of `/private` itself and not only
-what is inside it — a listing names every file in the folder, so it cannot be
-the one public thing about it.
+slash, so `^/public/.*` covers the listing of `/public` itself and not only
+what is inside it.
 
 Both Digest and Basic authentication are accepted. A **program** is challenged
 with Digest, using SHA-256 for Chromium and Firefox and MD5 for everything
@@ -326,9 +333,9 @@ larger than 50 MB over WebDAV. The limit is `FileSizeLimitInBytes` under
 restart the service.
 
 **Logging in:** a client is asked for an account only when a request needs
-one. On a server whose `GET` is public, a drive therefore mounts without a
-login and is read-only until something asks. Protect `GET`, or the paths, to
-be asked at once. A client that retries a wrong password by itself can use
+one. Where `pathsWithoutAuth` opens the root, a drive therefore mounts without
+a login and is read-only until something asks. Leave the root out of it to be
+asked at once. A client that retries a wrong password by itself can use
 up `loginAttempts` with one typo.
 
 Finder writes `._name` and `.DS_Store` files beside what it copies, as it does
@@ -520,8 +527,8 @@ the `dls_directory_reader` listing endpoint. Downloads answer range requests, so
 The OSEM directory scanner (the HTTPS storage provider) posts to `dls_directory_reader.php` and `.asp` with its fixed
 credentials in the form (`PHP_DLS_USER`, `PHP_DLS_PW`) instead of an `Authorization` header, as the original
 scripts expected. A POST that carries them needs what browsing the listed folder with `GET` needs, though every
-other POST needs an account. The pair is public, so it opens no protected folder. A folder in
-`pathsRequireAuth` still needs Basic, Digest or bearer credentials as well.
+other POST needs an account. The pair is public, so it opens no protected folder: a folder
+that `pathsWithoutAuth` does not list still needs Basic, Digest or bearer credentials as well.
 
 **WebDAV** — RFC 4918 class 1 and 2 on the HTTP listeners, through
 `golang.org/x/net/webdav`, when `http.webdav` is on: `OPTIONS`, `PROPFIND` of

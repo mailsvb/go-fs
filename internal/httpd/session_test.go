@@ -249,7 +249,7 @@ func TestTheTokenCarriesTheNameAndNotTheRights(t *testing.T) {
 // taken away by a reload reaches a browser that already holds one.
 func TestASessionTokenKeepsTheAccountsLimits(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = []string{"^/private/.*", "^/other/.*"}
+		cfg.PathsWithoutAuth = []string{publicExcept("private", "other")}
 		user := fullUser("john", "doe")
 		user.Paths = []string{"^/private/.*"}
 		cfg.Users = []config.User{user}
@@ -586,7 +586,7 @@ func TestAMutationFromAnotherSiteIsRefusedWithoutAnOrigin(t *testing.T) {
 // carries a go-fs query is still that file.
 func TestAnUnknownMarkerIsNotAnEndpoint(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = nil
+		cfg.PathsWithoutAuth = []string{"^/"}
 		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
 	server.write(t, "notes.txt", "hello")

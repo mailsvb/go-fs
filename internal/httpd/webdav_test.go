@@ -116,7 +116,7 @@ func TestWebDAVPropfind(t *testing.T) {
 // reach is refused, as it is to GET.
 func TestWebDAVPropfindKeepsToTheAccount(t *testing.T) {
 	server := davServer(t, func(cfg *httpConfig) {
-		cfg.PathsRequireAuth = []string{"^/"}
+		cfg.PathsWithoutAuth = nil
 		scoped := readOnlyUser("scoped", "pw")
 		scoped.Paths = []string{"^/$", "^/public(/.*)?$"}
 		cfg.Users = append(cfg.Users, scoped)
