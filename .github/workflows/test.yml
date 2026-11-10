@@ -205,8 +205,12 @@ jobs:
             setpriv --reuid go-fs --regid go-fs --init-groups \
               /usr/bin/go-fs -config /etc/go-fs/go-fs.toml > /tmp/go-fs.log 2>&1 &
             pid=$!
-            for i in $(seq 1 20); do curl -fsS -o /dev/null http://127.0.0.1:8080/ && break; sleep 0.5; done
-            curl -fsS -o /dev/null http://127.0.0.1:8080/
+            for i in $(seq 1 20); do curl -sS -o /dev/null http://127.0.0.1:8080/ && break; sleep 0.5; done
+            # every path needs an account by default, http.pathsWithoutAuth
+            # being empty, so the root refuses a stranger and serves the
+            # admin account the template starts with
+            test "$(curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/)" = 401
+            curl -fsS -o /dev/null -u admin:admin http://127.0.0.1:8080/
             kill $pid; wait $pid || true
             cat /tmp/go-fs.log
             grep -q "installer=rpm" /tmp/go-fs.log
