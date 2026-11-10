@@ -205,8 +205,12 @@ jobs:
             setpriv --reuid go-fs --regid go-fs --init-groups \
               /usr/bin/go-fs -config /etc/go-fs/go-fs.toml > /tmp/go-fs.log 2>&1 &
             pid=$!
-            for i in $(seq 1 20); do curl -fsS -o /dev/null http://127.0.0.1:8080/ && break; sleep 0.5; done
-            curl -fsS -o /dev/null http://127.0.0.1:8080/
+            for i in $(seq 1 20); do curl -sS -o /dev/null http://127.0.0.1:8080/ && break; sleep 0.5; done
+            # every path needs an account by default, http.pathsWithoutAuth
+            # being empty, so the root refuses a stranger and serves the
+            # admin account the template starts with
+            test "$(curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/)" = 401
+            curl -fsS -o /dev/null -u admin:admin http://127.0.0.1:8080/
             kill $pid; wait $pid || true
             cat /tmp/go-fs.log
             grep -q "installer=rpm" /tmp/go-fs.log
@@ -273,12 +277,18 @@ jobs:
           if ($service.StartType -ne "Automatic") { throw "the service does not start with Windows" }
           $up = $false
           foreach ($i in 1..20) {
-            try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/ | Out-Null; $up = $true; break }
+            try { $root = Invoke-WebRequest -UseBasicParsing -SkipHttpErrorCheck http://127.0.0.1:8080/; $up = $true; break }
             catch { Start-Sleep -Milliseconds 500 }
           }
           $log = "$env:ProgramData\go-fs\logs\go-fs.log"
           Get-Content $log
           if (-not $up) { throw "go-fs does not answer on 127.0.0.1:8080" }
+          # every path needs an account by default, http.pathsWithoutAuth being
+          # empty, so the root refuses a stranger and serves the admin account
+          # the template starts with
+          if ($root.StatusCode -ne 401) { throw "/ answers $($root.StatusCode) without an account, not 401" }
+          $admin = @{ Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("admin:admin")) }
+          Invoke-WebRequest -UseBasicParsing -Headers $admin http://127.0.0.1:8080/ | Out-Null
           if (-not (Test-Path "$env:ProgramData\go-fs\registry")) { throw "the install made no registry folder" }
           if (-not (Test-Path "$env:ProgramData\go-fs\trash")) { throw "the install made no trash folder" }
           try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/v2/ | Out-Null }

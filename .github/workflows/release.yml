@@ -294,12 +294,16 @@ jobs:
         run: |
           docker run -d --name go-fs-test -p 127.0.0.1:8080:8080 go-fs:test
           for _ in $(seq 30); do
-            curl -fsS -o /dev/null http://127.0.0.1:8080/ && break
+            curl -sS -o /dev/null http://127.0.0.1:8080/ && break
             sleep 1
           done
           logs=$(docker logs go-fs-test 2>&1)
           echo "$logs"
-          curl -fsS -o /dev/null http://127.0.0.1:8080/
+          # every path needs an account by default, http.pathsWithoutAuth
+          # being empty, so the root refuses a stranger and serves the admin
+          # account the template starts with
+          test "$(curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/)" = 401
+          curl -fsS -o /dev/null -u admin:admin http://127.0.0.1:8080/
           grep -q 'go-fs starting' <<<"$logs"
           grep -qE 'installer"?[=:]"?docker' <<<"$logs"
           docker rm -f go-fs-test
