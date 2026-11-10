@@ -405,8 +405,9 @@ isAdmin = true
 # servers, or copy it there, and at the next look at the folder go-fs signs
 # it with the repository's key (an rpm; an APK keeps its developer's
 # signature), removes the oldest versions of it beyond keep, and writes the
-# metadata clients read the repository by anew, signed too. A jellyfin
-# repository is a music library instead, which removes and signs nothing.
+# metadata clients read the repository by anew, signed too. A jellyfin or a
+# subsonic repository is a music library instead, which removes and signs
+# nothing.
 # They are added and edited in the admin interface, on the REPOSITORY
 # tab, which also generates the key.
 # [[repositories]]
@@ -414,12 +415,14 @@ isAdmin = true
 # dots, dashes and underscores. Unique, whatever its case.
 # name = "go-fs"
 # The kind of repository: rpm, an rpm-md repository for zypper and dnf,
-# fdroid, an F-Droid repository of APKs for the F-Droid app on Android, or
+# fdroid, an F-Droid repository of APKs for the F-Droid app on Android,
 # jellyfin, a music library that Jellyfin clients browse, play and download
-# from. An fdroid repository leaves the APKs as their developer signed them,
-# and signs its index. A jellyfin repository is answered at the root of the
-# http server, with the accounts that set http, and its folder can only be
-# read with an account.
+# from, or subsonic, one that OpenSubsonic clients such as Symfonium, Feishin
+# and DSub do. An fdroid repository leaves the APKs as their developer signed
+# them, and signs its index. A jellyfin or a subsonic repository is answered
+# at the root of the http server, with the accounts that set http, and its
+# folder can only be read with an account. A jellyfin and a subsonic
+# repository may share their folder.
 # type = "rpm"
 # The folder of the repository in general.baseFolderFiles, as the file listing
 # shows it. It has to exist.
@@ -429,23 +432,25 @@ isAdmin = true
 # metadata are signed with, armored. For fdroid a certificate and its private
 # key, PEM, one after the other; the F-Droid app adds the repository by the
 # fingerprint of the certificate, so keep the key once clients use it. It is
-# kept as it is, so keep this file private. A jellyfin repository has none.
+# kept as it is, so keep this file private. A jellyfin or a subsonic
+# repository has none.
 # signingKey = "…"
 # How many versions of each package, by name and architecture, stay in the
 # folder; older ones are removed. 0 keeps every version. An APK is a version
-# of its package name, by its versionCode. 0 for a jellyfin repository.
+# of its package name, by its versionCode. 0 for a jellyfin or a subsonic
+# repository.
 # keep = 5
 # How often the folder is looked at, in seconds. 60 when not set.
 # pollInterval = 60
 # Where clients reach the folder. When set, <name>.repo is written into it,
 # the definition zypper and dnf add. An fdroid repository needs it, ending in
 # /repo: the F-Droid app looks for the repository at <address>/fdroid/repo
-# when it is given any other address. For jellyfin it is the address of the
-# server, which the admin interface tells clients to add.
+# when it is given any other address. For jellyfin and subsonic it is the
+# address of the server, which the admin interface tells clients to add.
 # url = "https://files.example.com/rpm/go-fs"
-# The name the F-Droid app shows of an fdroid repository, or Jellyfin clients
-# of the library of a jellyfin one, at most 50 characters; the name when not
-# set.
+# The name the F-Droid app shows of an fdroid repository, or music clients of
+# the library of a jellyfin or a subsonic one, at most 50 characters; the name
+# when not set.
 # title = "Example apps"
 # The text the F-Droid app shows of an fdroid repository.
 # description = "The apps of example.com."

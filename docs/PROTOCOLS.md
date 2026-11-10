@@ -183,8 +183,8 @@ trustedProxies = []
 **Every path needs an account** unless it matches one of `pathsWithoutAuth`,
 where reading — `GET` and `HEAD` — needs none. The default, an empty list,
 makes the whole server private; `pathsWithoutAuth = ["^/"]` makes reading
-everything public. The folders of a `jellyfin` repository need an account even
-where a pattern matches them. **Everything else always needs an account**,
+everything public. The folders of a `jellyfin` or a `subsonic` repository need
+an account even where a pattern matches them. **Everything else always needs an account**,
 listed path or not: every method that changes something (`PUT`, `DELETE`,
 `POST`, `MKCOL`, `MOVE`, and WebDAV's `COPY`, `LOCK`, `UNLOCK` and
 `PROPPATCH`) and WebDAV's listing, `PROPFIND`. There is no public upload. The

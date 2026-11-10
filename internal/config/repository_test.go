@@ -145,7 +145,7 @@ func TestFDroidRepositories(t *testing.T) {
 		{"an icon out of the folder", func(r *Repository) { r.Icon = "/../icon.png" }, "leaves the served folder"},
 		{"an icon that is no image", func(r *Repository) { r.Icon = "/icon.svg" }, ".png, .jpg or .webp"},
 		{"title on rpm", func(r *Repository) { r.Type = RepositoryTypeRPM; r.SigningKey = testSigningKey(t) },
-			"for an fdroid or a jellyfin repository only"},
+			"for an fdroid, a jellyfin or a subsonic repository only"},
 		{"description on rpm", func(r *Repository) {
 			r.Type = RepositoryTypeRPM
 			r.SigningKey = testSigningKey(t)
@@ -223,6 +223,73 @@ func TestJellyfinRepositories(t *testing.T) {
 	}
 	if NeedsSigningKey(RepositoryTypeJellyfin) || SigningKeyKind(RepositoryTypeJellyfin) != "" {
 		t.Error("a jellyfin repository asks for a signing key")
+	}
+}
+
+// TestSubsonicRepositories checks a subsonic repository is a music library
+// as a jellyfin one is, and that the two may share a folder, which no two
+// other repositories may.
+func TestSubsonicRepositories(t *testing.T) {
+	skipWithout(t, features.Subsonic, features.Jellyfin)
+	folder := t.TempDir()
+	mkdir(t, folder, "music")
+	mkdir(t, folder, "music/live")
+	good := Repository{Name: "sub", Type: RepositoryTypeSubsonic, Folder: "/music", Title: "Our music"}
+	valid := servingConfig(folder)
+	valid.Repositories = []Repository{good}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("a valid subsonic repository is refused: %v", err)
+	}
+	if got := valid.Resolved().HTTP.SubsonicFolders; len(got) != 1 || got[0] != "/music" {
+		t.Errorf("the folders the http server protects = %q", got)
+	}
+	if NeedsSigningKey(RepositoryTypeSubsonic) || SigningKeyKind(RepositoryTypeSubsonic) != "" {
+		t.Error("a subsonic repository asks for a signing key")
+	}
+
+	jellyfin := Repository{Name: "jf", Type: RepositoryTypeJellyfin, Folder: "/music"}
+	valid.Repositories = []Repository{good, jellyfin}
+	if err := valid.Validate(); err != nil {
+		t.Errorf("a jellyfin and a subsonic repository cannot share a folder: %v", err)
+	}
+	resolved := valid.Resolved().HTTP
+	if len(resolved.JellyfinFolders) != 1 || len(resolved.SubsonicFolders) != 1 {
+		t.Errorf("the music folders are %q and %q", resolved.JellyfinFolders, resolved.SubsonicFolders)
+	}
+	nested := jellyfin
+	nested.Folder = "/music/live"
+	valid.Repositories = []Repository{good, nested}
+	if err := valid.Validate(); err != nil {
+		t.Errorf("a jellyfin repository in the folder of a subsonic one is refused: %v", err)
+	}
+
+	twice := good
+	twice.Name = "again"
+	refused := servingConfig(folder)
+	refused.Repositories = []Repository{good, twice}
+	if err := refused.Validate(); err == nil || !strings.Contains(err.Error(), "overlaps") {
+		t.Errorf("two subsonic repositories of one folder: got %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		change func(*Repository)
+		want   string
+	}{
+		{"a signing key", func(r *Repository) { r.SigningKey = testSigningKey(t) }, "has no signingKey"},
+		{"keep", func(r *Repository) { r.Keep = 3 }, "keep is 0 for a subsonic repository"},
+		{"a long title", func(r *Repository) { r.Title = strings.Repeat("x", 51) }, "at most 50"},
+		{"an icon", func(r *Repository) { r.Icon = "/icon.png" }, "icon is for an fdroid repository only"},
+	}
+	for _, c := range cases {
+		cfg := servingConfig(folder)
+		repo := good
+		c.change(&repo)
+		cfg.Repositories = []Repository{repo}
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: got %v, want %q", c.name, err, c.want)
+		}
 	}
 }
 

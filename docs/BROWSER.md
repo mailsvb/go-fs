@@ -359,8 +359,8 @@ removes the album values, which no longer apply.
 
 Measuring decodes the whole file, which takes a core for about as long as the
 decoder needs; go-fs measures at most as many files at once as the machine has
-cores, and refuses files larger than 512 MiB. A Jellyfin library reads a file
-again once it was saved, as it does any changed file.
+cores, and refuses files larger than 512 MiB. A Jellyfin or an OpenSubsonic
+library reads a file again once it was saved, as it does any changed file.
 
 What a measurement found is kept in the
 [persistent data file](INSTALL.md#run), not in the file: measuring never

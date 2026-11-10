@@ -29,7 +29,7 @@ func newJellyfinRunner(t *testing.T) (*runner, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { jellyfin.Retire("music") })
+	t.Cleanup(func() { jellyfin.Retire("jellyfin", "music") })
 	return r, folder
 }
 
@@ -47,7 +47,7 @@ func putFile(t *testing.T, folder, href string, data []byte) {
 // published is the library of the repository music that clients browse.
 func published(t *testing.T) *jellyfin.Library {
 	t.Helper()
-	for _, l := range jellyfin.Libraries() {
+	for _, l := range jellyfin.Libraries("jellyfin") {
 		if l.Name == "music" {
 			return l
 		}
@@ -164,7 +164,7 @@ func TestJellyfinRetiresWithTheRepository(t *testing.T) {
 	if err := m.Reload(cfg); err != nil {
 		t.Fatal(err)
 	}
-	for _, l := range jellyfin.Libraries() {
+	for _, l := range jellyfin.Libraries("jellyfin") {
 		if l.Name == "music" {
 			t.Error("the library of a repository taken out is still published")
 		}
@@ -182,7 +182,7 @@ func TestJellyfinRestartReadsNoTrackAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	disguise(t, filepath.Join(folder, "Band", "First", "01.mp3"))
-	jellyfin.Retire("music")
+	jellyfin.Retire("jellyfin", "music")
 
 	again := restart(t, r)
 	if err := again.update(time.Now()); err != nil {

@@ -3,7 +3,6 @@
 package httpd
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,14 +12,11 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"os"
-	"path"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/mailsvb/go-fs/internal/audio"
 	"github.com/mailsvb/go-fs/internal/jellyfin"
 )
 
@@ -330,36 +326,9 @@ func (j *jellyfinRequest) image(id, kind string) {
 	if !ok {
 		return
 	}
-	file, track, ok := jellyfin.CoverOf(item)
-	if !ok || !strings.EqualFold(kind, "Primary") {
+	if !strings.EqualFold(kind, "Primary") || !j.s.serveCover(j.w, j.r, item, "jellyfin") {
 		http.NotFound(j.w, j.r)
-		return
 	}
-	j.w.Header().Set("Cache-Control", "private, max-age=86400")
-	if file != "" {
-		f, err := os.Open(file)
-		if err != nil {
-			http.NotFound(j.w, j.r)
-			return
-		}
-		defer func() { _ = f.Close() }()
-		info, err := f.Stat()
-		if err != nil {
-			http.NotFound(j.w, j.r)
-			return
-		}
-		j.w.Header().Set("Content-Type", typeOf(file).Media)
-		http.ServeContent(j.w, j.r, path.Base(file), info.ModTime(), f)
-		return
-	}
-	picture, media, err := audio.Picture(track.OnDisk())
-	if err != nil {
-		j.s.log.Debug("jellyfin cannot read the picture of a track", "file", track.Virtual(), "error", err)
-		http.NotFound(j.w, j.r)
-		return
-	}
-	j.w.Header().Set("Content-Type", media)
-	http.ServeContent(j.w, j.r, "", track.ModTime, bytes.NewReader(picture))
 }
 
 // track finds a track the account may read.
@@ -380,40 +349,9 @@ func (j *jellyfinRequest) track(id string) (*jellyfin.Track, bool) {
 // played here, with ranges so that a player can seek. download names it for
 // saving.
 func (j *jellyfinRequest) send(id string, download bool) {
-	t, ok := j.track(id)
-	if !ok {
-		return
+	if t, ok := j.track(id); ok {
+		j.s.serveTrack(j.set, j.w, j.r, j.user, t, download, "jellyfin", j.client.Client)
 	}
-	file, err := os.Open(t.OnDisk())
-	if err != nil {
-		j.s.log.Warn("jellyfin cannot open a track", "file", t.Virtual(), "error", err)
-		http.NotFound(j.w, j.r)
-		return
-	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		http.NotFound(j.w, j.r)
-		return
-	}
-	name := path.Base(t.Href)
-	if download {
-		j.w.Header().Set("Content-Disposition", disposition(name))
-	}
-	j.w.Header().Set("Content-Type", typeOf(name).Media)
-	started := time.Now()
-	http.ServeContent(j.w, j.r, name, info.ModTime(), file)
-	if recorder, ok := j.w.(*responseRecorder); ok && (j.r.Method == http.MethodHead ||
-		recorder.status != http.StatusOK && recorder.status != http.StatusPartialContent) {
-		return
-	}
-	bytesSent := info.Size()
-	if recorder, ok := j.w.(*responseRecorder); ok {
-		bytesSent = recorder.bytes
-	}
-	j.s.log.Info("http download", "user", j.user.name, "file", t.Virtual(), "bytes", bytesSent,
-		"size", info.Size(), "via", "jellyfin", "client", j.client.Client,
-		"address", clientAddress(j.set, j.r), "took", time.Since(started).Round(time.Millisecond))
 }
 
 // hls answers a client that asks for a stream to be transcoded and sent in

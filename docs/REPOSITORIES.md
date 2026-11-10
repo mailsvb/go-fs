@@ -1,8 +1,9 @@
 # Repositories
 
 go-fs can host an rpm repository for zypper and dnf, an
-[F-Droid repository](#f-droid-repository) for Android, or a
-[music library for Jellyfin clients](#jellyfin-music-library), in a folder it
+[F-Droid repository](#f-droid-repository) for Android, or a music library for
+[Jellyfin](#jellyfin-music-library) or
+[OpenSubsonic](#opensubsonic-music-library) clients, in a folder it
 serves over HTTP, and keep it up to date by itself. Put an rpm into the folder over any of
 the servers (an HTTP `PUT`, S3, FTP, SFTP, TFTP) or copy it there on disk. At
 the next look at the folder, go-fs:
@@ -203,3 +204,64 @@ It differs from the package repositories in these ways:
 The record of a library on the REPOSITORY tab shows how many tracks and
 albums it has, and the address clients add. A binary built with the tag
 `no_jellyfin`, and go-fs-light, have no music library.
+
+## OpenSubsonic music library
+
+With `type = "subsonic"` the folder is a music library that
+[OpenSubsonic](https://opensubsonic.netlify.app) and Subsonic clients such as
+Symfonium, Feishin, Tempo, DSub, Ultrasonic, Substreamer and Amperfy browse,
+play and download from, as they would from Navidrome or another server of the
+API. go-fs speaks version 1.16.1 of the API with the OpenSubsonic additions,
+and plays every file as it is. Nothing is transcoded, so a client gets the
+FLAC or Opus file itself and has to be able to play it: turn transcoding off
+in the client, or leave it at "raw" or "original".
+
+```toml
+[[repositories]]
+name = "music-subsonic"
+type = "subsonic"
+folder = "/music"
+title = "Our music"             # optional, the name of the music folder in the clients; name when not set
+url = "https://files.example.com"   # optional, the address the admin page tells clients to add
+```
+
+It is read like a [Jellyfin library](#jellyfin-music-library): the same audio
+files, tags, albums, artists, genres and covers, the folder needs an account,
+and an account sees the tracks it may read. Where it differs:
+
+- **A jellyfin and a subsonic repository may share a folder**, so one music
+  folder serves both kinds of client. No two other repositories may overlap.
+  Each builds its own index of the folder.
+- **The API is answered below `/rest`**, as every server of it has it. In the
+  client, add `https://files.example.com`, the server rather than the folder.
+  A request is one of the API when its path is `/rest/<method>` or
+  `/rest/<method>.view` and the method is one of the API's, or when it is any
+  path below `/rest` that ends in `.view`. Other files of a folder `rest` of
+  the served folder are still reached. go-fs logs a warning when the served
+  folder has a `rest` folder.
+- **Clients log in with the accounts of go-fs** that set `http`, and send the
+  name and password with every request: as the password itself, hex encoded
+  (`enc:`), or as the MD5 of the password and a salt, which go-fs can check
+  because it keeps the passwords as they are. Clients that offer an **API
+  key** (OpenSubsonic's `apiKeyAuthentication`) can use a bearer token of
+  `[[tokens]]` instead, which reads what its `paths` and
+  `allowUserFileRetrieve` allow and stops working when it expires. A wrong
+  password or key counts towards `http.loginAttempts`, as on every other
+  login. go-fs logs a client's login once an hour, since it logs in with
+  every request.
+- **Covers need an account**, unlike Jellyfin's, because every client of the
+  API sends its credentials with them.
+- **Stars and plays are kept** in the
+  [persistent data file](INSTALL.md#run), by account, apart from what Jellyfin
+  clients keep: a track starred in Symfonium is not a favorite in Finamp. A
+  scrobble counts a play of the track, at the time the client says, and goes
+  into the account's history; a "now playing" scrobble counts nothing.
+- **Not kept:** ratings, playlists, the play queue, bookmarks, podcasts,
+  radio stations, shares and lyrics. A client sees none of them, and is told
+  that saving a rating, a play queue or a bookmark worked. Creating a
+  playlist or a share is refused. Artist biographies, similar songs and top
+  songs are empty.
+
+The record of a library on the REPOSITORY tab shows how many tracks and
+albums it has, and the address clients add. A binary built with the tag
+`no_subsonic`, and go-fs-light, have no OpenSubsonic library.

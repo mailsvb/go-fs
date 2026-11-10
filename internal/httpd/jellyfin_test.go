@@ -69,8 +69,8 @@ func newJellyfinServer(t *testing.T, tune func(*httpConfig)) (*testServer, *jell
 	onDisk := filepath.Join(server.base, "music")
 	library := jellyfin.Build("music", "Our music", "/music", onDisk, sources,
 		jellyfin.Covers(onDisk, jellyfin.Folders(hrefs)), time.Now())
-	jellyfin.Publish(library)
-	t.Cleanup(func() { jellyfin.Retire("music") })
+	jellyfin.Publish("jellyfin", library)
+	t.Cleanup(func() { jellyfin.Retire("jellyfin", "music") })
 	return server, library
 }
 

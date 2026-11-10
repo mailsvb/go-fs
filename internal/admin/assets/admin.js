@@ -1071,7 +1071,7 @@ function repositoryView(record, view) {
   } else {
     const count = (n, one, many) => n === 1 ? "1 " + one : n + " " + many;
     let text;
-    if (record.type === "jellyfin") {
+    if (record.type === "jellyfin" || record.type === "subsonic") {
       text = status.built
         ? count(status.packages, "track", "tracks") + " on " + count(status.albums || 0, "album", "albums")
           + ", library built " + when(status.built) + "."
@@ -1129,6 +1129,7 @@ function fdroidLinks(record, view) {
 function clientCommands(record, view) {
   if (record.type === "fdroid") return fdroidLinks(record, view);
   if (record.type === "jellyfin") return jellyfinServer(record);
+  if (record.type === "subsonic") return subsonicServer(record);
   const out = [];
   if (record.type !== "rpm") return out;
   const pre = (text) => {
@@ -1160,6 +1161,17 @@ function jellyfinServer(record) {
   pre.textContent = record.url || location.origin;
   return [paragraph("In a Jellyfin client, such as Finamp, Symfonium or Feishin, add this server and log in with "
     + "an account that sets http and may read the folder:", ""), pre];
+}
+
+// subsonicServer is what an OpenSubsonic client is given: the address of the
+// server, below whose root, at /rest, the library is, and an account of go-fs,
+// or a bearer token as its API key.
+function subsonicServer(record) {
+  const pre = document.createElement("pre");
+  pre.textContent = record.url || location.origin;
+  return [paragraph("In an OpenSubsonic client, such as Symfonium, Feishin, Tempo, DSub or Amperfy, add this server "
+    + "and log in with an account that sets http and may read the folder. A client that takes an API key can use "
+    + "a bearer token of [[tokens]] instead, which reads what its paths allow:", ""), pre];
 }
 
 function when(timestamp) {
@@ -1227,8 +1239,9 @@ const repositoryDialog = (() => {
     field("url").placeholder = {
       fdroid: "https://files.example.com/android/repo, ending in /repo; required",
       jellyfin: "https://files.example.com, what clients are given; this page's when empty",
+      subsonic: "https://files.example.com, what clients are given; this page's when empty",
     }[type] || "https://files.example.com/rpm/go-fs, for the .repo file";
-    field("title").placeholder = type === "jellyfin"
+    field("title").placeholder = type === "jellyfin" || type === "subsonic"
       ? "the name clients show of the library; the name when empty"
       : "the name the F-Droid app shows; the name when empty";
     field("url").required = type === "fdroid";
@@ -1287,6 +1300,7 @@ const repositoryDialog = (() => {
     working(true);
     tell("Saving…");
     const type = field("type").value;
+    const music = type === "jellyfin" || type === "subsonic";
     try {
       const result = await post("?go-fs=admin-repository-save", {
         was: record ? storedRepositories.get(record) || "" : "",
@@ -1294,11 +1308,11 @@ const repositoryDialog = (() => {
           name: field("name").value.trim(),
           type: field("type").value,
           folder: field("folder").value.trim(),
-          signingKey: type === "jellyfin" ? "" : key,
-          keep: type === "jellyfin" ? 0 : Number(field("keep").value) || 0,
+          signingKey: music ? "" : key,
+          keep: music ? 0 : Number(field("keep").value) || 0,
           pollInterval: Number(field("pollInterval").value) || 0,
           url: field("url").value.trim(),
-          title: type === "fdroid" || type === "jellyfin" ? field("title").value.trim() : "",
+          title: type === "fdroid" || music ? field("title").value.trim() : "",
           description: type === "fdroid" ? field("description").value.trim() : "",
           icon: type === "fdroid" ? field("icon").value.trim() : "",
         },
