@@ -299,7 +299,8 @@ func (s *Server) sonosStartSession(owner, folder string, files []string, index i
 	if _, err := rand.Read(raw); err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	// what the session asks the speakers is traced to the server's log
+	ctx, cancel := context.WithCancel(logging.WithLogger(context.Background(), s.log))
 	ss := &sonosSession{
 		id: hex.EncodeToString(raw), owner: owner, folder: folder, files: files,
 		started: time.Now(), cancel: cancel,

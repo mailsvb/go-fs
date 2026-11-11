@@ -136,7 +136,7 @@ func decodeManifest(found remoteManifest) (pulledManifest, error) {
 func (s *Server) pullImage(ctx context.Context, set *settings, job *registryJob, ref remoteRef, filter platformFilter, login remoteLogin, user *account) (string, error) {
 	store := set.registry
 	name, tag := ref.repository, ref.tag
-	client := newRemoteClient(ref, login, "pull")
+	client := newRemoteClient(ref, login, "pull", s.log)
 	if err := client.authenticate(ctx); err != nil {
 		return "", err
 	}
@@ -296,7 +296,7 @@ type remoteImage struct {
 // the login given, and finds the platforms it is for. Of a single image only
 // its configuration is fetched, which says its platform.
 func (s *Server) inspectRemote(ctx context.Context, ref remoteRef, login remoteLogin) (remoteImage, error) {
-	client := newRemoteClient(ref, login, "pull")
+	client := newRemoteClient(ref, login, "pull", s.log)
 	if err := client.authenticate(ctx); err != nil {
 		return remoteImage{}, err
 	}
@@ -554,7 +554,7 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 	}
 	job.plan(len(blobs), blobsSize(blobs))
 
-	client := newRemoteClient(target, login, "pull,push")
+	client := newRemoteClient(target, login, "pull,push", s.log)
 	if err := client.authenticate(ctx); err != nil {
 		return "", err
 	}

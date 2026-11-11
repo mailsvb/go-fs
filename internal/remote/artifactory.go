@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // A JFrog Artifactory is reached by its REST API, over HTTP or HTTPS, and
@@ -67,7 +69,8 @@ func openArtifactory(ctx context.Context, l Login) *artifactoryFS {
 		ResponseHeaderTimeout: artifactoryAnswerTimeout,
 		IdleConnTimeout:       time.Minute,
 	}
-	return &artifactoryFS{ctx: ctx, login: l, client: &http.Client{Transport: transport}}
+	return &artifactoryFS{ctx: ctx, login: l,
+		client: &http.Client{Transport: logging.Transport(logOf(ctx), "artifactory", transport)}}
 }
 
 // split is a clean absolute path as the repository and the path in it.

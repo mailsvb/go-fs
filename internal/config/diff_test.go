@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -27,5 +28,30 @@ func TestChangedKeysNamesKeysNotValues(t *testing.T) {
 	}
 	if got := ChangedKeys(before, before); len(got) != 0 {
 		t.Errorf("nothing changed, but ChangedKeys = %q", got)
+	}
+}
+
+// The configuration in effect can be logged whole: every key is there, and
+// the value of every key that holds a credential is masked.
+func TestTheConfigurationLogsWithoutCredentials(t *testing.T) {
+	cfg := Default()
+	cfg.Users = []User{{Username: "john", Password: "userpassword", HTTP: true}}
+	cfg.Servers = []Server{{Name: "backup", Type: ServerTypeSFTP, Host: "h", Password: "serverpassword", VaultPassword: "vaultpassword"}}
+	cfg.HTTP.ShareLinkSecret = "sharesecret"
+	cfg.Tokens = []Token{{Name: "phone", Hash: "tokenhash"}}
+
+	var out strings.Builder
+	slog.New(slog.NewTextHandler(&out, nil)).Info("configuration in effect", "config", cfg)
+	logged := out.String()
+	for _, secret := range []string{"userpassword", "serverpassword", "vaultpassword", "sharesecret", "tokenhash"} {
+		if strings.Contains(logged, secret) {
+			t.Errorf("the record holds %q", secret)
+		}
+	}
+	for _, want := range []string{"config.users[0].username=john", "config.users[0].password=***", "config.http.port=",
+		"config.servers[0].host=h", "config.tokens[0].name=phone"} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("the record lacks %q:\n%s", want, logged)
+		}
 	}
 }

@@ -338,7 +338,7 @@ func (s *Server) remoteFetchFile(ctx context.Context, set *settings, job *regist
 	// stalls is cut at once; a read leaves nothing behind on the server
 	getCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	fsys, err := remote.Open(getCtx, login, set.ssh)
+	fsys, err := remote.Open(logging.Ensure(getCtx, s.log), login, set.ssh)
 	if err != nil {
 		return "", err
 	}

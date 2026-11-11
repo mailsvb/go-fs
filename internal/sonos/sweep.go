@@ -6,6 +6,8 @@ import (
 	"net/netip"
 	"sync"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // sweepDial bounds the connection to one address of a sweep: a speaker on the
@@ -42,6 +44,8 @@ func (c *Client) Sweep(ctx context.Context) []Player {
 		return nil
 	}
 
+	log := logging.From(ctx, logging.Discard)
+	log.Debug("sonos sweep", "hosts", len(hosts), "parallel", min(sweepParallel, len(hosts)))
 	var mu sync.Mutex
 	var players []Player
 	work := make(chan string)
@@ -55,8 +59,10 @@ func (c *Client) Sweep(ctx context.Context) []Player {
 					continue
 				}
 				_ = conn.Close()
+				log.Debug("sonos sweep found a port open", "host", host)
 				player, err := c.describe(ctx, "http://"+host+"/xml/device_description.xml")
 				if err != nil {
+					log.Debug("sonos sweep host is no speaker", "host", host, "error", err)
 					continue
 				}
 				mu.Lock()

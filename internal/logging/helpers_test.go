@@ -193,3 +193,32 @@ func TestOutputRecordsTheProgram(t *testing.T) {
 		t.Errorf("exit record = %v", got[1])
 	}
 }
+
+// A shared client traces to the logger of the request's context, and only
+// to that one.
+func TestTransportTakesTheLoggerOfTheContext(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer backend.Close()
+	client := &http.Client{Transport: Transport(nil, "shared", nil)}
+
+	var out bytes.Buffer
+	ctx := WithLogger(context.Background(), NewTo(&out, "debug", "json").Logger.With("req", 7))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, backend.URL, nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	got := records(t, &out)
+	if len(got) != 2 || got[0]["req"] != float64(7) || got[1]["peer"] != "shared" {
+		t.Errorf("records = %v", got)
+	}
+
+	plain, _ := http.NewRequest(http.MethodGet, backend.URL, nil)
+	if resp, err := client.Do(plain); err == nil {
+		resp.Body.Close()
+	}
+	if n := len(records(t, &out)); n != 2 {
+		t.Errorf("a request without a logger was traced: %d records", n)
+	}
+}

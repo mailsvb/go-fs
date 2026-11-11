@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path"
@@ -20,6 +21,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // Sending by SFTP is left out by the tag no_sftp_remote, and by light.
@@ -40,18 +42,32 @@ func sshConnect(ctx context.Context, address string, config *ssh.ClientConfig) (
 	dialCtx, cancel := context.WithTimeout(ctx, HandshakeTimeout)
 	defer cancel()
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(dialCtx, "tcp", address)
+	log := logOf(ctx)
+	raw, err := dialer.DialContext(dialCtx, "tcp", address)
 	if err != nil {
+		log.Debug("remote dial failed", "protocol", "ssh", "address", address, "error", err)
 		return nil, err
 	}
+	conn := logging.Conn(log, "ssh "+address, raw)
 	context.AfterFunc(ctx, func() { _ = conn.Close() })
 	_ = conn.SetDeadline(time.Now().Add(HandshakeTimeout))
 	c, chans, reqs, err := ssh.NewClientConn(conn, address, config)
 	if err != nil {
 		_ = conn.Close()
+		log.Debug("remote ssh handshake failed", "address", address, "error", err)
 		return nil, err
 	}
 	_ = conn.SetDeadline(time.Time{})
+	if log.Enabled(ctx, slog.LevelDebug) {
+		attrs := []any{"address", address, "user", c.User(), "serverVersion", string(c.ServerVersion()),
+			"clientVersion", string(c.ClientVersion())}
+		if negotiated, ok := c.(ssh.AlgorithmsConnMetadata); ok {
+			a := negotiated.Algorithms()
+			attrs = append(attrs, "kex", a.KeyExchange, "hostKey", a.HostKey,
+				"cipherOut", a.Write.Cipher, "cipherIn", a.Read.Cipher, "macOut", a.Write.MAC, "macIn", a.Read.MAC)
+		}
+		log.Debug("remote ssh handshake complete", attrs...)
+	}
 	return ssh.NewClient(c, chans, reqs), nil
 }
 

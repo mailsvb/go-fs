@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -91,7 +92,7 @@ func run(stop <-chan struct{}) error {
 		initPath    = flag.String("init", "", "write a documented starter configuration to this path and exit")
 		checkOnly   = flag.Bool("check", false, "load the configuration, report problems and exit")
 		showVersion = flag.Bool("version", false, "print the version and exit")
-		logFile     = flag.String("logfile", "", "write the log to this file, rotated by size, instead of standard output")
+		logFile     = flag.String("logfile", "", "write the log to this file, rotated by size; from a command line to standard output as well")
 		dataPath    = flag.String("persistent-data", "", "path of the file go-fs keeps what it remembers across a restart in, "+
 			"such as share links and playback progress (default: beside the configuration file, named like it with "+
 			store.FileExtension+")")
@@ -124,6 +125,12 @@ func run(stop <-chan struct{}) error {
 		// left open: it takes every record up to the last one, and the
 		// error that ends the program after that
 		output, errorOutput = file, file
+		if stop == nil {
+			// started from a command line rather than by the service
+			// manager: the log goes to the terminal as well, which is
+			// where whoever started it looks
+			output, errorOutput = io.MultiWriter(file, os.Stdout), io.MultiWriter(file, os.Stderr)
+		}
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -150,12 +157,20 @@ func run(stop <-chan struct{}) error {
 		"os", runtime.GOOS,
 		"arch", runtime.GOARCH,
 		"pid", os.Getpid(),
+		"host", hostname(),
+		"workdir", workdir(),
+		"user", runAs(),
+		"cpus", runtime.NumCPU(),
+		"gomaxprocs", runtime.GOMAXPROCS(0),
 		"config", *configPath,
 		"persistentData", *dataPath,
 		"installer", packaging,
 		"service", stop != nil,
 		"logLevel", cfg.General.LogLevel,
 		"logFormat", cfg.General.LogFormat)
+	// the configuration in effect, defaults included, with every credential
+	// masked: what a log handed over for analysis was configured with
+	logger.Debug("configuration in effect", "config", cfg)
 	// the file was read before there was a logger to trace it, and so were
 	// the programs of general.tools probed; later probes are traced
 	logging.Summary(logger.Logger, "read", *configPath)
@@ -377,4 +392,30 @@ func managedUpdate(installer string) string {
 		return "pull the newer image and recreate the container instead"
 	}
 	return "update the package instead"
+}
+
+// hostname is the name of the machine for the first record, "" when it
+// cannot be told.
+func hostname() string {
+	name, _ := os.Hostname()
+	return name
+}
+
+// workdir is the folder relative paths are taken from.
+func workdir() string {
+	dir, _ := os.Getwd()
+	return dir
+}
+
+// runAs is the account go-fs runs as, which decides what it may read and
+// write: the name and the numeric ids where the system has them.
+func runAs() string {
+	who, err := user.Current()
+	if err != nil {
+		return fmt.Sprintf("uid=%d gid=%d", os.Getuid(), os.Getgid())
+	}
+	if runtime.GOOS == "windows" {
+		return who.Username
+	}
+	return fmt.Sprintf("%s uid=%s gid=%s", who.Username, who.Uid, who.Gid)
 }

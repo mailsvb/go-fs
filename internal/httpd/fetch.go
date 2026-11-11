@@ -297,12 +297,13 @@ func newFetchTransport(base http.RoundTripper) http.RoundTripper {
 }
 
 // fetchClientFor is the client of a fetch, by whether it validates the
-// connection.
-func fetchClientFor(skipVerify bool) *http.Client {
+// connection, with every request it sends traced to log.
+func fetchClientFor(skipVerify bool, log *slog.Logger) *http.Client {
+	base := fetchClient
 	if skipVerify {
-		return insecureFetchClient
+		base = insecureFetchClient
 	}
-	return fetchClient
+	return &http.Client{Transport: logging.Transport(log, "fetch", base.Transport), CheckRedirect: base.CheckRedirect}
 }
 
 // fetchStart starts a fetch into a folder.
@@ -371,7 +372,7 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 	if fetch.username != "" || fetch.password != "" {
 		req.SetBasicAuth(fetch.username, fetch.password)
 	}
-	res, err := fetchClientFor(fetch.skipVerify).Do(req)
+	res, err := fetchClientFor(fetch.skipVerify, s.log).Do(req)
 	if err != nil {
 		var urlErr *url.Error
 		if errors.As(err, &urlErr) {

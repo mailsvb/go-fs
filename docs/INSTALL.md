@@ -187,7 +187,7 @@ go-fs -config /etc/go-fs.toml
 | `-config <path>` | configuration file, `go-fs.toml` by default |
 | `-init <path>` | write a documented starter configuration and exit |
 | `-check` | load the configuration, report problems and exit |
-| `-logfile <path>` | write the log to this file instead of standard output, rotated at 10 MiB with five old files kept; what the Windows service uses |
+| `-logfile <path>` | write the log to this file, rotated at 10 MiB with five old files kept; what the Windows service uses. Started from a command line, go-fs writes to standard output as well |
 | `-persistent-data <path>` | file go-fs keeps what it remembers across a restart in, such as share links and playback progress; by default beside the configuration file and named like it, `go-fs.toml` keeping its data in `go-fs.db` |
 | `-version` | print the version and exit |
 

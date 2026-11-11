@@ -21,6 +21,7 @@ import (
 	"github.com/cloudsoda/go-smb2"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // Sending by SMB is left out by the tag no_smb, and by light.
@@ -165,18 +166,23 @@ func openSMB(ctx context.Context, l Login) (FS, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, HandshakeTimeout)
 	defer cancel()
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(dialCtx, "tcp", l.Address())
+	log := logOf(ctx)
+	raw, err := dialer.DialContext(dialCtx, "tcp", l.Address())
 	if err != nil {
+		log.Debug("remote dial failed", "protocol", "smb", "address", l.Address(), "error", err)
 		return nil, smbFailure(l, err)
 	}
+	conn := logging.Conn(log, "smb "+l.Address(), raw)
 	context.AfterFunc(ctx, func() { _ = conn.Close() })
 	domain, user := smbUser(l.Username)
 	smb := &smb2.Dialer{Initiator: &smb2.NTLMInitiator{User: user, Password: l.Password, Domain: domain}}
 	session, err := smb.DialConn(dialCtx, conn, l.Address())
 	if err != nil {
 		_ = conn.Close()
+		log.Debug("remote smb session failed", "address", l.Address(), "domain", domain, "user", user, "error", err)
 		return nil, smbFailure(l, err)
 	}
+	log.Debug("remote smb session established", "address", l.Address(), "domain", domain, "user", user)
 	return &smbFS{ctx: ctx, conn: conn, session: session.WithContext(ctx), shares: map[string]*smb2.Share{}}, nil
 }
 

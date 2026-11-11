@@ -85,3 +85,12 @@ func From(ctx context.Context, fallback *slog.Logger) *slog.Logger {
 	}
 	return fallback
 }
+
+// Ensure is ctx carrying a logger: the one it carries already, which is the
+// more specific, or else log.
+func Ensure(ctx context.Context, log *slog.Logger) context.Context {
+	if From(ctx, nil) != nil || log == nil {
+		return ctx
+	}
+	return WithLogger(ctx, log)
+}

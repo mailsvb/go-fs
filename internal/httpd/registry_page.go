@@ -1248,7 +1248,7 @@ func (s *Server) registryPushCheck(set *settings, w http.ResponseWriter, r *http
 
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	client := newRemoteClient(ref, body.login(), "pull,push")
+	client := newRemoteClient(ref, body.login(), "pull,push", s.logFor(r))
 	err = client.authenticate(ctx)
 	if err == nil {
 		err = client.canPush(ctx)

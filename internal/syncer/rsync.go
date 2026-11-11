@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/store"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -72,7 +73,7 @@ func runRsync(ctx context.Context, j job, log *slog.Logger) (result, error) {
 	if err != nil {
 		return result{}, err
 	}
-	rem, err := openRemote(ctx, login, j.ssh, j.sync.RemoteFolder)
+	rem, err := openRemote(logging.Ensure(ctx, log), login, j.ssh, j.sync.RemoteFolder)
 	if err != nil {
 		return result{}, err
 	}

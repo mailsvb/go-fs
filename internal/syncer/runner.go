@@ -83,6 +83,11 @@ func (r *runner) run(ctx context.Context) {
 	for {
 		at := next(s, last, r.now())
 		r.update(func(status *Status) { status.Next = at })
+		if at.IsZero() {
+			r.log.Debug("sync waits to be asked, it has no schedule")
+		} else {
+			r.log.Debug("sync waits for its next run", "next", at, "in", at.Sub(r.now()).Round(time.Second))
+		}
 		// a sync that never comes round runs only when asked to
 		var due <-chan time.Time
 		var timer *time.Timer
@@ -90,10 +95,13 @@ func (r *runner) run(ctx context.Context) {
 			timer = time.NewTimer(at.Sub(r.now()))
 			due = timer.C
 		}
+		reason := "stopped"
 		select {
 		case <-ctx.Done():
 		case <-due:
+			reason = "schedule"
 		case <-r.asked:
+			reason = "asked"
 		}
 		if timer != nil {
 			timer.Stop()
@@ -102,6 +110,7 @@ func (r *runner) run(ctx context.Context) {
 			return
 		}
 		last = r.now()
+		r.log.Debug("sync wakes up", "reason", reason)
 		r.once(ctx, last)
 	}
 }

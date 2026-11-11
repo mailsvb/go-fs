@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -18,6 +19,8 @@ import (
 
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // The registry page can copy an image from another registry into this one,
@@ -222,9 +225,11 @@ type remoteLogin struct {
 	skipVerify         bool
 }
 
-func newRemoteClient(ref remoteRef, login remoteLogin, actions string) *remoteClient {
+// log takes the trace of every request the client sends.
+func newRemoteClient(ref remoteRef, login remoteLogin, actions string, log *slog.Logger) *remoteClient {
 	return &remoteClient{
-		http:       &http.Client{Transport: remoteTransportFor(login.skipVerify), CheckRedirect: keepCredentialsHome},
+		http: &http.Client{Transport: logging.Transport(log, "registry", remoteTransportFor(login.skipVerify)),
+			CheckRedirect: keepCredentialsHome},
 		base:       ref.scheme + "://" + ref.api,
 		host:       ref.host,
 		repository: ref.repository,

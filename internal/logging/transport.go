@@ -13,24 +13,31 @@ import (
 // only their length and type, and what authenticates is masked as Headers
 // and URL mask it. A redirect the client follows is a request of its own,
 // so it is recorded as one, with the Location it came from masked as well.
+//
+// A request whose context carries a logger (WithLogger) is traced to that
+// one, the request's or the job's that sends it; log is for the others, and
+// may be nil for a client shared by all of them.
 func Transport(log *slog.Logger, peer string, base http.RoundTripper) http.RoundTripper {
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	return &transport{log: OrDiscard(log).With("peer", peer), base: base}
+	return &transport{log: OrDiscard(log), peer: peer, base: base}
 }
 
 type transport struct {
 	log  *slog.Logger
+	peer string
 	base http.RoundTripper
 }
 
 func (t *transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	ctx := r.Context()
-	if !t.log.Enabled(ctx, slog.LevelDebug) {
+	log := From(ctx, t.log)
+	if !log.Enabled(ctx, slog.LevelDebug) {
 		return t.base.RoundTrip(r)
 	}
-	t.log.LogAttrs(ctx, slog.LevelDebug, "out http >",
+	log = log.With("peer", t.peer)
+	log.LogAttrs(ctx, slog.LevelDebug, "out http >",
 		slog.String("method", r.Method),
 		slog.String("url", URL(r.URL)),
 		slog.Any("header", Headers(r.Header)),
@@ -39,7 +46,7 @@ func (t *transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(r)
 	took := time.Since(started).Round(time.Millisecond)
 	if err != nil {
-		t.log.LogAttrs(ctx, slog.LevelDebug, "out http failed",
+		log.LogAttrs(ctx, slog.LevelDebug, "out http failed",
 			slog.String("method", r.Method),
 			slog.String("url", URL(r.URL)),
 			slog.Any("error", err),
@@ -58,7 +65,7 @@ func (t *transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if resp.TLS != nil {
 		attrs = append(attrs, slog.Any("tls", TLS(resp.TLS)))
 	}
-	t.log.LogAttrs(ctx, slog.LevelDebug, "out http <", attrs...)
+	log.LogAttrs(ctx, slog.LevelDebug, "out http <", attrs...)
 	return resp, nil
 }
 

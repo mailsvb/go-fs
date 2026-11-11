@@ -139,7 +139,7 @@ func New(version string, keys []ed25519.PublicKey, log *slog.Logger) *Updater {
 		maxSize:      MaxSize,
 		smokeTimeout: 10 * time.Second,
 		done:         make(chan struct{}),
-		client:       &http.Client{Transport: http.DefaultTransport},
+		client:       &http.Client{Transport: logging.Transport(log, "github", http.DefaultTransport)},
 		releaseAPI:   releaseAPI,
 	}
 }

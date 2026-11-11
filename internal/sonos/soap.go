@@ -20,6 +20,8 @@ import (
 	"net/netip"
 	"strings"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // Port is the port a speaker serves its description and its services on.
@@ -56,7 +58,9 @@ func New() *Client {
 	}
 	return &Client{
 		HTTP: &http.Client{
-			Transport: transport,
+			// every SOAP call and description is traced to the logger
+			// of the context it is made with
+			Transport: logging.Transport(nil, "sonos", transport),
 			Timeout:   10 * time.Second,
 			// a speaker answers where it is asked; a redirect would be
 			// someone else answering for it

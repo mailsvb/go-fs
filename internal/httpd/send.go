@@ -221,7 +221,7 @@ type sendHostKeyJSON struct {
 func (s *Server) sendHostKey(w http.ResponseWriter, r *http.Request, req sendRequest) {
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	keyType, fingerprint, err := remote.HostKey(ctx, req.Login, s.settings().ssh)
+	keyType, fingerprint, err := remote.HostKey(logging.Ensure(ctx, s.log), req.Login, s.settings().ssh)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -252,7 +252,7 @@ type sendEntryJSON struct {
 func (s *Server) sendBrowse(w http.ResponseWriter, r *http.Request, req sendRequest) {
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	fsys, err := remote.Open(ctx, req.Login, s.settings().ssh)
+	fsys, err := remote.Open(logging.Ensure(ctx, s.log), req.Login, s.settings().ssh)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -376,7 +376,7 @@ func (s *Server) sendFile(ctx context.Context, job *registryJob, req sendRequest
 	})
 	defer stop()
 
-	fsys, err := remote.Open(connCtx, req.Login, s.settings().ssh)
+	fsys, err := remote.Open(logging.Ensure(connCtx, s.log), req.Login, s.settings().ssh)
 	if err != nil {
 		return "", err
 	}
