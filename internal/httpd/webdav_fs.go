@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/net/webdav"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -49,7 +50,7 @@ func (d *davFS) readable(virtual string) bool {
 	return d.s.permits(d.set, d.user, http.MethodGet, virtual, actRead)
 }
 
-func (d *davFS) Stat(_ context.Context, name string) (os.FileInfo, error) {
+func (d *davFS) stat(_ context.Context, name string) (os.FileInfo, error) {
 	target, err := d.resolve("stat", name)
 	if err != nil {
 		return nil, err
@@ -57,18 +58,18 @@ func (d *davFS) Stat(_ context.Context, name string) (os.FileInfo, error) {
 	if !d.readable(target.Virtual) {
 		return nil, &os.PathError{Op: "stat", Path: name, Err: os.ErrNotExist}
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(d.s.logFor(d.r), target.Path)
 	if err != nil {
 		return nil, err
 	}
 	return davInfo{info}, nil
 }
 
-// OpenFile opens a file to read, or to write what replaces it. The WebDAV
+// openFile opens a file to read, or to write what replaces it. The WebDAV
 // package asks for the second with O_CREATE and O_TRUNC, for a PUT and for
 // each file a COPY makes. A PROPPATCH asks for O_RDWR alone, to patch the
 // properties, which are taken and not kept, so that is a read too.
-func (d *davFS) OpenFile(_ context.Context, name string, flag int, _ os.FileMode) (webdav.File, error) {
+func (d *davFS) openFile(_ context.Context, name string, flag int, _ os.FileMode) (webdav.File, error) {
 	target, err := d.resolve("open", name)
 	if err != nil {
 		return nil, err
@@ -79,7 +80,7 @@ func (d *davFS) OpenFile(_ context.Context, name string, flag int, _ os.FileMode
 	if !d.readable(target.Virtual) {
 		return nil, &os.PathError{Op: "open", Path: name, Err: os.ErrNotExist}
 	}
-	file, err := os.Open(target.Path)
+	file, err := logging.Open(d.s.logFor(d.r), target.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +95,7 @@ func (d *davFS) create(target vfs.Target) (webdav.File, error) {
 	if target.IsRoot() {
 		return nil, denied
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(d.s.logFor(d.r), target.Path)
 	exists := err == nil
 	if exists && !info.Mode().IsRegular() {
 		return nil, denied
@@ -104,15 +105,15 @@ func (d *davFS) create(target vfs.Target) (webdav.File, error) {
 	}
 	// a file is not given the folders above it, as a PUT of the page's
 	// would: RFC 4918 9.7.1 answers 409 for a folder that is not there
-	if _, err := os.Stat(filepath.Dir(target.Path)); err != nil {
+	if _, err := logging.Stat(d.s.logFor(d.r), filepath.Dir(target.Path)); err != nil {
 		return nil, err
 	}
 
 	staging := stagingFolder(d.set)
-	if err := os.MkdirAll(staging, 0o755); err != nil {
+	if err := logging.MkdirAll(d.s.logFor(d.r), staging, 0o755); err != nil {
 		return nil, err
 	}
-	staged, err := os.CreateTemp(staging, "webdav-*")
+	staged, err := logging.CreateTemp(d.s.logFor(d.r), staging, "webdav-*")
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +123,7 @@ func (d *davFS) create(target vfs.Target) (webdav.File, error) {
 	return &davUpload{File: staged, dav: d, target: target, replace: exists, started: time.Now()}, nil
 }
 
-func (d *davFS) Mkdir(_ context.Context, name string, _ os.FileMode) error {
+func (d *davFS) mkdir(_ context.Context, name string, _ os.FileMode) error {
 	target, err := d.resolve("mkdir", name)
 	if err != nil {
 		return err
@@ -133,15 +134,15 @@ func (d *davFS) Mkdir(_ context.Context, name string, _ os.FileMode) error {
 	if !d.s.permits(d.set, d.user, methodMkcol, target.Virtual, actMkdir) {
 		return &os.PathError{Op: "mkdir", Path: name, Err: os.ErrPermission}
 	}
-	if err := os.Mkdir(target.Path, 0o755); err != nil {
+	if err := logging.Mkdir(d.s.logFor(d.r), target.Path, 0o755); err != nil {
 		return err
 	}
-	d.s.log.Info("webdav mkdir", "user", nameOf(d.user), "folder", target.Virtual,
+	d.s.logFor(d.r).Info("webdav mkdir", "user", nameOf(d.user), "folder", target.Virtual,
 		"method", d.r.Method, "address", clientAddress(d.set, d.r))
 	return nil
 }
 
-func (d *davFS) RemoveAll(_ context.Context, name string) error {
+func (d *davFS) removeAll(_ context.Context, name string) error {
 	target, err := d.resolve("remove", name)
 	if err != nil {
 		return err
@@ -149,7 +150,7 @@ func (d *davFS) RemoveAll(_ context.Context, name string) error {
 	if target.IsRoot() {
 		return &os.PathError{Op: "remove", Path: name, Err: os.ErrPermission}
 	}
-	info, err := os.Lstat(target.Path)
+	info, err := logging.Lstat(d.s.logFor(d.r), target.Path)
 	if err != nil {
 		return err
 	}
@@ -162,15 +163,15 @@ func (d *davFS) RemoveAll(_ context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	d.s.log.Info("webdav delete", "user", nameOf(d.user), "path", target.Virtual,
+	d.s.logFor(d.r).Info("webdav delete", "user", nameOf(d.user), "path", target.Virtual,
 		"folder", info.IsDir(), "trash", trashed, "method", d.r.Method, "address", clientAddress(d.set, d.r))
 	return nil
 }
 
-// Rename moves a file or a folder. The WebDAV package removes a destination
+// rename moves a file or a folder. The WebDAV package removes a destination
 // it may overwrite before it asks, so a destination that is still there is
 // one the account cannot see, and it is refused rather than replaced unseen.
-func (d *davFS) Rename(_ context.Context, oldName, newName string) error {
+func (d *davFS) rename(_ context.Context, oldName, newName string) error {
 	from, err := d.resolve("rename", oldName)
 	if err != nil {
 		return err
@@ -182,16 +183,16 @@ func (d *davFS) Rename(_ context.Context, oldName, newName string) error {
 	if from.IsRoot() || to.IsRoot() {
 		return &os.PathError{Op: "rename", Path: oldName, Err: os.ErrPermission}
 	}
-	if _, err := os.Lstat(to.Path); err == nil {
+	if _, err := logging.Lstat(d.s.logFor(d.r), to.Path); err == nil {
 		return &os.PathError{Op: "rename", Path: newName, Err: os.ErrExist}
 	}
 	if err := d.s.davMovable(d.set, d.user, from, to); err != nil {
 		return err
 	}
-	if err := os.Rename(from.Path, to.Path); err != nil {
+	if err := logging.Rename(d.s.logFor(d.r), from.Path, to.Path); err != nil {
 		return err
 	}
-	d.s.log.Info("webdav move", "user", nameOf(d.user), "from", from.Virtual, "to", to.Virtual,
+	d.s.logFor(d.r).Info("webdav move", "user", nameOf(d.user), "from", from.Virtual, "to", to.Virtual,
 		"address", clientAddress(d.set, d.r))
 	return nil
 }
@@ -278,7 +279,7 @@ type davUpload struct {
 // overwritten by a create.
 func (u *davUpload) Close() error {
 	staged := u.File.Name()
-	defer func() { _ = os.Remove(staged) }()
+	defer func() { _ = logging.Remove(u.dav.s.logFor(u.dav.r), staged) }()
 	info, statErr := u.File.Stat()
 	if err := u.File.Close(); err != nil {
 		return err
@@ -288,7 +289,7 @@ func (u *davUpload) Close() error {
 	}
 	d := u.dav
 	if d.body != nil && d.body.failed != nil {
-		d.s.log.Info("webdav upload failed", "user", nameOf(d.user), "file", u.target.Virtual,
+		d.s.logFor(d.r).Info("webdav upload failed", "user", nameOf(d.user), "file", u.target.Virtual,
 			"bytes", info.Size(), "address", clientAddress(d.set, d.r),
 			"took", time.Since(u.started).Round(time.Millisecond), "error", d.body.failed)
 		return d.body.failed
@@ -297,13 +298,13 @@ func (u *davUpload) Close() error {
 	lock := d.s.uploadLock(u.target.Path)
 	lock.Lock()
 	defer lock.Unlock()
-	if existing, err := os.Stat(u.target.Path); err == nil && (!u.replace || !existing.Mode().IsRegular()) {
+	if existing, err := logging.Stat(u.dav.s.logFor(u.dav.r), u.target.Path); err == nil && (!u.replace || !existing.Mode().IsRegular()) {
 		return &os.PathError{Op: "create", Path: u.target.Virtual, Err: os.ErrExist}
 	}
-	if err := finalizeUpload(staged, u.target.Path, u.replace); err != nil {
+	if err := finalizeUpload(u.dav.s.logFor(u.dav.r), staged, u.target.Path, u.replace); err != nil {
 		return err
 	}
-	d.s.log.Info("webdav upload", "user", nameOf(d.user), "file", u.target.Virtual,
+	d.s.logFor(d.r).Info("webdav upload", "user", nameOf(d.user), "file", u.target.Virtual,
 		"bytes", info.Size(), "replaced", u.replace, "method", d.r.Method,
 		"address", clientAddress(d.set, d.r), "took", time.Since(u.started).Round(time.Millisecond))
 	return nil

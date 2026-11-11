@@ -57,7 +57,7 @@ func newFakeGitHub(t *testing.T, tag string) *fakeGitHub {
 }
 
 func releaseUpdater(fake *fakeGitHub, version string) *Updater {
-	u := New(version, nil)
+	u := New(version, nil, nil)
 	u.releaseAPI = fake.URL + "/latest"
 	return u
 }

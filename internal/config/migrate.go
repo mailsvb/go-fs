@@ -2,7 +2,7 @@ package config
 
 import (
 	"fmt"
-	"os"
+	"log/slog"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // movedKeys are the keys an older file names the folders by, which Parse reads
@@ -38,16 +40,16 @@ var droppedSections = []string{"ftp", "sftp", "http", "tftp"}
 // whose layout this does not understand is left alone and reported, and goes
 // on loading as it did. Because lines are removed, the file as it was is kept
 // beside it with .bak appended to its name.
-func Migrate(path string) ([]string, error) {
+func Migrate(path string, log *slog.Logger) ([]string, error) {
 	target := path
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		target = resolved
 	}
-	info, err := os.Stat(target)
+	info, err := logging.Stat(log, target)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(target)
+	data, err := logging.ReadFile(log, target)
 	if err != nil {
 		return nil, err
 	}
@@ -69,10 +71,10 @@ func Migrate(path string) ([]string, error) {
 	}
 
 	mode := info.Mode().Perm()
-	if err := os.WriteFile(target+".bak", data, mode); err != nil {
+	if err := logging.WriteFile(log, target+".bak", data, mode); err != nil {
 		return nil, err
 	}
-	if err := replaceFile(target, []byte(edited), mode); err != nil {
+	if err := replaceFile(log, target, []byte(edited), mode); err != nil {
 		return nil, err
 	}
 	return changes, nil

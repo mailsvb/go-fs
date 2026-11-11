@@ -359,8 +359,13 @@ func (s *Server) serve(raw net.Conn) {
 		return
 	}
 	defer func() { _ = handshake.Close() }()
-	log.Debug("sftp handshake complete", "user", handshake.User(),
-		"clientVersion", string(handshake.ClientVersion()))
+	handshakeAttrs := []any{"user", handshake.User(),
+		"clientVersion", string(handshake.ClientVersion()),
+		"serverVersion", string(handshake.ServerVersion())}
+	if negotiated, ok := ssh.Conn(handshake).(ssh.AlgorithmsConnMetadata); ok {
+		handshakeAttrs = append(handshakeAttrs, "algorithms", algorithms(negotiated.Algorithms()))
+	}
+	log.Debug("sftp handshake complete", handshakeAttrs...)
 
 	user := set.users[handshake.User()]
 	if user == nil {
@@ -377,7 +382,7 @@ func (s *Server) serve(raw net.Conn) {
 	}()
 
 	// global requests, keepalives among them, are answered but never acted on
-	go ssh.DiscardRequests(reqs)
+	go discardRequests(reqs, log)
 
 	seen := &activity{}
 	seen.touch()

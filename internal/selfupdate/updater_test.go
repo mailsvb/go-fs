@@ -77,7 +77,7 @@ func testUpdater(t *testing.T, keys ...ed25519.PublicKey) *Updater {
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	updater := New("1.0.0", keys)
+	updater := New("1.0.0", keys, nil)
 	updater.exe, updater.exeErr = exe, nil
 	return updater
 }

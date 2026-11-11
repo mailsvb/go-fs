@@ -9,7 +9,6 @@ import (
 	"hash/fnv"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -19,6 +18,8 @@ import (
 	"time"
 
 	"github.com/opencontainers/go-digest"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // The container registry answers the OCI Distribution Specification v1.1
@@ -325,7 +326,7 @@ func (s *Server) registryAccess(set *settings, w http.ResponseWriter, r *http.Re
 	case strings.HasPrefix(header, "Bearer "):
 		user, ok := s.registryBearer(set, strings.TrimPrefix(header, "Bearer "))
 		if !ok {
-			s.log.Debug("registry token refused", "method", r.Method, "path", r.URL.Path,
+			s.logFor(r).Debug("registry token refused", "method", r.Method, "path", r.URL.Path,
 				"address", clientAddress(set, r))
 			s.registryChallenge(set, w, r, route, true, false)
 			return nil, false
@@ -338,7 +339,7 @@ func (s *Server) registryAccess(set *settings, w http.ResponseWriter, r *http.Re
 
 	case strings.HasPrefix(header, "Basic "):
 		if remaining, locked := s.lockedOut(set, r); locked {
-			s.log.Info("http login refused, the address is locked out", "method", "registry",
+			s.logFor(r).Info("http login refused, the address is locked out", "method", "registry",
 				"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
 			w.Header().Set("Retry-After", strconv.Itoa(retryAfter(remaining)))
 			writeRegistryError(w, r, regErr(http.StatusTooManyRequests, "TOOMANYREQUESTS",
@@ -349,7 +350,7 @@ func (s *Server) registryAccess(set *settings, w http.ResponseWriter, r *http.Re
 		if ok {
 			if user := matchAccount(set.registryAccounts, name, password); user != nil {
 				s.logins.clear(clientAddress(set, r))
-				s.log.Debug("http authenticated", "user", user.name, "method", "registry",
+				s.logFor(r).Debug("http authenticated", "user", user.name, "method", "registry",
 					"address", clientAddress(set, r), "path", r.URL.Path)
 				return user, true
 			}
@@ -357,7 +358,7 @@ func (s *Server) registryAccess(set *settings, w http.ResponseWriter, r *http.Re
 				if !needsAccount {
 					return nil, true
 				}
-				s.log.Info("registry refused an account that does not set registry", "user", name,
+				s.logFor(r).Info("registry refused an account that does not set registry", "user", name,
 					"method", r.Method, "path", r.URL.Path, "address", clientAddress(set, r))
 				writeRegistryError(w, r, regErr(http.StatusForbidden, "DENIED",
 					"requested access to the resource is denied"))
@@ -365,7 +366,7 @@ func (s *Server) registryAccess(set *settings, w http.ResponseWriter, r *http.Re
 			}
 		}
 		// the same record every other refused password writes
-		s.log.Info("http login refused", "user", name, "method", "registry",
+		s.logFor(r).Info("http login refused", "user", name, "method", "registry",
 			"address", clientAddress(set, r))
 		s.recordFailure(set, r)
 		s.registryChallenge(set, w, r, route, false, true)
@@ -373,7 +374,7 @@ func (s *Server) registryAccess(set *settings, w http.ResponseWriter, r *http.Re
 	}
 
 	if needsAccount || route.kind == routeBase {
-		s.log.Debug("registry authentication required", "method", r.Method, "path", r.URL.Path,
+		s.logFor(r).Debug("registry authentication required", "method", r.Method, "path", r.URL.Path,
 			"address", clientAddress(set, r))
 		s.registryChallenge(set, w, r, route, false, false)
 		return nil, false
@@ -412,7 +413,7 @@ func (s *Server) warnAboutTheRegistry(set *settings) {
 	if set.registry == nil {
 		return
 	}
-	if info, err := os.Stat(filepath.Join(s.root.Base(), "v2")); err == nil && info.IsDir() {
+	if info, err := logging.Stat(s.log, filepath.Join(s.root.Base(), "v2")); err == nil && info.IsDir() {
 		s.log.Warn("the container registry answers /v2, so the folder v2 in general.baseFolderFiles "+
 			"cannot be reached over http", "baseFolderFiles", s.root.Base())
 	}
@@ -522,7 +523,7 @@ func (q *registryRequest) getBlob() {
 		q.internal("cannot find a blob", err)
 		return
 	}
-	file, err := os.Open(q.store.blobPath(d))
+	file, err := logging.Open(q.s.logFor(q.r), q.store.blobPath(d))
 	if err != nil {
 		q.internal("cannot open a blob", err)
 		return

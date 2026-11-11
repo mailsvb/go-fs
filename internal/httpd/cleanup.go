@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // cleanupInterval is how often the retention sweep runs, as in the Node
@@ -54,7 +56,7 @@ func (s *Server) sweepStaging() {
 	defer s.sweepMu.Unlock()
 	set := s.settings()
 	folder := stagingFolder(set)
-	entries, err := os.ReadDir(folder)
+	entries, err := logging.ReadDir(s.log, folder)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			s.log.Debug("http cleanup cannot read the upload staging folder",
@@ -72,7 +74,7 @@ func (s *Server) sweepStaging() {
 			continue
 		}
 		path := filepath.Join(folder, entry.Name())
-		if err := os.Remove(path); err != nil {
+		if err := logging.Remove(s.log, path); err != nil {
 			s.log.Error("http cleanup cannot remove an orphaned upload", "path", path, "error", err)
 			continue
 		}
@@ -86,7 +88,7 @@ func (s *Server) sweepStaging() {
 // upload that is still sending parts is never taken for an abandoned one.
 func (s *Server) sweepMultipart(staging string, cutoff time.Time) {
 	folder := filepath.Join(staging, multipartFolder)
-	entries, err := os.ReadDir(folder)
+	entries, err := logging.ReadDir(s.log, folder)
 	if err != nil {
 		return
 	}
@@ -96,7 +98,7 @@ func (s *Server) sweepMultipart(staging string, cutoff time.Time) {
 			continue
 		}
 		path := filepath.Join(folder, entry.Name())
-		if err := os.RemoveAll(path); err != nil {
+		if err := logging.RemoveAll(s.log, path); err != nil {
 			s.log.Error("http cleanup cannot remove an abandoned s3 upload", "path", path, "error", err)
 			continue
 		}

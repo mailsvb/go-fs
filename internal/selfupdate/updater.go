@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,6 +30,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // MaxSize is the largest update accepted, trailer included. It is its own
@@ -115,16 +118,20 @@ type Updater struct {
 	// from, fields so that a test can point them elsewhere; release is the
 	// last lookup, which releaseMu also holds while one is made, so that page
 	// loads at the same moment ask GitHub once.
-	client     *http.Client
+	client *http.Client
+	// log takes the trace of what the updater does on disk
+	log        *slog.Logger
 	releaseAPI string
 	releaseMu  sync.Mutex
 	release    releaseCache
 }
 
-// New prepares the updater for the running binary.
-func New(version string, keys []ed25519.PublicKey) *Updater {
+// New prepares the updater for the running binary. log takes the trace of
+// the files it stages and replaces, nil for none.
+func New(version string, keys []ed25519.PublicKey, log *slog.Logger) *Updater {
 	exe, err := executable()
 	return &Updater{
+		log:          logging.OrDiscard(log),
 		version:      version,
 		keys:         keys,
 		exe:          exe,
@@ -197,7 +204,7 @@ func (u *Updater) Stage(ctx context.Context, body io.Reader) (Staged, error) {
 	// filesystem; the extension is the executable's, which Windows needs to
 	// run it
 	dir := filepath.Dir(u.exe)
-	file, err := os.CreateTemp(dir, stagePrefix+"*"+filepath.Ext(u.exe))
+	file, err := logging.CreateTemp(u.log, dir, stagePrefix+"*"+filepath.Ext(u.exe))
 	if err != nil {
 		return Staged{}, fmt.Errorf("cannot write beside the executable in %s: %w", dir, err)
 	}
@@ -205,7 +212,7 @@ func (u *Updater) Stage(ctx context.Context, body io.Reader) (Staged, error) {
 	defer func() {
 		if !ready {
 			_ = file.Close()
-			_ = os.Remove(name)
+			_ = logging.Remove(u.log, name)
 		}
 	}()
 
@@ -242,10 +249,10 @@ func (u *Updater) Stage(ctx context.Context, body io.Reader) (Staged, error) {
 	}
 
 	mode := os.FileMode(0o755)
-	if info, err := os.Stat(u.exe); err == nil {
+	if info, err := logging.Stat(u.log, u.exe); err == nil {
 		mode = info.Mode().Perm()
 	}
-	if err := os.Chmod(name, mode); err != nil {
+	if err := logging.Chmod(u.log, name, mode); err != nil {
 		return Staged{}, err
 	}
 
@@ -308,12 +315,12 @@ func (u *Updater) Apply() error {
 		return errors.New("no update is staged")
 	}
 	old := u.exe + oldSuffix
-	_ = os.Remove(old)
-	if err := rename(u.exe, old); err != nil {
+	_ = logging.Remove(u.log, old)
+	if err := rename(u.log, u.exe, old); err != nil {
 		return fmt.Errorf("cannot move the running executable aside: %w", err)
 	}
-	if err := rename(staged, u.exe); err != nil {
-		if back := rename(old, u.exe); back != nil {
+	if err := rename(u.log, staged, u.exe); err != nil {
+		if back := rename(u.log, old, u.exe); back != nil {
 			return fmt.Errorf("cannot move the new executable into place: %w; "+
 				"restoring the previous one failed as well: %v", err, back)
 		}
@@ -333,6 +340,6 @@ func (u *Updater) CleanupOld() {
 	}
 	leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(u.exe), stagePrefix+"*"))
 	for _, name := range leftovers {
-		_ = os.Remove(name)
+		_ = logging.Remove(u.log, name)
 	}
 }

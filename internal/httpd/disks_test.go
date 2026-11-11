@@ -167,7 +167,7 @@ func TestCreateResizeRenameDelete(t *testing.T) {
 // its own on the same path, which shares the locks with the page's.
 func attachTo(t *testing.T, folder, name string, writable bool) *disks.Session {
 	t.Helper()
-	f, err := disks.Open(folder)
+	f, err := disks.Open(folder, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

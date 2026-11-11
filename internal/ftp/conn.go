@@ -228,12 +228,14 @@ func (c *conn) readLoop(commands chan<- command) {
 		case "ABOR":
 			// a running transfer takes it, otherwise it is a normal command
 			if c.abortTransfer() {
+				c.log.Debug("ftp <", "command", strings.TrimSpace(line), "during", "transfer")
 				continue
 			}
 		case "AUTH":
 			// only reachable before authentication, so no transfer can be in
 			// flight and the reader may answer and upgrade on the spot
 			if !c.authenticated.get() {
+				c.log.Debug("ftp <", "command", strings.TrimSpace(line))
 				c.handleAuth(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), name)))
 				continue
 			}
@@ -396,8 +398,7 @@ func (c *conn) handleAuth(arg string) {
 	c.reader = bufio.NewReaderSize(secure, c.set.cfg.MaxCommandLength+2)
 	c.secure.set(true)
 	state := secure.ConnectionState()
-	c.log.Debug("ftp control connection is secure",
-		"tls", tls.VersionName(state.Version), "cipher", tls.CipherSuiteName(state.CipherSuite))
+	c.log.Debug("ftp control connection is secure", "tls", logging.TLS(&state))
 }
 
 // beginTransfer marks a transfer as running so that ABOR can reach it.

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/trash"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -75,7 +76,7 @@ func (s *Server) handleTrash(set *settings, w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Cache-Control", "no-store")
 	cred := s.identify(set, w, r)
 	if !cred.token || cred.user == nil {
-		s.log.Info("http trash refused, no session", "credentials", cred.method,
+		s.logFor(r).Info("http trash refused, no session", "credentials", cred.method,
 			"address", clientAddress(set, r))
 		if action == actionTrash && browserRequest(r) && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			http.Redirect(w, r, loginURL(r.URL), http.StatusSeeOther)
@@ -85,19 +86,19 @@ func (s *Server) handleTrash(set *settings, w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !cred.user.isAdmin {
-		s.log.Warn("http trash refused, the account is not an admin",
+		s.logFor(r).Warn("http trash refused, the account is not an admin",
 			"user", cred.user.name, "address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	if err := os.MkdirAll(set.cfg.TrashFolder, 0o700); err != nil {
-		s.log.Error("http cannot make the trash folder", "path", set.cfg.TrashFolder, "error", err)
+	if err := logging.MkdirAll(s.logFor(r), set.cfg.TrashFolder, 0o700); err != nil {
+		s.logFor(r).Error("http cannot make the trash folder", "path", set.cfg.TrashFolder, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
 	root, err := vfs.New(set.cfg.TrashFolder)
 	if err != nil {
-		s.log.Error("http cannot open the trash folder", "path", set.cfg.TrashFolder, "error", err)
+		s.logFor(r).Error("http cannot open the trash folder", "path", set.cfg.TrashFolder, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -170,7 +171,7 @@ var trashScript = template.JS(mustRead("assets/trash.js"))
 
 // trashPage renders a folder of the trash.
 func (s *Server) trashPage(set *settings, w http.ResponseWriter, r *http.Request, cred credential, folder vfs.Target) {
-	info, err := os.Stat(folder.Path)
+	info, err := logging.Stat(s.logFor(r), folder.Path)
 	if err != nil || !info.IsDir() {
 		http.NotFound(w, r)
 		return
@@ -183,14 +184,14 @@ func (s *Server) trashPage(set *settings, w http.ResponseWriter, r *http.Request
 	}
 	entries, err := readDirectory(nil, folder.Path)
 	if err != nil {
-		s.log.Error("http cannot read the trash", "path", folder.Virtual, "error", err)
+		s.logFor(r).Error("http cannot read the trash", "path", folder.Virtual, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
 	index := func() trash.Index {
 		trash.Lock()
 		defer trash.Unlock()
-		return trash.ReadIndex(set.cfg.TrashFolder)
+		return trash.ReadIndex(s.logFor(r), set.cfg.TrashFolder)
 	}()
 	order := parseSort(r.URL.Query())
 	kept := sessionParam + "=" + actionTrash
@@ -226,7 +227,7 @@ func (s *Server) trashPage(set *settings, w http.ResponseWriter, r *http.Request
 
 	nonce, err := pageNonce()
 	if err != nil {
-		s.log.Error("http cannot render the trash page", "error", err)
+		s.logFor(r).Error("http cannot render the trash page", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -250,7 +251,7 @@ func (s *Server) trashPage(set *settings, w http.ResponseWriter, r *http.Request
 
 	var page bytes.Buffer
 	if err := trashTemplate.Execute(&page, data); err != nil {
-		s.log.Error("http cannot render the trash page", "error", err)
+		s.logFor(r).Error("http cannot render the trash page", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -337,11 +338,11 @@ func (s *Server) trashRestore(set *settings, w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err != nil {
-		s.log.Error("trash restore failed", "user", user.name, "path", virtual, "error", err)
+		s.logFor(r).Error("trash restore failed", "user", user.name, "path", virtual, "error", err)
 		http.Error(w, "The restore did not finish: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.log.Info("trash restore", "user", user.name, "path", virtual, "overwrite", asked.Overwrite,
+	s.logFor(r).Info("trash restore", "user", user.name, "path", virtual, "overwrite", asked.Overwrite,
 		"restored", restored, "skipped", skipped, "address", clientAddress(set, r))
 	writeJSON(w, http.StatusOK, trashRestoreJSON{Restored: restored, Skipped: skipped})
 }
@@ -358,11 +359,11 @@ func (s *Server) trashDelete(set *settings, w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err != nil {
-		s.log.Error("trash delete failed", "user", user.name, "path", virtual, "error", err)
+		s.logFor(r).Error("trash delete failed", "user", user.name, "path", virtual, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	s.log.Info("trash delete", "user", user.name, "path", virtual, "address", clientAddress(set, r))
+	s.logFor(r).Info("trash delete", "user", user.name, "path", virtual, "address", clientAddress(set, r))
 	writeJSON(w, http.StatusOK, struct{}{})
 }
 
@@ -371,11 +372,11 @@ func (s *Server) trashEmpty(set *settings, w http.ResponseWriter, r *http.Reques
 	started := time.Now()
 	items, err := s.emptyTrash(set)
 	if err != nil {
-		s.log.Error("trash empty failed", "user", user.name, "items", items, "error", err)
+		s.logFor(r).Error("trash empty failed", "user", user.name, "items", items, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	s.log.Info("trash empty", "user", user.name, "items", items,
+	s.logFor(r).Info("trash empty", "user", user.name, "items", items,
 		"took", time.Since(started).Round(time.Millisecond), "address", clientAddress(set, r))
 	writeJSON(w, http.StatusOK, trashEmptyJSON{Items: items})
 }

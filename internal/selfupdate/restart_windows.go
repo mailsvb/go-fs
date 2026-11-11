@@ -2,10 +2,13 @@ package selfupdate
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"syscall"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // Restart starts the executable as a new process with the same arguments and
@@ -31,10 +34,10 @@ const errorSharingViolation syscall.Errno = 32
 // denied, and succeeds once the scanner lets go.
 var renameRetry = 5 * time.Second
 
-func rename(from, to string) error {
+func rename(log *slog.Logger, from, to string) error {
 	deadline := time.Now().Add(renameRetry)
 	for {
-		err := os.Rename(from, to)
+		err := logging.Rename(log, from, to)
 		if err == nil || time.Now().After(deadline) ||
 			!(errors.Is(err, errorSharingViolation) || errors.Is(err, syscall.ERROR_ACCESS_DENIED)) {
 			return err

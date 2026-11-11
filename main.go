@@ -117,7 +117,7 @@ func run(stop <-chan struct{}) error {
 
 	var output io.Writer = os.Stdout
 	if *logFile != "" && !*checkOnly {
-		file, err := logging.OpenFile(*logFile)
+		file, err := logging.OpenLogFile(*logFile)
 		if err != nil {
 			return err
 		}
@@ -156,6 +156,8 @@ func run(stop <-chan struct{}) error {
 		"service", stop != nil,
 		"logLevel", cfg.General.LogLevel,
 		"logFormat", cfg.General.LogFormat)
+	// the file was read before there was a logger to trace it
+	logging.Summary(logger.Logger, "read", *configPath)
 	warnAboutSecrets(logger.Logger, *configPath, cfg)
 	warnAboutReserved(logger.Logger, cfg)
 	if viewer.Compiled && !viewer.Available() {
@@ -168,7 +170,7 @@ func run(stop <-chan struct{}) error {
 	// a file written for an older version names the folders by keys that
 	// have since been renamed; it was read through them, and is given the
 	// new ones
-	if changes, err := config.Migrate(*configPath); err != nil {
+	if changes, err := config.Migrate(*configPath, logger.Logger); err != nil {
 		logger.Warn("cannot rename the folder keys of the configuration file, so it is "+
 			"read through the old ones as before", "path", *configPath, "error", err)
 	} else {
@@ -180,7 +182,7 @@ func run(stop <-chan struct{}) error {
 	// the share links of files and the login tokens of browsers are signed
 	// with keys the file keeps, so a link handed out and a browser logged in
 	// survive a restart and an update; a file without them is given them
-	if ensured, generated, err := config.EnsureSecrets(*configPath, cfg); err != nil {
+	if ensured, generated, err := config.EnsureSecrets(*configPath, cfg, logger.Logger); err != nil {
 		logger.Warn("cannot store generated secrets in the configuration file, so share "+
 			"links stop working and browsers are logged out at every restart",
 			"path", *configPath, "error", err)
@@ -196,7 +198,7 @@ func run(stop <-chan struct{}) error {
 	if err != nil {
 		return err
 	}
-	updater := selfupdate.New(currentVersion(), keys)
+	updater := selfupdate.New(currentVersion(), keys, logger.Logger)
 	if packaging == "rpm" || packaging == "docker" {
 		updater.SetManagedBy(packaging)
 	}

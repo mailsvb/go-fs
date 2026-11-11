@@ -14,6 +14,8 @@ import (
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // The Docker media types, which the image-spec module does not name. Docker
@@ -134,7 +136,7 @@ func (q *registryRequest) getManifest() {
 		q.internal("cannot read a manifest", err)
 		return
 	}
-	file, err := os.Open(q.store.blobPath(d))
+	file, err := logging.Open(q.s.logFor(q.r), q.store.blobPath(d))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			q.fail(errManifestUnknown.with(q.route.ref))

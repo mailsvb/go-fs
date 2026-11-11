@@ -22,16 +22,16 @@ type File struct {
 	Keep    int
 }
 
-// The defaults of OpenFile: 60 MiB of log at most, in six files.
+// The defaults of OpenLogFile: 60 MiB of log at most, in six files.
 const (
 	defaultMaxSize = 10 << 20
 	defaultKeep    = 5
 )
 
-// OpenFile opens the log file at path for appending, creating it and its
+// OpenLogFile opens the log file at path for appending, creating it and its
 // folder when they do not exist. Nobody but the account go-fs runs as can read
 // it: a debug trace names the paths and the accounts of every request.
-func OpenFile(path string) (*File, error) {
+func OpenLogFile(path string) (*File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}

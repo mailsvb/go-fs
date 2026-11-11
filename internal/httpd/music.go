@@ -6,12 +6,12 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
-	"os"
 	"path"
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/audio"
 	"github.com/mailsvb/go-fs/internal/jellyfin"
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // What the Jellyfin API and the OpenSubsonic API both do with the music
@@ -47,9 +47,9 @@ func musicLibraries(kind string, user *account) []*jellyfin.Library {
 // saving. via names the API and client the program that asks, for the log.
 func (s *Server) serveTrack(set *settings, w http.ResponseWriter, r *http.Request, user *account,
 	t *jellyfin.Track, download bool, via, client string) {
-	file, err := os.Open(t.OnDisk())
+	file, err := logging.Open(s.logFor(r), t.OnDisk())
 	if err != nil {
-		s.log.Warn(via+" cannot open a track", "file", t.Virtual(), "error", err)
+		s.logFor(r).Warn(via+" cannot open a track", "file", t.Virtual(), "error", err)
 		http.NotFound(w, r)
 		return
 	}
@@ -74,7 +74,7 @@ func (s *Server) serveTrack(set *settings, w http.ResponseWriter, r *http.Reques
 	if recorder, ok := w.(*responseRecorder); ok {
 		bytesSent = recorder.bytes
 	}
-	s.log.Info("http download", "user", user.name, "file", t.Virtual(), "bytes", bytesSent,
+	s.logFor(r).Info("http download", "user", user.name, "file", t.Virtual(), "bytes", bytesSent,
 		"size", info.Size(), "via", via, "client", client,
 		"address", clientAddress(set, r), "took", time.Since(started).Round(time.Millisecond))
 }
@@ -89,7 +89,7 @@ func (s *Server) serveCover(w http.ResponseWriter, r *http.Request, item jellyfi
 	}
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	if file != "" {
-		f, err := os.Open(file)
+		f, err := logging.Open(s.logFor(r), file)
 		if err != nil {
 			http.NotFound(w, r)
 			return true
@@ -106,7 +106,7 @@ func (s *Server) serveCover(w http.ResponseWriter, r *http.Request, item jellyfi
 	}
 	picture, media, err := audio.Picture(track.OnDisk())
 	if err != nil {
-		s.log.Debug(via+" cannot read the picture of a track", "file", track.Virtual(), "error", err)
+		s.logFor(r).Debug(via+" cannot read the picture of a track", "file", track.Virtual(), "error", err)
 		http.NotFound(w, r)
 		return true
 	}

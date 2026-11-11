@@ -25,6 +25,7 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/jellyfin"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/store"
 )
 
@@ -118,7 +119,7 @@ func (s *Server) warnAboutJellyfin(set *settings) {
 		return
 	}
 	for _, name := range []string{"System", "Users", "Branding", "QuickConnect"} {
-		if info, err := os.Stat(filepath.Join(s.root.Base(), name)); err == nil && info.IsDir() {
+		if info, err := logging.Stat(s.log, filepath.Join(s.root.Base(), name)); err == nil && info.IsDir() {
 			s.log.Warn("the Jellyfin API answers a few paths in the folder "+name+" of general.baseFolderFiles, "+
 				"which cannot be reached over http", "baseFolderFiles", s.root.Base())
 		}
@@ -364,7 +365,7 @@ func (s *Server) serveJellyfin(set *settings, w http.ResponseWriter, r *http.Req
 	}
 	if j.user == nil {
 		if j.client.Token != "" {
-			s.log.Debug("jellyfin token refused", "url", r.URL.Path, "address", clientAddress(set, r))
+			s.logFor(r).Debug("jellyfin token refused", "url", r.URL.Path, "address", clientAddress(set, r))
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -415,7 +416,7 @@ func (j *jellyfinRequest) login() {
 	s, set, w, r := j.s, j.set, j.w, j.r
 	w.Header().Set("Cache-Control", "no-store")
 	if remaining, locked := s.lockedOut(set, r); locked {
-		s.log.Info("http login refused, the address is locked out", "method", "jellyfin",
+		s.logFor(r).Info("http login refused, the address is locked out", "method", "jellyfin",
 			"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter(remaining)))
 		http.Error(w, "too many failed logins from your address", http.StatusTooManyRequests)
@@ -435,7 +436,7 @@ func (j *jellyfinRequest) login() {
 	}
 	user := matchAccount(set.accounts, body.Username, body.Pw)
 	if user == nil {
-		s.log.Info("http login refused", "user", body.Username, "method", "jellyfin",
+		s.logFor(r).Info("http login refused", "user", body.Username, "method", "jellyfin",
 			"address", clientAddress(set, r))
 		s.recordFailure(set, r)
 		if delay := set.cfg.LoginFailureDelay; delay > 0 {
@@ -447,12 +448,12 @@ func (j *jellyfinRequest) login() {
 	s.logins.clear(clientAddress(set, r))
 	token, err := s.tokens.mintJellyfin(user)
 	if err != nil {
-		s.log.Error("jellyfin cannot sign a token", "error", err)
+		s.logFor(r).Error("jellyfin cannot sign a token", "error", err)
 		http.Error(w, "the token cannot be signed", http.StatusInternalServerError)
 		return
 	}
 	j.user = user
-	s.log.Info("jellyfin login", "user", user.name, "client", j.client.Client, "device", j.client.Device,
+	s.logFor(r).Info("jellyfin login", "user", user.name, "client", j.client.Client, "device", j.client.Device,
 		"address", clientAddress(set, r))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"User":        j.userInfo(),

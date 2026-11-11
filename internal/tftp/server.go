@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/service"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -205,6 +205,7 @@ func (s *Server) dispatch(ctx context.Context, msg []byte, from net.Addr) {
 	}
 	op := opcode(uint16(msg[0])<<8 | uint16(msg[1]))
 	client := clientKey(from)
+	tracePacket(s.log, "<", client, msg)
 
 	switch op {
 	case opRRQ, opWRQ:
@@ -215,12 +216,6 @@ func (s *Server) dispatch(ctx context.Context, msg []byte, from net.Addr) {
 			s.sendTo(from, encodeError(errIllegalOperation, "Malformed request"))
 			return
 		}
-		what := "RRQ"
-		if op == opWRQ {
-			what = "WRQ"
-		}
-		s.log.Debug("tftp request", "client", client, "type", what,
-			"file", sanitize(req.filename), "mode", sanitize(req.mode))
 		if op == opRRQ {
 			s.handleRead(ctx, set, req, from)
 		} else {
@@ -356,7 +351,7 @@ func (s *Server) handleRead(ctx context.Context, set *settings, req request, fro
 		s.sendTo(from, encodeError(errAccessViolation, "Access violation"))
 		return
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(s.log, target.Path)
 	if err != nil || !info.Mode().IsRegular() {
 		s.release(slot)
 		if err != nil {
@@ -367,7 +362,7 @@ func (s *Server) handleRead(ctx context.Context, set *settings, req request, fro
 		s.sendTo(from, encodeError(errFileNotFound, "File not found"))
 		return
 	}
-	file, err := os.Open(target.Path)
+	file, err := logging.Open(s.log, target.Path)
 	if err != nil {
 		s.log.Warn("tftp cannot open the file", "client", slot.client,
 			"file", target.Virtual, "error", err)
@@ -414,18 +409,18 @@ func (s *Server) handleWrite(ctx context.Context, set *settings, req request, fr
 		fail(errAccessViolation, "Access violation", "the path leaves the base folder")
 		return
 	}
-	if _, err := os.Stat(target.Path); err == nil && !set.cfg.AllowOverwrite {
+	if _, err := logging.Stat(s.log, target.Path); err == nil && !set.cfg.AllowOverwrite {
 		fail(errFileExists, "File already exists", "the file exists and tftp.allowOverwrite is off")
 		return
 	}
 
 	dir := filepath.Dir(target.Path)
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+	if info, err := logging.Stat(s.log, dir); err != nil || !info.IsDir() {
 		if !set.cfg.AllowCreateDirectory {
 			fail(errAccessViolation, "Access violation", "the folder does not exist and tftp.allowCreateDirectory is off")
 			return
 		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := logging.MkdirAll(s.log, dir, 0o755); err != nil {
 			s.log.Warn("tftp cannot create the folder", "client", slot.client,
 				"folder", filepath.Dir(target.Virtual), "error", err)
 			fail(errAccessViolation, "Access violation", "cannot create the folder")
@@ -438,7 +433,7 @@ func (s *Server) handleWrite(ctx context.Context, set *settings, req request, fr
 	// is complete. A transfer that is abandoned halfway then leaves neither an
 	// empty file where there was none, nor a truncated one where the client was
 	// replacing something that was already there.
-	file, err := os.CreateTemp(dir, ".go-fs-upload-*")
+	file, err := logging.CreateTemp(s.log, dir, ".go-fs-upload-*")
 	if err != nil {
 		s.log.Warn("tftp cannot create the upload file", "client", slot.client,
 			"folder", filepath.Dir(target.Virtual), "error", err)
@@ -466,6 +461,7 @@ func (s *Server) sendTo(to net.Addr, packet []byte) {
 	if s.conn == nil {
 		return
 	}
+	tracePacket(s.log, ">", clientKey(to), packet)
 	if _, err := s.conn.WriteTo(packet, to); err != nil {
 		s.log.Debug("tftp send failed", "client", clientKey(to), "error", err)
 	}
@@ -476,6 +472,7 @@ func (s *Server) sendLocked(to net.Addr, packet []byte) {
 	if s.conn == nil {
 		return
 	}
+	tracePacket(s.log, ">", clientKey(to), packet)
 	_, _ = s.conn.WriteTo(packet, to)
 }
 

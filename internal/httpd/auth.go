@@ -145,7 +145,7 @@ func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Requ
 	// public folder discards the identity before looking at it
 	cred := s.identify(set, w, r)
 	if cred.user != nil {
-		s.log.Debug("http authenticated", "user", cred.user.name, "method", cred.method,
+		s.logFor(r).Debug("http authenticated", "user", cred.user.name, "method", cred.method,
 			"address", clientAddress(set, r), "path", virtual)
 		return cred, true
 	}
@@ -154,13 +154,15 @@ func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Requ
 		return credential{}, false
 	}
 	if !s.needsAuth(set, method, virtual) {
+		s.logFor(r).Debug("http request needs no account", "path", virtual,
+			"credentials", cred.method, "address", clientAddress(set, r))
 		return cred, true
 	}
 	if cred.locked {
 		s.refuseLocked(set, w, r)
 		return credential{}, false
 	}
-	s.log.Debug("http authentication required", "method", r.Method, "path", virtual,
+	s.logFor(r).Debug("http authentication required", "method", r.Method, "path", virtual,
 		"address", clientAddress(set, r), "credentials", cred.method, "stale", cred.stale)
 	s.refuse(set, w, r, cred.stale)
 	return credential{}, false
@@ -186,7 +188,7 @@ func (s *Server) identify(set *settings, w http.ResponseWriter, r *http.Request)
 		scheme, _, _ := strings.Cut(header, " ")
 		method := strings.ToLower(scheme)
 		if remaining, locked := s.lockedOut(set, r); locked {
-			s.log.Info("http login refused, the address is locked out", "method", method,
+			s.logFor(r).Info("http login refused, the address is locked out", "method", method,
 				"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
 			return credential{locked: true, method: method}
 		}
@@ -204,7 +206,7 @@ func (s *Server) identify(set *settings, w http.ResponseWriter, r *http.Request)
 		return cred
 	case strings.HasPrefix(header, "Bearer "):
 		if remaining, locked := s.lockedOut(set, r); locked {
-			s.log.Info("http login refused, the address is locked out", "method", "bearer",
+			s.logFor(r).Info("http login refused, the address is locked out", "method", "bearer",
 				"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
 			return credential{locked: true, method: "bearer"}
 		}
@@ -218,7 +220,7 @@ func (s *Server) identify(set *settings, w http.ResponseWriter, r *http.Request)
 		return credential{user: user, method: "bearer"}
 	case header != "":
 		scheme, _, _ := strings.Cut(header, " ")
-		s.log.Debug("http authorization scheme not supported", "scheme", scheme,
+		s.logFor(r).Debug("http authorization scheme not supported", "scheme", scheme,
 			"address", clientAddress(set, r))
 		return credential{method: "unsupported"}
 	}
@@ -263,7 +265,7 @@ func (s *Server) lockedOut(set *settings, r *http.Request) (time.Duration, bool)
 func (s *Server) recordFailure(set *settings, r *http.Request) {
 	lockout := time.Duration(set.cfg.LoginLockout) * time.Second
 	if s.logins.failed(clientAddress(set, r), set.cfg.LoginAttempts, lockout) {
-		s.log.Warn("http address locked out after too many failed logins",
+		s.logFor(r).Warn("http address locked out after too many failed logins",
 			"address", clientAddress(set, r), "attempts", set.cfg.LoginAttempts,
 			"seconds", set.cfg.LoginLockout)
 	}
@@ -309,12 +311,12 @@ func (s *Server) refuseLocked(set *settings, w http.ResponseWriter, r *http.Requ
 func (s *Server) checkToken(set *settings, w http.ResponseWriter, r *http.Request, raw string) *account {
 	claims, err := s.tokens.read(raw)
 	if err != nil {
-		s.log.Debug("http refused a session token", "error", err, "address", clientAddress(set, r))
+		s.logFor(r).Debug("http refused a session token", "error", err, "address", clientAddress(set, r))
 		s.clearSession(w)
 		return nil
 	}
 	if claims.outlived(sessionWindowOf(set.cfg), time.Now()) {
-		s.log.Info("http session token is older than http.httpSessionMaxLifetime",
+		s.logFor(r).Info("http session token is older than http.httpSessionMaxLifetime",
 			"user", claims.Subject, "address", clientAddress(set, r))
 		s.clearSession(w)
 		return nil
@@ -328,13 +330,13 @@ func (s *Server) checkToken(set *settings, w http.ResponseWriter, r *http.Reques
 			s.renewSession(set, w, r, registryUser, claims)
 			return nil
 		}
-		s.log.Info("http session token names an account that is no longer configured",
+		s.logFor(r).Info("http session token names an account that is no longer configured",
 			"user", claims.Subject, "address", clientAddress(set, r))
 		s.clearSession(w)
 		return nil
 	}
 	if !s.tokens.issuedFor(claims, user) {
-		s.log.Info("http session token was issued for other credentials",
+		s.logFor(r).Info("http session token was issued for other credentials",
 			"user", user.name, "address", clientAddress(set, r))
 		s.clearSession(w)
 		return nil
@@ -561,7 +563,7 @@ func (s *Server) rightsFor(set *settings, user *account, virtual string) rights 
 // program, so a client that sends neither — curl, a script — is left alone.
 func (s *Server) sameSite(set *settings, w http.ResponseWriter, r *http.Request) bool {
 	if origin := r.Header.Get("Origin"); origin != "" && !sameHost(origin, r.Host) {
-		s.log.Warn("http refused a request from another origin",
+		s.logFor(r).Warn("http refused a request from another origin",
 			"origin", origin, "method", r.Method, "address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return false
@@ -571,7 +573,7 @@ func (s *Server) sameSite(set *settings, w http.ResponseWriter, r *http.Request)
 	case "", "same-origin", "none":
 		return true
 	default:
-		s.log.Warn("http refused a request from another site",
+		s.logFor(r).Warn("http refused a request from another site",
 			"site", site, "method", r.Method, "address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return false
@@ -597,7 +599,7 @@ func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		return err
 	}
-	s.log.Info("http login", "user", user.name, "address", clientAddress(set, r))
+	s.logFor(r).Info("http login", "user", user.name, "address", clientAddress(set, r))
 	writeSessionCookie(set, w, r, token, expires)
 	// a browser upgraded into this version still holds the opaque session
 	// cookie, which nothing will read again
@@ -618,10 +620,10 @@ func (s *Server) renewSession(set *settings, w http.ResponseWriter, r *http.Requ
 	}
 	token, expires, err := s.tokens.mint(user, claims.loggedIn(), window)
 	if err != nil {
-		s.log.Error("http cannot renew a session token", "user", user.name, "error", err)
+		s.logFor(r).Error("http cannot renew a session token", "user", user.name, "error", err)
 		return
 	}
-	s.log.Debug("http session renewed", "user", user.name, "expires", expires,
+	s.logFor(r).Debug("http session renewed", "user", user.name, "expires", expires,
 		"address", clientAddress(set, r))
 	writeSessionCookie(set, w, r, token, expires)
 }
@@ -746,7 +748,7 @@ func (s *Server) challenge(set *settings, w http.ResponseWriter, r *http.Request
 func (s *Server) checkBasic(set *settings, r *http.Request, header string) *account {
 	name, password, ok := parseBasic(header)
 	if !ok {
-		s.log.Debug("http basic credentials are malformed", "address", clientAddress(set, r))
+		s.logFor(r).Debug("http basic credentials are malformed", "address", clientAddress(set, r))
 		return nil
 	}
 	if user := matchAccount(set.accounts, name, password); user != nil {
@@ -754,7 +756,7 @@ func (s *Server) checkBasic(set *settings, r *http.Request, header string) *acco
 	}
 	// the same record the login form writes, so every refused password is
 	// found under one message whichever way it arrived
-	s.log.Info("http login refused", "user", name, "method", "basic",
+	s.logFor(r).Info("http login refused", "user", name, "method", "basic",
 		"address", clientAddress(set, r))
 	s.recordFailure(set, r)
 	return nil
@@ -792,7 +794,7 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*ac
 	}
 	digest, ok := hasher(algorithm)
 	if !ok {
-		s.log.Debug("http digest algorithm not supported", "algorithm", algorithm,
+		s.logFor(r).Debug("http digest algorithm not supported", "algorithm", algorithm,
 			"user", params["username"], "address", clientAddress(set, r))
 		return nil, false
 	}
@@ -800,14 +802,14 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*ac
 	// are accepted; either way the path is bound to the response
 	uri := params["uri"]
 	if uri != r.URL.RequestURI() && uri != r.URL.Path {
-		s.log.Debug("http digest uri does not match the request", "uri", logging.URLString(uri),
+		s.logFor(r).Debug("http digest uri does not match the request", "uri", logging.URLString(uri),
 			"requested", logging.URL(r.URL), "user", params["username"], "address", clientAddress(set, r))
 		return nil, false
 	}
 	fresh, ours := s.nonceState(params["nonce"])
 	if !ours {
 		// a nonce another server issued, or one from before a restart
-		s.log.Debug("http digest nonce was not issued by this server",
+		s.logFor(r).Debug("http digest nonce was not issued by this server",
 			"user", params["username"], "address", clientAddress(set, r))
 		return nil, false
 	}
@@ -835,14 +837,14 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*ac
 			if !fresh {
 				// right credentials, old nonce: ask again with a new one
 				// rather than letting it through
-				s.log.Debug("http digest nonce is stale, challenging again",
+				s.logFor(r).Debug("http digest nonce is stale, challenging again",
 					"user", name, "address", clientAddress(set, r))
 				return nil, true
 			}
 			return user, false
 		}
 	}
-	s.log.Info("http login refused", "user", name, "method", "digest",
+	s.logFor(r).Info("http login refused", "user", name, "method", "digest",
 		"address", clientAddress(set, r))
 	s.recordFailure(set, r)
 	return nil, false

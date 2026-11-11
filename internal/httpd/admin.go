@@ -32,14 +32,14 @@ func (s *Server) admits(set *settings, cred credential) bool {
 func (s *Server) handleAdmin(set *settings, w http.ResponseWriter, r *http.Request) {
 	if s.admin == nil || !set.cfg.EnableAdminInterface {
 		// switched off, the marker names nothing
-		s.log.Debug("http admin interface is not enabled", "address", clientAddress(set, r))
+		s.logFor(r).Debug("http admin interface is not enabled", "address", clientAddress(set, r))
 		http.NotFound(w, r)
 		return
 	}
 
 	cred := s.identify(set, w, r)
 	if !cred.token || cred.user == nil {
-		s.log.Info("http admin interface refused, no session", "credentials", cred.method,
+		s.logFor(r).Info("http admin interface refused, no session", "credentials", cred.method,
 			"address", clientAddress(set, r))
 		w.Header().Set("Cache-Control", "no-store")
 		// a browser is sent to log in; a fetch from a page whose session ran
@@ -52,7 +52,7 @@ func (s *Server) handleAdmin(set *settings, w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !cred.user.isAdmin {
-		s.log.Warn("http admin interface refused, the account is not an admin",
+		s.logFor(r).Warn("http admin interface refused, the account is not an admin",
 			"user", cred.user.name, "address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -64,7 +64,7 @@ func (s *Server) handleAdmin(set *settings, w http.ResponseWriter, r *http.Reque
 	}
 
 	address := clientAddress(set, r)
-	s.log.Info("http admin interface request", "user", cred.user.name,
+	s.logFor(r).Info("http admin interface request", "user", cred.user.name,
 		"action", r.URL.Query().Get(sessionParam), "method", r.Method, "address", address)
 	// the interface writes its own records, and it should name the same
 	// client this one does

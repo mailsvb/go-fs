@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -87,7 +88,7 @@ func (c *conn) formatEntry(format listFormat, name string, info fs.FileInfo) str
 // buildListing renders the listing of a folder, or of a single file when the
 // client named one. It reports false when the path does not exist.
 func (c *conn) buildListing(format listFormat, osPath string) (string, bool) {
-	info, err := os.Stat(osPath)
+	info, err := logging.Stat(c.log, osPath)
 	if err != nil {
 		c.log.Debug("ftp listing target not found", "error", err)
 		return "", false
@@ -97,6 +98,7 @@ func (c *conn) buildListing(format listFormat, osPath string) (string, bool) {
 	var names []string
 	if info.IsDir() {
 		entries, err := c.root.ReadFolder(osPath)
+		logging.FileOp(c.log, "readdir", osPath, err, slog.Int("entries", len(entries)))
 		if err != nil {
 			// a folder that exists but cannot be read is a permission problem
 			// on the server, which the client's 550 does not say
@@ -114,7 +116,7 @@ func (c *conn) buildListing(format listFormat, osPath string) (string, bool) {
 
 	var out strings.Builder
 	for _, name := range names {
-		entryInfo, err := os.Stat(filepath.Join(folder, name))
+		entryInfo, err := logging.Stat(c.log, filepath.Join(folder, name))
 		if err != nil {
 			// the entry vanished or is not reachable, skip it rather than
 			// letting one broken link break the whole listing
@@ -134,7 +136,7 @@ func cmdList(format listFormat) handler {
 			c.reply("550", "Directory not found")
 			return
 		}
-		if _, err := os.Stat(target.Path); err != nil {
+		if _, err := logging.Stat(c.log, target.Path); err != nil {
 			c.log.Debug("ftp listing target not found", "path", target.Virtual, "error", err)
 			c.reply("550", "Directory not found")
 			return
@@ -167,7 +169,7 @@ func cmdMlst(c *conn, arg string) {
 		c.reply("550", "File not found")
 		return
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(c.log, target.Path)
 	if err != nil {
 		c.reply("550", "File not found")
 		return

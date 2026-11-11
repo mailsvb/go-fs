@@ -357,7 +357,8 @@ func (h *Handler) handleApply(w http.ResponseWriter, r *http.Request) {
 	// the servers and the repositories of parts the binary was built
 	// without were not on the page, and stay in the file as they were, so
 	// that go-fs reads back what go-fs-light wrote
-	if current, err := h.read(); err == nil {
+	current, readErr := h.read()
+	if readErr == nil {
 		cfg.Servers = append(cfg.Servers, current.AbsentServers()...)
 		cfg.Repositories = append(cfg.Repositories, current.AbsentRepositories()...)
 	}
@@ -388,6 +389,11 @@ func (h *Handler) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 	h.log.Info("the configuration was written by the admin interface",
 		"path", h.path, "backup", backup, "address", addressOf(r))
+	if readErr == nil {
+		// the keys only: a changed password is named, never written
+		h.log.Debug("the admin interface changed the configuration",
+			"keys", config.ChangedKeys(current, cfg), "address", addressOf(r))
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"path":   h.path,

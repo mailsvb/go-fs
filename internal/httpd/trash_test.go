@@ -51,7 +51,7 @@ func gone(at string) bool {
 // trashIndexOf reads the index of the trash.
 func trashIndexOf(t *testing.T, bin string) trash.Index {
 	t.Helper()
-	return trash.ReadIndex(bin)
+	return trash.ReadIndex(nil, bin)
 }
 
 // trashPost sends what the Trash page sends: a JSON body, with the session and
@@ -411,7 +411,7 @@ func TestTrashIsPurgedAfterTheRetention(t *testing.T) {
 	index["/old.txt"] = long
 	index["/box"] = long
 	delete(index, "/box/early.txt")
-	if err := trash.WriteIndex(bin, index); err != nil {
+	if err := trash.WriteIndex(nil, bin, index); err != nil {
 		t.Fatal(err)
 	}
 

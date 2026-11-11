@@ -13,12 +13,12 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -26,6 +26,8 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 	bolterrors "go.etcd.io/bbolt/errors"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // FileExtension is what the default file is named with in place of the
@@ -72,7 +74,7 @@ func Open(path string, logger *slog.Logger) (*Store, error) {
 // open is Open with the clock and the interval of the sweep given, which the
 // tests set.
 func open(path string, logger *slog.Logger, now func() time.Time, interval time.Duration) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := logging.MkdirAll(logger, filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: lockTimeout})
@@ -85,7 +87,7 @@ func open(path string, logger *slog.Logger, now func() time.Time, interval time.
 	s := &Store{
 		db:    db,
 		path:  path,
-		log:   logger,
+		log:   logging.OrDiscard(logger),
 		now:   now,
 		stop:  make(chan struct{}),
 		swept: make(chan struct{}),
@@ -185,13 +187,19 @@ func (s *Store) DropBucket(name string) error {
 	if s == nil {
 		return nil
 	}
-	return s.db.Update(func(tx *bolt.Tx) error {
+	err := s.db.Update(func(tx *bolt.Tx) error {
 		err := tx.DeleteBucket([]byte(name))
 		if errors.Is(err, bolterrors.ErrBucketNotFound) {
 			return nil
 		}
 		return err
 	})
+	attrs := []slog.Attr{slog.String("bucket", name)}
+	if err != nil {
+		attrs = append(attrs, slog.Any("error", err))
+	}
+	logging.Debug(context.Background(), s.log, 1, "store drop bucket", attrs...)
+	return err
 }
 
 // Bucket is the records of one part of go-fs. It is created with its first
@@ -219,8 +227,8 @@ func (b *Bucket) Get(key string, v any) (bool, error) {
 	if b == nil {
 		return false, nil
 	}
-	now := b.store.now()
-	found := false
+	now, started := b.store.now(), time.Now()
+	found, size := false, 0
 	err := b.store.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(b.name)
 		if bucket == nil {
@@ -233,9 +241,10 @@ func (b *Bucket) Get(key string, v any) (bool, error) {
 		if len(value) < headerSize {
 			return b.corrupt(key)
 		}
-		found = true
+		found, size = true, len(value)-headerSize
 		return json.Unmarshal(value[headerSize:], v)
 	})
+	b.trace("get", started, err, slog.String("key", shownKey(key)), slog.Bool("found", found), slog.Int("bytes", size))
 	return found, err
 }
 
@@ -258,16 +267,23 @@ func (b *Bucket) put(key string, v any, expires time.Time) error {
 	if err != nil {
 		return err
 	}
+	started := time.Now()
 	// a batch takes the writes that arrive together into one commit, so
 	// that many small ones do not each wait for the disk; it may run the
 	// function more than once, which a put survives
-	return b.store.db.Batch(func(tx *bolt.Tx) error {
+	err = b.store.db.Batch(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists(b.name)
 		if err != nil {
 			return err
 		}
 		return bucket.Put([]byte(key), value)
 	})
+	attrs := []slog.Attr{slog.String("key", shownKey(key)), slog.Int("bytes", len(value)-headerSize)}
+	if !expires.IsZero() {
+		attrs = append(attrs, slog.Time("expires", expires))
+	}
+	b.traceFrom(3, "put", started, err, attrs...)
+	return err
 }
 
 // Delete removes the record at key. One that is not there is no error.
@@ -275,13 +291,16 @@ func (b *Bucket) Delete(key string) error {
 	if b == nil {
 		return nil
 	}
-	return b.store.db.Batch(func(tx *bolt.Tx) error {
+	started := time.Now()
+	err := b.store.db.Batch(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(b.name)
 		if bucket == nil {
 			return nil
 		}
 		return bucket.Delete([]byte(key))
 	})
+	b.trace("delete", started, err, slog.String("key", shownKey(key)))
+	return err
 }
 
 // Scan calls fn for every record whose key starts with prefix, in the order
@@ -297,7 +316,7 @@ func (b *Bucket) Scan(prefix string, fn func(key string, decode func(v any) erro
 		key     string
 		payload []byte
 	}
-	now := b.store.now()
+	now, started := b.store.now(), time.Now()
 	var records []record
 	err := b.store.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(b.name)
@@ -317,6 +336,7 @@ func (b *Bucket) Scan(prefix string, fn func(key string, decode func(v any) erro
 		}
 		return nil
 	})
+	b.trace("scan", started, err, slog.String("prefix", shownKey(prefix)), slog.Int("records", len(records)))
 	if err != nil {
 		return err
 	}
@@ -337,18 +357,29 @@ func (b *Bucket) Write(fn func(w *Writer) error) error {
 	if b == nil {
 		return nil
 	}
-	return b.store.db.Update(func(tx *bolt.Tx) error {
+	started := time.Now()
+	var w *Writer
+	err := b.store.db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists(b.name)
 		if err != nil {
 			return err
 		}
-		return fn(&Writer{bucket: bucket})
+		w = &Writer{bucket: bucket}
+		return fn(w)
 	})
+	var puts, deletes int
+	if w != nil {
+		puts, deletes = w.puts, w.deletes
+	}
+	b.trace("write", started, err, slog.Int("puts", puts), slog.Int("deletes", deletes))
+	return err
 }
 
 // Writer writes to a bucket inside the transaction of Write, and only there.
 type Writer struct {
 	bucket *bolt.Bucket
+	// puts and deletes count the writes, for the trace of the transaction
+	puts, deletes int
 }
 
 // Put stores v at key, for good, replacing what was there.
@@ -363,11 +394,13 @@ func (w *Writer) PutUntil(key string, v any, expires time.Time) error {
 	if err != nil {
 		return err
 	}
+	w.puts++
 	return w.bucket.Put([]byte(key), value)
 }
 
 // Delete removes the record at key. One that is not there is no error.
 func (w *Writer) Delete(key string) error {
+	w.deletes++
 	return w.bucket.Delete([]byte(key))
 }
 
@@ -381,7 +414,7 @@ func (b *Bucket) Remembered(key string, v any, create func() error) (bool, error
 	if b == nil {
 		return true, create()
 	}
-	now := b.store.now()
+	now, started := b.store.now(), time.Now()
 	created := false
 	err := b.store.db.Update(func(tx *bolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists(b.name)
@@ -404,6 +437,7 @@ func (b *Bucket) Remembered(key string, v any, create func() error) (bool, error
 		created = true
 		return bucket.Put([]byte(key), value)
 	})
+	b.trace("remembered", started, err, slog.String("key", shownKey(key)), slog.Bool("created", created))
 	return created, err
 }
 
@@ -433,4 +467,34 @@ func isExpired(value []byte, now time.Time) bool {
 	}
 	expires := binary.BigEndian.Uint64(value)
 	return expires != 0 && now.UnixNano() >= int64(expires)
+}
+
+// trace writes the "store <op>" record of a bucket's operation, naming the
+// caller of the exported method in source, at debug. Values are never in it,
+// only their size: a record holds what a client set, a token's account.
+func (b *Bucket) trace(op string, started time.Time, err error, attrs ...slog.Attr) {
+	b.traceFrom(3, op, started, err, attrs...)
+}
+
+// traceFrom is trace for a caller skip frames above it.
+func (b *Bucket) traceFrom(skip int, op string, started time.Time, err error, attrs ...slog.Attr) {
+	log := b.store.log
+	if !log.Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+	all := append([]slog.Attr{slog.String("bucket", string(b.name))}, attrs...)
+	all = append(all, slog.Duration("took", time.Since(started).Round(time.Microsecond)))
+	if err != nil {
+		all = append(all, slog.Any("error", err))
+	}
+	logging.Debug(context.Background(), log, skip, "store "+op, all...)
+}
+
+// shownKey is a key as the trace shows it, cut so that a long one cannot
+// make a long record.
+func shownKey(key string) string {
+	if len(key) > 80 {
+		return key[:80] + "…"
+	}
+	return key
 }

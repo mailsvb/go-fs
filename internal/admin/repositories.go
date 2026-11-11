@@ -7,10 +7,10 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/repository"
 )
 
@@ -169,8 +169,8 @@ func (h *Handler) handleRepositorySave(w http.ResponseWriter, r *http.Request) {
 	made := false
 	if cfg.General.BaseFolderFiles != "" {
 		folder := config.RepositoryPath(cfg.General.BaseFolderFiles, repo.Folder)
-		if _, err := os.Stat(folder); errors.Is(err, fs.ErrNotExist) {
-			if err := os.MkdirAll(folder, 0o755); err != nil {
+		if _, err := logging.Stat(h.log, folder); errors.Is(err, fs.ErrNotExist) {
+			if err := logging.MkdirAll(h.log, folder, 0o755); err != nil {
 				http.Error(w, "the folder cannot be made: "+err.Error(), http.StatusConflict)
 				return
 			}

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/remote"
 	"github.com/mailsvb/go-fs/internal/store"
 )
@@ -90,7 +91,7 @@ func (m *Manager) migrate(cfg config.Config, legacyDir string) {
 	}
 	for _, s := range cfg.Syncs {
 		file := filepath.Join(legacyDir, s.Name+".json")
-		body, err := os.ReadFile(file)
+		body, err := logging.ReadFile(m.log, file)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -106,7 +107,7 @@ func (m *Manager) migrate(cfg config.Config, legacyDir string) {
 			}
 		}
 		if err == nil {
-			err = os.Remove(file)
+			err = logging.Remove(m.log, file)
 		}
 		if err != nil {
 			m.log.Warn("cannot move a sync snapshot into the persistent data file", "sync", s.Name,
@@ -116,7 +117,7 @@ func (m *Manager) migrate(cfg config.Config, legacyDir string) {
 		m.log.Info("migrated a sync snapshot into the persistent data file", "sync", s.Name, "file", file)
 	}
 	// only an empty folder goes
-	_ = os.Remove(legacyDir)
+	_ = logging.Remove(m.log, legacyDir)
 }
 
 // The buckets of st the status of each sync's last run and the snapshot of

@@ -39,6 +39,11 @@ func Debug(ctx context.Context, log *slog.Logger, skip int, msg string, attrs ..
 // when it failed and whatever else the caller knows for free, the size or
 // the target of a rename. It is written next to the os call it records.
 func FileOp(log *slog.Logger, op, path string, err error, attrs ...slog.Attr) {
+	fileOp(log, 1, op, path, err, attrs...)
+}
+
+// fileOp is FileOp for a caller skip frames above fileOp's caller.
+func fileOp(log *slog.Logger, skip int, op, path string, err error, attrs ...slog.Attr) {
 	if log == nil || !log.Enabled(context.Background(), slog.LevelDebug) {
 		return
 	}
@@ -48,7 +53,7 @@ func FileOp(log *slog.Logger, op, path string, err error, attrs ...slog.Attr) {
 	if err != nil {
 		all = append(all, slog.Any("error", err))
 	}
-	Debug(context.Background(), log, 1, "file "+op, all...)
+	Debug(context.Background(), log, skip+1, "file "+op, all...)
 }
 
 // Syscall records a call into the operating system that is not a plain file

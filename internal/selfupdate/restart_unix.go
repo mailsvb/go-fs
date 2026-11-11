@@ -3,8 +3,11 @@
 package selfupdate
 
 import (
+	"log/slog"
 	"os"
 	"syscall"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // Restart replaces this process with the executable, keeping the PID, the
@@ -16,6 +19,6 @@ func (u *Updater) Restart() error {
 	return syscall.Exec(u.exe, os.Args, os.Environ())
 }
 
-func rename(from, to string) error {
-	return os.Rename(from, to)
+func rename(log *slog.Logger, from, to string) error {
+	return logging.Rename(log, from, to)
 }

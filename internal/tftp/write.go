@@ -9,12 +9,16 @@ import (
 	"net"
 	"os"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // writeTransfer receives one write request. Write requests run lock step: every
 // block is acknowledged before the next one is accepted, so the client is
 // throttled by however fast the file system takes the data.
 type writeTransfer struct {
+	// trace is the protocol trace of the transfer
+	trace  *packetTrace
 	server *Server
 	// set is the snapshot this transfer started under, so a reload halfway
 	// through does not change the rules it runs by.
@@ -54,7 +58,7 @@ func (s *Server) startWrite(ctx context.Context, set *settings, slot admission, 
 	if err != nil {
 		s.log.Error("tftp cannot open a transfer socket", "error", err)
 		_ = file.Close()
-		_ = os.Remove(file.Name())
+		_ = logging.Remove(s.log, file.Name())
 		s.release(slot)
 		s.sendTo(from, encodeError(errNotDefined, "Internal error"))
 		return
@@ -79,6 +83,7 @@ func (s *Server) startWrite(ctx context.Context, set *settings, slot admission, 
 		acked:         opts.acked,
 		expectedBlock: 1,
 	}
+	t.trace = newPacketTrace(t.log, t.blockSize)
 	if req.mode == modeNetascii {
 		t.netascii = newNetasciiWriter(file)
 		t.sink = t.netascii
@@ -192,10 +197,10 @@ func (t *writeTransfer) finish(ctx context.Context) {
 	}
 	// a temporary file is created private to its owner, while an upload is a
 	// file the served tree hands out like any other
-	if err := os.Chmod(t.temporary, 0o644); err != nil {
+	if err := logging.Chmod(t.log, t.temporary, 0o644); err != nil {
 		t.log.Debug("tftp cannot set the mode of the upload", "error", err)
 	}
-	if err := os.Rename(t.temporary, t.destination); err != nil {
+	if err := logging.Rename(t.log, t.temporary, t.destination); err != nil {
 		t.log.Error("tftp cannot put the upload in place",
 			"path", t.destination, "error", err)
 		t.reason = "cannot put the upload in place: " + err.Error()
@@ -258,7 +263,7 @@ func (t *writeTransfer) await(ctx context.Context, hardDeadline time.Time) ([]by
 		}
 		t.send(encodeACK(uint16(t.expectedBlock - 1)))
 	}
-	return awaitPacket(ctx, t.conn, t.peer, t.log, t.timeout, t.retries, hardDeadline, resend)
+	return awaitPacket(ctx, t.conn, t.peer, t.trace, t.timeout, t.retries, hardDeadline, resend)
 }
 
 func (t *writeTransfer) send(packet []byte) {
@@ -266,6 +271,7 @@ func (t *writeTransfer) send(packet []byte) {
 }
 
 func (t *writeTransfer) send2(to net.Addr, packet []byte) {
+	t.trace.sent(packet)
 	if _, err := t.conn.WriteTo(packet, to); err != nil {
 		t.log.Debug("tftp send failed", "error", err)
 	}
@@ -287,7 +293,7 @@ func (t *writeTransfer) cleanup() {
 			"mode", t.req.mode,
 			"took", time.Since(t.started).Round(time.Millisecond))
 		// nothing reached the destination, so nothing is left behind either
-		if err := os.Remove(t.temporary); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := logging.Remove(t.log, t.temporary); err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.log.Warn("tftp cannot remove the unfinished upload", "path", t.temporary, "error", err)
 		}
 	}

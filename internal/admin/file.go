@@ -8,6 +8,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // The file is read and written on every request rather than held in memory, so
@@ -20,7 +21,7 @@ import (
 // names the folders by read as the ones that replaced them, so that a save
 // writes the new names.
 func (h *Handler) read() (config.Config, error) {
-	data, err := os.ReadFile(h.path)
+	data, err := logging.ReadFile(h.log, h.path)
 	if err != nil {
 		return config.Config{}, err
 	}
@@ -50,18 +51,18 @@ func (h *Handler) target() string {
 // through a rename anyway would go around that.
 func (h *Handler) writable() error {
 	path := h.target()
-	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+	file, err := logging.OpenFile(h.log, path, os.O_WRONLY, 0)
 	if err != nil {
 		return err
 	}
 	_ = file.Close()
 
-	probe, err := os.CreateTemp(filepath.Dir(path), ".go-fs-probe-*")
+	probe, err := logging.CreateTemp(h.log, filepath.Dir(path), ".go-fs-probe-*")
 	if err != nil {
 		return fmt.Errorf("%s: %w", filepath.Dir(path), err)
 	}
 	_ = probe.Close()
-	_ = os.Remove(probe.Name())
+	_ = logging.Remove(h.log, probe.Name())
 	return nil
 }
 
@@ -84,25 +85,25 @@ func (h *Handler) write(cfg config.Config) (string, error) {
 	}
 
 	mode := os.FileMode(0o600)
-	if info, err := os.Stat(path); err == nil {
+	if info, err := logging.Stat(h.log, path); err == nil {
 		mode = info.Mode().Perm()
 	}
 
 	backup := path + ".bak"
-	previous, err := os.ReadFile(path)
+	previous, err := logging.ReadFile(h.log, path)
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(backup, previous, mode); err != nil {
+	if err := logging.WriteFile(h.log, backup, previous, mode); err != nil {
 		return "", err
 	}
 
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".go-fs-config-*")
+	temporary, err := logging.CreateTemp(h.log, filepath.Dir(path), ".go-fs-config-*")
 	if err != nil {
 		return "", err
 	}
 	name := temporary.Name()
-	defer os.Remove(name)
+	defer logging.Remove(h.log, name)
 
 	if _, err := temporary.Write(data); err != nil {
 		_ = temporary.Close()
@@ -111,10 +112,10 @@ func (h *Handler) write(cfg config.Config) (string, error) {
 	if err := temporary.Close(); err != nil {
 		return "", err
 	}
-	if err := os.Chmod(name, mode); err != nil {
+	if err := logging.Chmod(h.log, name, mode); err != nil {
 		return "", err
 	}
-	if err := os.Rename(name, path); err != nil {
+	if err := logging.Rename(h.log, name, path); err != nil {
 		return "", err
 	}
 	return backup, nil

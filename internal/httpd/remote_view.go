@@ -9,13 +9,13 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/httpd/viewer"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/mp3edit"
 	"github.com/mailsvb/go-fs/internal/remote"
 	"github.com/mailsvb/go-fs/internal/vfs"
@@ -135,7 +135,7 @@ func (s *Server) handleRemote(set *settings, w http.ResponseWriter, r *http.Requ
 			http.Redirect(w, r, loginURL(r.URL), http.StatusSeeOther)
 			return
 		}
-		s.log.Info("http remote refused, no session of an account that may read",
+		s.logFor(r).Info("http remote refused, no session of an account that may read",
 			"user", nameOf(cred.user), "method", r.Method, "address", clientAddress(set, r))
 		if cred.user == nil {
 			http.Error(w, "Not authenticated", http.StatusUnauthorized)
@@ -184,7 +184,7 @@ func (s *Server) handleRemote(set *settings, w http.ResponseWriter, r *http.Requ
 	q.login = login
 	fsys, err := remote.Open(r.Context(), login, set.ssh)
 	if err != nil {
-		s.log.Warn("http remote cannot log in", "server", server.Name, "user", cred.user.name,
+		s.logFor(r).Warn("http remote cannot log in", "server", server.Name, "user", cred.user.name,
 			"address", q.address, "error", err)
 		fail(http.StatusBadGateway, err)
 		return
@@ -363,7 +363,7 @@ func (s *Server) remotePage(set *settings, w http.ResponseWriter, r *http.Reques
 	q *remoteRequest, entries []entry, failure error) {
 	nonce, err := pageNonce()
 	if err != nil {
-		s.log.Error("http cannot render the remote listing", "server", q.server.Name, "error", err)
+		s.logFor(r).Error("http cannot render the remote listing", "server", q.server.Name, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -377,7 +377,7 @@ func (s *Server) remotePage(set *settings, w http.ResponseWriter, r *http.Reques
 		entries = nil
 		place.Error = failure.Error()
 		status = http.StatusBadGateway
-		s.log.Info("http remote folder cannot be listed", "server", q.server.Name, "path", folder,
+		s.logFor(r).Info("http remote folder cannot be listed", "server", q.server.Name, "path", folder,
 			"user", cred.user.name, "address", q.address, "error", failure)
 	}
 	who := s.sessionViewFor(set, r, cred)
@@ -396,7 +396,7 @@ func (s *Server) remotePage(set *settings, w http.ResponseWriter, r *http.Reques
 	page, err := listingPage(place, entries, parseSort(r.URL.Query()), remoteRights(cred, q.server), sendView{},
 		who, nonce, set.cfg)
 	if err != nil {
-		s.log.Error("http cannot render the remote listing", "server", q.server.Name, "error", err)
+		s.logFor(r).Error("http cannot render the remote listing", "server", q.server.Name, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -435,7 +435,7 @@ func (s *Server) remoteDownload(set *settings, w http.ResponseWriter, r *http.Re
 	if status != http.StatusOK && status != http.StatusPartialContent {
 		return
 	}
-	s.log.Info(event, "user", q.user.name, "file", q.logged(q.path),
+	s.logFor(r).Info(event, "user", q.user.name, "file", q.logged(q.path),
 		"bytes", sent, "size", info.Size(), "status", status, "address", clientAddress(set, r),
 		"took", time.Since(started).Round(time.Millisecond))
 }
@@ -458,11 +458,11 @@ func (s *Server) remoteArchive(w http.ResponseWriter, r *http.Request, q *remote
 		return s.walkRemoteArchive(r.Context(), q.fs, q.path, name, archive)
 	})
 	if err != nil {
-		s.log.Warn("http remote archive ended early", "user", q.user.name, "folder", q.logged(q.path),
+		s.logFor(r).Warn("http remote archive ended early", "user", q.user.name, "folder", q.logged(q.path),
 			"files", files, "address", q.address, "error", err)
 		return
 	}
-	s.log.Info("http remote archive", "user", q.user.name, "folder", q.logged(q.path),
+	s.logFor(r).Info("http remote archive", "user", q.user.name, "folder", q.logged(q.path),
 		"files", files, "address", q.address, "took", time.Since(started).Round(time.Millisecond))
 }
 
@@ -573,7 +573,7 @@ func (s *Server) remoteTaken(w http.ResponseWriter, r *http.Request, q *remoteRe
 		http.Error(w, remoteFolderFailure(sendRequest{Login: q.login}, q.path, err).Error(), http.StatusBadGateway)
 		return false, false
 	case !info.Mode().IsRegular():
-		s.log.Debug("http remote upload refused, the name is taken", "file", q.logged(q.path))
+		s.logFor(r).Debug("http remote upload refused, the name is taken", "file", q.logged(q.path))
 		http.NotFound(w, r)
 		return true, false
 	case !granted(q.user.perms, actOverwrite):
@@ -597,7 +597,7 @@ func (s *Server) remotePut(set *settings, w http.ResponseWriter, r *http.Request
 	}
 	label := vfs.Target{Virtual: q.logged(q.path)}
 	if !rawUpload(r.Header.Get("Content-Type")) {
-		s.log.Debug("http remote upload refused, the body is not octet-stream",
+		s.logFor(r).Debug("http remote upload refused, the body is not octet-stream",
 			"file", label.Virtual, "contentType", r.Header.Get("Content-Type"))
 		http.NotFound(w, r)
 		return
@@ -635,12 +635,12 @@ func (s *Server) remotePut(set *settings, w http.ResponseWriter, r *http.Request
 			s.answerRemoteFailure(w, q, "write", err)
 			return
 		}
-		s.log.Warn("http remote upload failed", "user", q.user.name, "file", label.Virtual,
+		s.logFor(r).Warn("http remote upload failed", "user", q.user.name, "file", label.Virtual,
 			"bytes", written, "address", q.address, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	s.log.Info("http remote upload", "user", q.user.name, "file", label.Virtual, "bytes", written,
+	s.logFor(r).Info("http remote upload", "user", q.user.name, "file", label.Virtual, "bytes", written,
 		"replaced", replaced, "address", q.address, "took", time.Since(started).Round(time.Millisecond))
 	w.WriteHeader(http.StatusOK)
 }
@@ -679,8 +679,8 @@ func (s *Server) remotePutChunk(set *settings, w http.ResponseWriter, r *http.Re
 		if _, ok := s.remoteTaken(w, r, q); !ok {
 			return
 		}
-		if err := os.MkdirAll(stagingFolder(set), 0o700); err != nil {
-			s.log.Error("http cannot create the upload staging folder", "error", err)
+		if err := logging.MkdirAll(s.logFor(r), stagingFolder(set), 0o700); err != nil {
+			s.logFor(r).Error("http cannot create the upload staging folder", "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -698,15 +698,15 @@ func (s *Server) remotePutChunk(set *settings, w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	file, err := os.Open(staging)
+	file, err := logging.Open(s.logFor(r), staging)
 	if err != nil {
-		s.log.Error("http remote upload cannot read what was staged", "file", label.Virtual, "error", err)
+		s.logFor(r).Error("http remote upload cannot read what was staged", "file", label.Virtual, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
 	defer func() { _ = file.Close() }()
 	if info, err := file.Stat(); err != nil || info.Size() != rng.total {
-		s.log.Error("http remote upload cannot finalize, the staged size does not match",
+		s.logFor(r).Error("http remote upload cannot finalize, the staged size does not match",
 			"file", label.Virtual, "want", rng.total, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
@@ -717,14 +717,14 @@ func (s *Server) remotePutChunk(set *settings, w http.ResponseWriter, r *http.Re
 			s.answerRemoteFailure(w, q, "write", err)
 			return
 		}
-		s.log.Warn("http remote upload failed", "user", q.user.name, "file", label.Virtual,
+		s.logFor(r).Warn("http remote upload failed", "user", q.user.name, "file", label.Virtual,
 			"bytes", written, "address", q.address, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
 	_ = file.Close()
-	_ = os.Remove(staging)
-	s.log.Info("http remote upload", "user", q.user.name, "file", label.Virtual, "bytes", written,
+	_ = logging.Remove(s.logFor(r), staging)
+	s.logFor(r).Info("http remote upload", "user", q.user.name, "file", label.Virtual, "bytes", written,
 		"chunked", true, "replaced", replaced, "address", q.address,
 		"took", time.Since(started).Round(time.Millisecond))
 	w.WriteHeader(http.StatusCreated)
@@ -752,7 +752,7 @@ func (s *Server) remoteMkdir(w http.ResponseWriter, r *http.Request, q *remoteRe
 		s.answerRemoteFailure(w, q, "create the folder", err)
 		return
 	}
-	s.log.Info("http remote mkdir", "user", q.user.name, "folder", q.logged(q.path), "address", q.address)
+	s.logFor(r).Info("http remote mkdir", "user", q.user.name, "folder", q.logged(q.path), "address", q.address)
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -791,7 +791,7 @@ func (s *Server) remoteMove(set *settings, w http.ResponseWriter, r *http.Reques
 		s.answerRemoteFailure(w, q, "rename", err)
 		return
 	}
-	s.log.Info("http remote rename", "user", q.user.name, "from", q.logged(q.path), "to", to,
+	s.logFor(r).Info("http remote rename", "user", q.user.name, "from", q.logged(q.path), "to", to,
 		"address", clientAddress(set, r))
 	w.WriteHeader(http.StatusCreated)
 }
@@ -828,14 +828,14 @@ func (s *Server) remoteDelete(w http.ResponseWriter, r *http.Request, q *remoteR
 		if info.IsDir() && !errors.Is(err, fs.ErrPermission) {
 			// most likely with something still in it, which is how the page
 			// reads a 404 on a folder
-			s.log.Debug("http remote folder not removed", "folder", q.logged(q.path), "error", err)
+			s.logFor(r).Debug("http remote folder not removed", "folder", q.logged(q.path), "error", err)
 			http.NotFound(w, r)
 			return
 		}
 		s.answerRemoteFailure(w, q, "delete", err)
 		return
 	}
-	s.log.Info("http remote delete", "user", q.user.name, "path", q.logged(q.path), "folder", info.IsDir(),
+	s.logFor(r).Info("http remote delete", "user", q.user.name, "path", q.logged(q.path), "folder", info.IsDir(),
 		"address", q.address)
 	w.WriteHeader(http.StatusNoContent)
 }

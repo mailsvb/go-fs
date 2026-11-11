@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -142,14 +143,14 @@ func (s *Server) fetchMedia(ctx context.Context, set *settings, job *registryJob
 	folder string, user *account, address string) (string, error) {
 	started := time.Now()
 	staging := stagingFolder(set)
-	if err := os.MkdirAll(staging, 0o755); err != nil {
+	if err := logging.MkdirAll(s.log, staging, 0o755); err != nil {
 		return "", err
 	}
-	work, err := os.MkdirTemp(staging, "media-*")
+	work, err := logging.MkdirTemp(s.log, staging, "media-*")
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer func() { _ = logging.RemoveAll(s.log, work) }()
 
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -188,7 +189,7 @@ func (s *Server) fetchMedia(ctx context.Context, set *settings, job *registryJob
 	if !target.Valid || vfs.AsFolder(path.Dir(target.Virtual)) != folder {
 		return "", fmt.Errorf("a file named %q cannot be stored here", name)
 	}
-	info, err := os.Stat(staged)
+	info, err := logging.Stat(s.log, staged)
 	if err != nil {
 		return "", err
 	}
@@ -203,7 +204,7 @@ func (s *Server) fetchMedia(ctx context.Context, set *settings, job *registryJob
 	}
 	// a temporary folder is the owner's alone, and what yt-dlp wrote into it
 	// is about to be a file of the served folder like an upload
-	_ = os.Chmod(staged, 0o644)
+	_ = logging.Chmod(s.log, staged, 0o644)
 	replace, err := s.placeFetched(target, name, staged, user)
 	if err != nil {
 		return "", err

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -89,7 +90,7 @@ func fetchGranted(user *account, virtual string, act action) bool {
 // handleFetch answers the fetch endpoints, on a folder.
 func (s *Server) handleFetch(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, cred credential, action string) {
 	w.Header().Set("Cache-Control", "no-store")
-	if info, err := os.Stat(target.Path); err != nil || !info.IsDir() {
+	if info, err := logging.Stat(s.logFor(r), target.Path); err != nil || !info.IsDir() {
 		http.NotFound(w, r)
 		return
 	}
@@ -120,7 +121,7 @@ func (s *Server) handleFetch(set *settings, w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if job.dismiss() {
-			s.log.Info("http "+job.kind+" stopped", "job", job.id, "what", job.what, "user", cred.user.name)
+			s.logFor(r).Info("http "+job.kind+" stopped", "job", job.id, "what", job.what, "user", cred.user.name)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -307,7 +308,7 @@ func fetchClientFor(skipVerify bool) *http.Client {
 func (s *Server) fetchStart(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, cred credential) {
 	folder := vfs.AsFolder(target.Virtual)
 	if !mayFetch(cred, folder) {
-		s.log.Info("http fetch refused, no session of an account that may create here",
+		s.logFor(r).Info("http fetch refused, no session of an account that may create here",
 			"user", nameOf(cred.user), "folder", folder, "address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -340,13 +341,13 @@ func (s *Server) fetchStart(set *settings, w http.ResponseWriter, r *http.Reques
 			message, err = s.fetchFile(ctx, set, job, fetch, folder, user, address)
 		}
 		if err != nil && ctx.Err() == nil {
-			s.log.Warn("http fetch failed", "url", shown, "folder", folder, "user", user.name,
+			s.logFor(r).Warn("http fetch failed", "url", shown, "folder", folder, "user", user.name,
 				"address", address, "error", err)
 		}
 		return message, err
 	})
 	if err == nil {
-		s.log.Info("http fetch started", "url", shown, "folder", folder, "headers", len(fetch.header),
+		s.logFor(r).Info("http fetch started", "url", shown, "folder", folder, "headers", len(fetch.header),
 			"login", fetch.username != "", "verify", !fetch.skipVerify, "media", fetch.media,
 			"user", user.name, "address", address, "job", job.id)
 	}
@@ -432,15 +433,15 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 func (s *Server) storeFetched(set *settings, job *registryJob, body io.Reader, cancel context.CancelCauseFunc,
 	target vfs.Target, name, from string, user *account) (int64, bool, error) {
 	staging := stagingFolder(set)
-	if err := os.MkdirAll(staging, 0o755); err != nil {
+	if err := logging.MkdirAll(s.log, staging, 0o755); err != nil {
 		return 0, false, err
 	}
-	staged, err := os.CreateTemp(staging, "fetch-*")
+	staged, err := logging.CreateTemp(s.log, staging, "fetch-*")
 	if err != nil {
 		return 0, false, err
 	}
 	stagedPath := staged.Name()
-	defer func() { _ = os.Remove(stagedPath) }()
+	defer func() { _ = logging.Remove(s.log, stagedPath) }()
 	// a temporary file is the owner's alone, and this one is about to be a
 	// file of the served folder like an upload
 	_ = staged.Chmod(0o644)
@@ -481,7 +482,7 @@ func (s *Server) placeFetched(target vfs.Target, name, stagedPath string, user *
 	if err != nil {
 		return false, err
 	}
-	if err := finalizeUpload(stagedPath, target.Path, replace); err != nil {
+	if err := finalizeUpload(s.log, stagedPath, target.Path, replace); err != nil {
 		return false, err
 	}
 	return replace, nil

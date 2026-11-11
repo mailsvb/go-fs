@@ -115,7 +115,9 @@ func (s *Server) answerDiscovery(conn net.PacketConn, stopped chan struct{}) {
 			s.log.Debug("jellyfin discovery read failed", "error", err)
 			continue
 		}
-		if !strings.Contains(strings.ToLower(string(buf[:n])), jellyfinDiscoveryQuestion) {
+		question := strings.Contains(strings.ToLower(string(buf[:n])), jellyfinDiscoveryQuestion)
+		s.log.Debug("jellyfin discovery <", "client", client.String(), "bytes", n, "question", question)
+		if !question {
 			continue
 		}
 		set := s.settings()

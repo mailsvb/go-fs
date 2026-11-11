@@ -24,6 +24,7 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/audio"
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/sonos"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -312,17 +313,17 @@ func (s *Server) sonosFile(set *settings, r *http.Request, target vfs.Target) bo
 	stamp, _, ok := strings.Cut(key, ".")
 	expires, err := strconv.ParseInt(stamp, 10, 64)
 	if !ok || err != nil || time.Now().Unix() > expires {
-		s.log.Debug("http sonos link has run out", "file", target.Virtual,
+		s.logFor(r).Debug("http sonos link has run out", "file", target.Virtual,
 			"address", clientAddress(set, r))
 		return false
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(s.logFor(r), target.Path)
 	if err != nil || !info.Mode().IsRegular() {
 		return false
 	}
 	expected := sonosKey(s.shareSecret(set), target.Virtual, info, expires)
 	if !hmac.Equal([]byte(key), []byte(expected)) {
-		s.log.Debug("http sonos key does not match", "file", target.Virtual,
+		s.logFor(r).Debug("http sonos key does not match", "file", target.Virtual,
 			"address", clientAddress(set, r))
 		return false
 	}
@@ -384,7 +385,7 @@ func (s *Server) handleSonos(set *settings, w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !maySend(cred, target.Virtual) {
-		s.log.Info("http sonos refused, no session of an account that may read here",
+		s.logFor(r).Info("http sonos refused, no session of an account that may read here",
 			"user", nameOf(cred.user), "path", target.Virtual, "address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -395,7 +396,7 @@ func (s *Server) handleSonos(set *settings, w http.ResponseWriter, r *http.Reque
 	if op == "groups" {
 		groups, err := s.sonosGroups(ctx, set, r.URL.Query().Get("refresh") != "")
 		if err != nil {
-			s.log.Warn("http sonos speakers cannot be found", "error", err)
+			s.logFor(r).Warn("http sonos speakers cannot be found", "error", err)
 			http.Error(w, "The speakers cannot be searched for: "+err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -472,7 +473,7 @@ func (s *Server) handleSonos(set *settings, w http.ResponseWriter, r *http.Reque
 		s.sonosFailed(w, group, op, err)
 		return
 	}
-	s.log.Debug("http sonos "+op, "user", nameOf(cred.user), "room", group.Coordinator.Room)
+	s.logFor(r).Debug("http sonos "+op, "user", nameOf(cred.user), "room", group.Coordinator.Room)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -515,7 +516,7 @@ func (s *Server) sonosPlay(ctx context.Context, set *settings, w http.ResponseWr
 		}
 		joining = append(joining, g)
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(s.logFor(r), target.Path)
 	if err != nil || !info.Mode().IsRegular() {
 		http.NotFound(w, r)
 		return
@@ -535,7 +536,7 @@ func (s *Server) sonosPlay(ctx context.Context, set *settings, w http.ResponseWr
 	group, track, err := s.sonosStartTrack(ctx, set, group, target, info)
 	if err != nil {
 		if linkErr := (*sonosLinkError)(nil); errors.As(err, &linkErr) {
-			s.log.Warn("http sonos play refused", "file", target.Virtual, "room", group.Coordinator.Room, "error", err)
+			s.logFor(r).Warn("http sonos play refused", "file", target.Virtual, "room", group.Coordinator.Room, "error", err)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
@@ -547,7 +548,7 @@ func (s *Server) sonosPlay(ctx context.Context, set *settings, w http.ResponseWr
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	s.log.Info("http sonos play", "user", nameOf(cred.user), "file", target.Virtual, "queue", len(queue),
+	s.logFor(r).Info("http sonos play", "user", nameOf(cred.user), "file", target.Virtual, "queue", len(queue),
 		"room", group.Coordinator.Room, "rooms", len(group.Members), "address", clientAddress(set, r))
 	answer := map[string]any{"group": group.ID, "name": group.Name(), "rooms": roomsOf(group),
 		"title": track.Title, "session": session.view()}
@@ -627,9 +628,9 @@ func (s *Server) handleSonosSession(ctx context.Context, set *settings, w http.R
 		host := ss.group.Coordinator.Host
 		ss.mu.Unlock()
 		if err := s.sonos.clientOf().Stop(ctx, host); err != nil {
-			s.log.Info("http sonos session stopped, but its group was not", "error", err)
+			s.logFor(r).Info("http sonos session stopped, but its group was not", "error", err)
 		}
-		s.log.Info("http sonos session stopped", "user", nameOf(cred.user), "room", view.Room,
+		s.logFor(r).Info("http sonos session stopped", "user", nameOf(cred.user), "room", view.Room,
 			"address", clientAddress(set, r))
 	}
 	writeJSON(w, http.StatusOK, ss.view())
@@ -690,7 +691,7 @@ func (s *Server) sonosUngroup(ctx context.Context, set *settings, w http.Respons
 			continue
 		}
 		if err := client.Leave(ctx, m.Host); err != nil {
-			s.log.Warn("http sonos speaker did not leave its group", "room", m.Room, "error", err)
+			s.logFor(r).Warn("http sonos speaker did not leave its group", "room", m.Room, "error", err)
 			left = append(left, m.UUID)
 			failed = append(failed, m.Room)
 		}
@@ -700,7 +701,7 @@ func (s *Server) sonosUngroup(ctx context.Context, set *settings, w http.Respons
 		http.Error(w, strings.Join(failed, ", ")+" could not be ungrouped.", http.StatusBadGateway)
 		return
 	}
-	s.log.Info("http sonos ungroup", "user", nameOf(cred.user), "room", group.Coordinator.Room,
+	s.logFor(r).Info("http sonos ungroup", "user", nameOf(cred.user), "room", group.Coordinator.Room,
 		"rooms", len(group.Members), "address", clientAddress(set, r))
 	w.WriteHeader(http.StatusNoContent)
 }

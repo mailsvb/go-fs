@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/jellyfin"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/secrets"
 	"github.com/mailsvb/go-fs/internal/store"
 	"github.com/mailsvb/go-fs/internal/subsonic"
@@ -90,7 +90,7 @@ func (s *Server) warnAboutSubsonic(set *settings) {
 	if !set.subsonic {
 		return
 	}
-	if info, err := os.Stat(filepath.Join(s.root.Base(), "rest")); err == nil && info.IsDir() {
+	if info, err := logging.Stat(s.log, filepath.Join(s.root.Base(), "rest")); err == nil && info.IsDir() {
 		s.log.Warn("the OpenSubsonic API is answered below /rest, so the files of the folder rest of "+
 			"general.baseFolderFiles that are named after its methods cannot be reached over http",
 			"baseFolderFiles", s.root.Base())
@@ -188,7 +188,7 @@ func (q *subsonicRequest) login() bool {
 		return false
 	}
 	if remaining, locked := s.lockedOut(set, r); locked {
-		s.log.Info("http login refused, the address is locked out", "method", "subsonic",
+		s.logFor(r).Info("http login refused, the address is locked out", "method", "subsonic",
 			"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
 		q.w.Header().Set("Retry-After", strconv.Itoa(retryAfter(remaining)))
 		q.fail(subsonic.ErrCredentials, lockoutMessage(remaining))
@@ -211,7 +211,7 @@ func (q *subsonicRequest) login() bool {
 		q.user = matchSaltedToken(set.accounts, name, token, salt)
 	}
 	if q.user == nil {
-		s.log.Info("http login refused", "user", name, "method", "subsonic", "client", q.client,
+		s.logFor(r).Info("http login refused", "user", name, "method", "subsonic", "client", q.client,
 			"address", clientAddress(set, r))
 		s.recordFailure(set, r)
 		q.delay()

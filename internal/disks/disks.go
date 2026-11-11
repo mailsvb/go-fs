@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/sparse"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -106,6 +108,8 @@ type Folder struct {
 	base  string
 	folds bool
 	reg   *registry
+	// log takes the trace of what is done to the images on disk
+	log *slog.Logger
 }
 
 // folders hands every caller that opens one folder the same registry, which
@@ -115,8 +119,9 @@ var (
 	folders   = map[string]*registry{}
 )
 
-// Open opens the folder of the disk images, which has to exist.
-func Open(folder string) (*Folder, error) {
+// Open opens the folder of the disk images, which has to exist. log takes
+// the trace of the files touched, nil for none.
+func Open(folder string, log *slog.Logger) (*Folder, error) {
 	root, err := vfs.New(folder)
 	if err != nil {
 		return nil, err
@@ -129,7 +134,7 @@ func Open(folder string) (*Folder, error) {
 		reg = newRegistry()
 		folders[base] = reg
 	}
-	return &Folder{base: base, folds: root.CaseInsensitive(), reg: reg}, nil
+	return &Folder{base: base, folds: root.CaseInsensitive(), reg: reg, log: logging.OrDiscard(log)}, nil
 }
 
 // Base is the folder on disk.
@@ -169,7 +174,7 @@ type Disk struct {
 
 // List reports the images in the folder, by name.
 func (f *Folder) List() ([]Disk, error) {
-	entries, err := os.ReadDir(f.base)
+	entries, err := logging.ReadDir(f.log, f.base)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +205,7 @@ func (f *Folder) Stat(name string) (os.FileInfo, error) {
 	if err := ValidName(name); err != nil {
 		return nil, err
 	}
-	info, err := os.Lstat(f.path(name))
+	info, err := logging.Lstat(f.log, f.path(name))
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +229,7 @@ func (f *Folder) Create(name string, size int64) (err error) {
 		return err
 	}
 	defer lease.Release()
-	file, err := os.OpenFile(f.path(name), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o640)
+	file, err := logging.OpenFile(f.log, f.path(name), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o640)
 	if errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("%q %w", name, ErrExists)
 	}
@@ -236,7 +241,7 @@ func (f *Folder) Create(name string, size int64) (err error) {
 			err = closeErr
 		}
 		if err != nil {
-			_ = os.Remove(f.path(name))
+			_ = logging.Remove(f.log, f.path(name))
 		}
 	}()
 	if err := sparse.SetSparse(file); err != nil {
@@ -264,7 +269,7 @@ func (f *Folder) Resize(name string, size int64, shrink bool) (err error) {
 		return err
 	}
 	defer lease.Release()
-	file, err := os.OpenFile(f.path(name), os.O_RDWR, 0)
+	file, err := logging.OpenFile(f.log, f.path(name), os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
@@ -308,13 +313,13 @@ func (f *Folder) Rename(from, to string) error {
 	}
 	defer leases.Release()
 	if f.key(from) != f.key(to) {
-		if _, err := os.Lstat(f.path(to)); err == nil {
+		if _, err := logging.Lstat(f.log, f.path(to)); err == nil {
 			return fmt.Errorf("%q %w", to, ErrExists)
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
-	return os.Rename(f.path(from), f.path(to))
+	return logging.Rename(f.log, f.path(from), f.path(to))
 }
 
 // Delete removes the image name for good, which nothing may have in use.
@@ -327,7 +332,7 @@ func (f *Folder) Delete(name string) error {
 		return err
 	}
 	defer lease.Release()
-	return os.Remove(f.path(name))
+	return logging.Remove(f.log, f.path(name))
 }
 
 // Attach opens the image name for an NBD session, read-write or read-only
@@ -352,7 +357,7 @@ func (f *Folder) Attach(name string, session *Session) (*os.File, *Lease, error)
 	if session.Writable {
 		flag = os.O_RDWR
 	}
-	file, err := os.OpenFile(f.path(name), flag, 0)
+	file, err := logging.OpenFile(f.log, f.path(name), flag, 0)
 	if err != nil {
 		lease.Release()
 		return nil, nil, err
@@ -388,7 +393,7 @@ func (f *Folder) OpenRead(name string) (*os.File, *Lease, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	file, err := os.Open(f.path(name))
+	file, err := logging.Open(f.log, f.path(name))
 	if err != nil {
 		lease.Release()
 		return nil, nil, err
@@ -433,7 +438,7 @@ func (f *Folder) exclusiveBoth(a, b, why string) (Leases, error) {
 // touched for maxAge, and that no upload or clone of this process is still
 // writing.
 func (f *Folder) Sweep(maxAge time.Duration) (removed []string) {
-	entries, err := os.ReadDir(f.base)
+	entries, err := logging.ReadDir(f.log, f.base)
 	if err != nil {
 		return nil
 	}
@@ -450,7 +455,7 @@ func (f *Folder) Sweep(maxAge time.Duration) (removed []string) {
 		if f.reg.working(kind, f.key(disk)) {
 			continue
 		}
-		if os.Remove(filepath.Join(f.base, name)) == nil {
+		if logging.Remove(f.log, filepath.Join(f.base, name)) == nil {
 			removed = append(removed, name)
 		}
 	}

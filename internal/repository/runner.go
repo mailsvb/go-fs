@@ -8,13 +8,13 @@ import (
 	"io/fs"
 	"log/slog"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/store"
 )
 
@@ -370,7 +370,7 @@ func (r *runner) update(now time.Time) error {
 // forward slashes. Folders whose name begins with a dot, and the metadata,
 // are not looked into.
 func (r *runner) packages() ([]string, error) {
-	info, err := os.Stat(r.folder)
+	info, err := logging.Stat(r.log, r.folder)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +378,7 @@ func (r *runner) packages() ([]string, error) {
 		return nil, fmt.Errorf("%s is not a folder", r.repo.Folder)
 	}
 	var found []string
-	err = filepath.WalkDir(r.folder, func(path string, d fs.DirEntry, err error) error {
+	err = logging.WalkDir(r.log, r.folder, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if path == r.folder {
 				return err
@@ -434,7 +434,7 @@ func (c candidate) release() release {
 // before when the file did not change since.
 func (r *runner) read(href string) (candidate, error) {
 	path := filepath.Join(r.folder, filepath.FromSlash(href))
-	info, err := os.Stat(path)
+	info, err := logging.Stat(r.log, path)
 	if err != nil {
 		return candidate{}, err
 	}
@@ -460,7 +460,7 @@ func (r *runner) admit(c candidate) (known, error) {
 		return known{}, err
 	}
 	// admitting may have changed the file, and it is known as it is now
-	info, err := os.Stat(filepath.Join(r.folder, filepath.FromSlash(c.href)))
+	info, err := logging.Stat(r.log, filepath.Join(r.folder, filepath.FromSlash(c.href)))
 	if err != nil {
 		return known{}, err
 	}
@@ -499,7 +499,7 @@ func (r *runner) prune(candidates []candidate) []candidate {
 		slices.SortStableFunc(group, func(a, b candidate) int { return b.release().compare(a.release()) })
 		for _, old := range group[r.repo.Keep:] {
 			path := filepath.Join(r.folder, filepath.FromSlash(old.href))
-			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err := logging.Remove(r.log, path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				r.log.Error("repository cannot remove an old version", "package", old.href, "error", err)
 				continue
 			}

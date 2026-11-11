@@ -21,7 +21,7 @@ func ensureIn(t *testing.T, body string) (Config, string, []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ensured, generated, err := EnsureSecrets(path, cfg)
+	ensured, generated, err := EnsureSecrets(path, cfg, nil)
 	if err != nil {
 		t.Fatalf("EnsureSecrets: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestEnsureSecretsKeepsTheFileMode(t *testing.T) {
 	if err := os.Chmod(path, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := EnsureSecrets(path, Default()); err != nil {
+	if _, _, err := EnsureSecrets(path, Default(), nil); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)

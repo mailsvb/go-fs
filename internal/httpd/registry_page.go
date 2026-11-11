@@ -234,7 +234,7 @@ func (s *Server) registryViewer(set *settings, w http.ResponseWriter, r *http.Re
 	if !page {
 		// a fetch from a page whose session ran out is told plainly, as it is
 		// for the file endpoints
-		s.log.Debug("http registry page refused, no session", "method", r.Method,
+		s.logFor(r).Debug("http registry page refused, no session", "method", r.Method,
 			"address", clientAddress(set, r))
 		http.Error(w, "Not authenticated", http.StatusUnauthorized)
 		return nil, false
@@ -243,7 +243,7 @@ func (s *Server) registryViewer(set *settings, w http.ResponseWriter, r *http.Re
 		// signed in, but as an account the registry does not know: the login
 		// page would send a session straight back here, so it is shown in
 		// place, to log in as someone else
-		s.log.Info("http registry page refused, the account does not set registry",
+		s.logFor(r).Info("http registry page refused, the account does not set registry",
 			"user", cred.user.name, "address", clientAddress(set, r))
 		s.loginPage(w, r, target, "This account cannot use the registry. Log in with one that can.")
 		return nil, false
@@ -576,7 +576,7 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 	base := (&url.URL{Path: r.URL.Path}).EscapedPath()
 	names, err := store.repositories()
 	if err != nil {
-		s.log.Error("registry page cannot list the repositories", "error", err)
+		s.logFor(r).Error("registry page cannot list the repositories", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -602,7 +602,7 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 	for _, name := range shown {
 		found, err := s.registryTags(store, name)
 		if err != nil {
-			s.log.Error("registry page cannot read the tags", "repository", name, "error", err)
+			s.logFor(r).Error("registry page cannot read the tags", "repository", name, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -617,7 +617,7 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 
 	nonce, err := pageNonce()
 	if err != nil {
-		s.log.Error("http cannot render the registry page", "error", err)
+		s.logFor(r).Error("http cannot render the registry page", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -657,7 +657,7 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 
 	var page bytes.Buffer
 	if err := registryTemplate.Execute(&page, data); err != nil {
-		s.log.Error("http cannot render the registry page", "error", err)
+		s.logFor(r).Error("http cannot render the registry page", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -952,7 +952,7 @@ func (s *Server) registryImage(set *settings, w http.ResponseWriter, r *http.Req
 	store := set.registry
 	name, tag, tags, ok, err := registryTagQuery(store, r)
 	if err != nil {
-		s.log.Error("registry page cannot read the tags", "repository", name, "error", err)
+		s.logFor(r).Error("registry page cannot read the tags", "repository", name, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -963,7 +963,7 @@ func (s *Server) registryImage(set *settings, w http.ResponseWriter, r *http.Req
 	d := tags[tag]
 	summary, err := s.summarize(store, name, d)
 	if err != nil {
-		s.log.Error("registry page cannot read a manifest", "repository", name, "tag", tag,
+		s.logFor(r).Error("registry page cannot read a manifest", "repository", name, "tag", tag,
 			"digest", d.String(), "error", err)
 		http.Error(w, "The manifest of that tag cannot be read.", http.StatusInternalServerError)
 		return
@@ -1018,7 +1018,7 @@ func (s *Server) registryImage(set *settings, w http.ResponseWriter, r *http.Req
 // registryUntag deletes a tag, as DELETE /v2/<name>/manifests/<tag> does.
 func (s *Server) registryUntag(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
 	if user == nil {
-		s.log.Info("http registry tag delete refused, no session of a registry account",
+		s.logFor(r).Info("http registry tag delete refused, no session of a registry account",
 			"address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -1041,7 +1041,7 @@ func (s *Server) registryUntag(set *settings, w http.ResponseWriter, r *http.Req
 	case errors.Is(err, errRegistryNotFound):
 		http.Error(w, "That tag is not in the registry.", http.StatusNotFound)
 	case err != nil:
-		s.log.Error("registry page cannot delete a tag", "repository", name, "tag", tag, "error", err)
+		s.logFor(r).Error("registry page cannot delete a tag", "repository", name, "tag", tag, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 	default:
 		w.WriteHeader(http.StatusNoContent)
@@ -1060,12 +1060,12 @@ type registryCleanupJSON struct {
 func (s *Server) registryCleanup(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
 	w.Header().Set("Cache-Control", "no-store")
 	if user == nil {
-		s.log.Info("http registry cleanup refused, no session of a registry account",
+		s.logFor(r).Info("http registry cleanup refused, no session of a registry account",
 			"address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	s.log.Info("registry cleanup started from the page", "user", user.name,
+	s.logFor(r).Info("registry cleanup started from the page", "user", user.name,
 		"address", clientAddress(set, r))
 	blobs, freed := s.cleanRegistryNow(set.registry)
 	writeJSON(w, http.StatusOK, registryCleanupJSON{Blobs: blobs, Bytes: freed})
@@ -1082,7 +1082,7 @@ const maxTransferRequest = 16 << 10
 func (s *Server) readTransferRequest(set *settings, w http.ResponseWriter, r *http.Request, user *account, into any) bool {
 	w.Header().Set("Cache-Control", "no-store")
 	if user == nil {
-		s.log.Info("http registry transfer refused, no session of a registry account",
+		s.logFor(r).Info("http registry transfer refused, no session of a registry account",
 			"address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return false
@@ -1191,7 +1191,7 @@ func (s *Server) registryPullCheck(set *settings, w http.ResponseWriter, r *http
 	if err != nil {
 		// the other registry's refusal is not this one's: a 401 would read
 		// as the session having ended
-		s.log.Info("registry pull check failed", "source", ref.String(), "user", user.name,
+		s.logFor(r).Info("registry pull check failed", "source", ref.String(), "user", user.name,
 			"address", clientAddress(set, r), "error", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -1220,7 +1220,7 @@ func (s *Server) registryPushCheck(set *settings, w http.ResponseWriter, r *http
 	store := set.registry
 	name, tag, tags, ok, err := registryTagQuery(store, r)
 	if err != nil {
-		s.log.Error("registry page cannot read the tags", "repository", name, "error", err)
+		s.logFor(r).Error("registry page cannot read the tags", "repository", name, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -1235,7 +1235,7 @@ func (s *Server) registryPushCheck(set *settings, w http.ResponseWriter, r *http
 	}
 	summary, err := s.summarize(store, name, tags[tag])
 	if err != nil {
-		s.log.Error("registry page cannot read a manifest", "repository", name, "tag", tag, "error", err)
+		s.logFor(r).Error("registry page cannot read a manifest", "repository", name, "tag", tag, "error", err)
 		http.Error(w, "The manifest of that tag cannot be read.", http.StatusInternalServerError)
 		return
 	}
@@ -1258,7 +1258,7 @@ func (s *Server) registryPushCheck(set *settings, w http.ResponseWriter, r *http
 		exists, err = client.manifestExists(ctx, ref.tag)
 	}
 	if err != nil {
-		s.log.Info("registry push check failed", "repository", name, "tag", tag, "target", ref.String(),
+		s.logFor(r).Info("registry push check failed", "repository", name, "tag", tag, "target", ref.String(),
 			"user", user.name, "address", clientAddress(set, r), "error", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -1294,13 +1294,13 @@ func (s *Server) registryPull(set *settings, w http.ResponseWriter, r *http.Requ
 	job, err := s.startJob(jobPull, user.name, what, func(ctx context.Context, job *registryJob) (string, error) {
 		message, err := s.pullImage(ctx, set, job, ref, filter, body.login(), user)
 		if err != nil && ctx.Err() == nil {
-			s.log.Warn("registry pull failed", "source", ref.String(), "user", user.name,
+			s.logFor(r).Warn("registry pull failed", "source", ref.String(), "user", user.name,
 				"address", address, "error", err)
 		}
 		return message, err
 	})
 	if err == nil {
-		s.log.Info("registry pull started", "source", ref.String(), "platforms", strings.Join(filter, ","),
+		s.logFor(r).Info("registry pull started", "source", ref.String(), "platforms", strings.Join(filter, ","),
 			"login", body.Username != "", "verify", !body.SkipVerify, "user", user.name, "address", address, "job", job.id)
 	}
 	s.answerStarted(w, job, err)
@@ -1315,7 +1315,7 @@ func (s *Server) registryPush(set *settings, w http.ResponseWriter, r *http.Requ
 	store := set.registry
 	name, tag, tags, ok, err := registryTagQuery(store, r)
 	if err != nil {
-		s.log.Error("registry page cannot read the tags", "repository", name, "error", err)
+		s.logFor(r).Error("registry page cannot read the tags", "repository", name, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -1338,13 +1338,13 @@ func (s *Server) registryPush(set *settings, w http.ResponseWriter, r *http.Requ
 	job, err := s.startJob(jobPush, user.name, what, func(ctx context.Context, job *registryJob) (string, error) {
 		message, err := s.pushImage(ctx, set, job, name, tag, d, ref, filter, body.login(), user)
 		if err != nil && ctx.Err() == nil {
-			s.log.Warn("registry push failed", "repository", name, "tag", tag, "target", ref.String(),
+			s.logFor(r).Warn("registry push failed", "repository", name, "tag", tag, "target", ref.String(),
 				"user", user.name, "address", address, "error", err)
 		}
 		return message, err
 	})
 	if err == nil {
-		s.log.Info("registry push started", "repository", name, "tag", tag, "target", ref.String(),
+		s.logFor(r).Info("registry push started", "repository", name, "tag", tag, "target", ref.String(),
 			"platforms", strings.Join(filter, ","), "login", body.Username != "", "verify", !body.SkipVerify,
 			"user", user.name, "address", address, "job", job.id)
 	}
@@ -1384,7 +1384,7 @@ func (s *Server) registryJobCancel(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 	if job.running() {
-		s.log.Info("registry transfer stopped", "job", job.id, "what", job.what, "user", user.name)
+		s.logFor(r).Info("registry transfer stopped", "job", job.id, "what", job.what, "user", user.name)
 		job.cancel()
 	}
 	w.WriteHeader(http.StatusNoContent)

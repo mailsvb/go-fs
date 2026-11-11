@@ -2,12 +2,14 @@ package httpd
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/trash"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -40,11 +42,11 @@ func trashOn(set *settings) bool {
 func (s *Server) discard(set *settings, target vfs.Target, all bool) (trashed bool, err error) {
 	if !trashOn(set) || trash.IsIndex(target.Virtual) {
 		if all {
-			return false, os.RemoveAll(target.Path)
+			return false, logging.RemoveAll(s.log, target.Path)
 		}
-		return false, os.Remove(target.Path)
+		return false, logging.Remove(s.log, target.Path)
 	}
-	return true, trash.Move(set.cfg.TrashFolder, target.Path, target.Virtual)
+	return true, trash.Move(s.log, set.cfg.TrashFolder, target.Path, target.Virtual)
 }
 
 // errNotInTrash is a path the trash holds nothing at.
@@ -52,12 +54,12 @@ var errNotInTrash = errors.New("not in the trash")
 
 // trashItem resolves a path of the trash to the folder, and refuses one that
 // is not there or is the index.
-func trashItem(folder, virtual string) (string, error) {
+func trashItem(log *slog.Logger, folder, virtual string) (string, error) {
 	if virtual == "/" || trash.IsIndex(virtual) {
 		return "", errNotInTrash
 	}
 	at := trash.Path(folder, virtual)
-	if _, err := os.Lstat(at); err != nil {
+	if _, err := logging.Lstat(log, at); err != nil {
 		return "", errNotInTrash
 	}
 	return at, nil
@@ -71,7 +73,7 @@ func (s *Server) restoreFromTrash(set *settings, virtual string, overwrite bool)
 	trash.Lock()
 	defer trash.Unlock()
 	folder := set.cfg.TrashFolder
-	src, err := trashItem(folder, virtual)
+	src, err := trashItem(s.log, folder, virtual)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -79,10 +81,10 @@ func (s *Server) restoreFromTrash(set *settings, virtual string, overwrite bool)
 	if !target.Valid || target.IsRoot() {
 		return 0, 0, errNotInTrash
 	}
-	index := trash.ReadIndex(folder)
+	index := trash.ReadIndex(s.log, folder)
 	defer func() {
-		pruneTrash(folder, virtual, index)
-		if werr := trash.WriteIndex(folder, index); err == nil {
+		pruneTrash(s.log, folder, virtual, index)
+		if werr := trash.WriteIndex(s.log, folder, index); err == nil {
 			err = werr
 		}
 	}()
@@ -92,7 +94,7 @@ func (s *Server) restoreFromTrash(set *settings, virtual string, overwrite bool)
 	} else if !ok {
 		return 0, countItems(src), nil
 	}
-	restored, skipped, err = restoreTree(src, target.Path, virtual, overwrite, index)
+	restored, skipped, err = restoreTree(s.log, src, target.Path, virtual, overwrite, index)
 	return restored, skipped, err
 }
 
@@ -110,7 +112,7 @@ func (s *Server) liveFolders(virtual string, overwrite bool) (bool, error) {
 		if !target.Valid {
 			return false, errNotInTrash
 		}
-		info, err := os.Stat(target.Path)
+		info, err := logging.Stat(s.log, target.Path)
 		switch {
 		case err == nil && info.IsDir():
 			continue
@@ -118,13 +120,13 @@ func (s *Server) liveFolders(virtual string, overwrite bool) (bool, error) {
 			if !overwrite {
 				return false, nil
 			}
-			if err := os.Remove(target.Path); err != nil {
+			if err := logging.Remove(s.log, target.Path); err != nil {
 				return false, err
 			}
 		case !errors.Is(err, os.ErrNotExist):
 			return false, err
 		}
-		if err := os.Mkdir(target.Path, 0o755); err != nil {
+		if err := logging.Mkdir(s.log, target.Path, 0o755); err != nil {
 			return false, err
 		}
 	}
@@ -132,23 +134,23 @@ func (s *Server) liveFolders(virtual string, overwrite bool) (bool, error) {
 }
 
 // restoreTree moves src back to dst, folder by folder where both are one.
-func restoreTree(src, dst, virtual string, overwrite bool, index trash.Index) (restored, skipped int, err error) {
-	from, err := os.Lstat(src)
+func restoreTree(log *slog.Logger, src, dst, virtual string, overwrite bool, index trash.Index) (restored, skipped int, err error) {
+	from, err := logging.Lstat(log, src)
 	if err != nil {
 		return 0, 0, err
 	}
-	there, err := os.Lstat(dst)
+	there, err := logging.Lstat(log, dst)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
 		return 0, 0, err
 	case from.IsDir() && there.IsDir():
-		items, err := os.ReadDir(src)
+		items, err := logging.ReadDir(log, src)
 		if err != nil {
 			return 0, 0, err
 		}
 		for _, item := range items {
-			done, left, err := restoreTree(filepath.Join(src, item.Name()), filepath.Join(dst, item.Name()),
+			done, left, err := restoreTree(log, filepath.Join(src, item.Name()), filepath.Join(dst, item.Name()),
 				path.Join(virtual, item.Name()), overwrite, index)
 			restored, skipped = restored+done, skipped+left
 			if err != nil {
@@ -160,19 +162,19 @@ func restoreTree(src, dst, virtual string, overwrite bool, index trash.Index) (r
 			// by being there
 			restored++
 		}
-		if os.Remove(src) == nil {
+		if logging.Remove(log, src) == nil {
 			index.Drop(virtual)
 		}
 		return restored, skipped, nil
 	case !overwrite:
 		return 0, countItems(src), nil
 	default:
-		if err := os.RemoveAll(dst); err != nil {
+		if err := logging.RemoveAll(log, dst); err != nil {
 			return 0, 0, err
 		}
 	}
 	count := countItems(src)
-	if err := trash.MoveTree(src, dst); err != nil {
+	if err := trash.MoveTree(log, src, dst); err != nil {
 		return 0, 0, err
 	}
 	index.Drop(virtual)
@@ -197,19 +199,19 @@ func countItems(at string) int {
 
 // pruneTrash removes the folders of the trash that are left empty at and
 // above virtual, and the entries of what is not there any more.
-func pruneTrash(folder, virtual string, index trash.Index) {
+func pruneTrash(log *slog.Logger, folder, virtual string, index trash.Index) {
 	for at := virtual; at != "/" && at != "."; at = path.Dir(at) {
-		items, err := os.ReadDir(trash.Path(folder, at))
+		items, err := logging.ReadDir(log, trash.Path(folder, at))
 		if err == nil && len(items) > 0 {
 			break
 		}
-		if err == nil && os.Remove(trash.Path(folder, at)) != nil {
+		if err == nil && logging.Remove(log, trash.Path(folder, at)) != nil {
 			break
 		}
 		index.Drop(at)
 	}
 	for key := range index {
-		if _, err := os.Lstat(trash.Path(folder, key)); errors.Is(err, os.ErrNotExist) {
+		if _, err := logging.Lstat(log, trash.Path(folder, key)); errors.Is(err, os.ErrNotExist) {
 			delete(index, key)
 		}
 	}
@@ -220,17 +222,17 @@ func (s *Server) deleteFromTrash(set *settings, virtual string) error {
 	trash.Lock()
 	defer trash.Unlock()
 	folder := set.cfg.TrashFolder
-	at, err := trashItem(folder, virtual)
+	at, err := trashItem(s.log, folder, virtual)
 	if err != nil {
 		return err
 	}
-	index := trash.ReadIndex(folder)
-	if err := os.RemoveAll(at); err != nil {
+	index := trash.ReadIndex(s.log, folder)
+	if err := logging.RemoveAll(s.log, at); err != nil {
 		return err
 	}
 	index.Drop(virtual)
-	pruneTrash(folder, path.Dir(virtual), index)
-	return trash.WriteIndex(folder, index)
+	pruneTrash(s.log, folder, path.Dir(virtual), index)
+	return trash.WriteIndex(s.log, folder, index)
 }
 
 // emptyTrash deletes everything in the trash for good, and reports how many
@@ -239,7 +241,7 @@ func (s *Server) emptyTrash(set *settings) (int, error) {
 	trash.Lock()
 	defer trash.Unlock()
 	folder := set.cfg.TrashFolder
-	items, err := os.ReadDir(folder)
+	items, err := logging.ReadDir(s.log, folder)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
@@ -252,7 +254,7 @@ func (s *Server) emptyTrash(set *settings) (int, error) {
 		if item.Name() != trash.IndexName {
 			count += countItems(at)
 		}
-		if err := os.RemoveAll(at); err != nil {
+		if err := logging.RemoveAll(s.log, at); err != nil {
 			return count, err
 		}
 	}
@@ -269,14 +271,14 @@ func (s *Server) purgeTrash() {
 	trash.Lock()
 	defer trash.Unlock()
 	folder := set.cfg.TrashFolder
-	items, err := os.ReadDir(folder)
+	items, err := logging.ReadDir(s.log, folder)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			s.log.Debug("http cleanup cannot read the trash", "path", folder, "error", err)
 		}
 		return
 	}
-	index := trash.ReadIndex(folder)
+	index := trash.ReadIndex(s.log, folder)
 	before := len(index)
 	cutoff := time.Now().Add(-time.Duration(set.cfg.TrashRetentionDays) * 24 * time.Hour)
 	purged := 0
@@ -287,7 +289,7 @@ func (s *Server) purgeTrash() {
 		s.purgeTree(folder, "/"+item.Name(), time.Time{}, cutoff, index, &purged)
 	}
 	if purged > 0 || len(index) != before {
-		if err := trash.WriteIndex(folder, index); err != nil {
+		if err := trash.WriteIndex(s.log, folder, index); err != nil {
 			s.log.Error("http cleanup cannot write the trash index", "path", folder, "error", err)
 		}
 	}
@@ -298,7 +300,7 @@ func (s *Server) purgeTrash() {
 // deleted, zero for one that never was on its own.
 func (s *Server) purgeTree(folder, virtual string, inherited, cutoff time.Time, index trash.Index, purged *int) bool {
 	at := trash.Path(folder, virtual)
-	info, err := os.Lstat(at)
+	info, err := logging.Lstat(s.log, at)
 	if err != nil {
 		index.Drop(virtual)
 		return true
@@ -317,7 +319,7 @@ func (s *Server) purgeTree(folder, virtual string, inherited, cutoff time.Time, 
 		if !when.Before(cutoff) {
 			return false
 		}
-		if err := os.RemoveAll(at); err != nil {
+		if err := logging.RemoveAll(s.log, at); err != nil {
 			s.log.Error("trash purge failed", "path", virtual, "error", err)
 			return false
 		}
@@ -326,7 +328,7 @@ func (s *Server) purgeTree(folder, virtual string, inherited, cutoff time.Time, 
 		s.log.Info("trash purge", "path", virtual, "folder", info.IsDir(), "deleted", when.Format(time.RFC3339))
 		return true
 	}
-	items, err := os.ReadDir(at)
+	items, err := logging.ReadDir(s.log, at)
 	if err != nil {
 		return false
 	}
@@ -339,7 +341,7 @@ func (s *Server) purgeTree(folder, virtual string, inherited, cutoff time.Time, 
 	if left || (!when.IsZero() && !when.Before(cutoff)) {
 		return false
 	}
-	if os.Remove(at) != nil {
+	if logging.Remove(s.log, at) != nil {
 		return false
 	}
 	index.Drop(virtual)

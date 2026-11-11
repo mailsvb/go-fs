@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // An audio that is to be an MP3 is converted by go-fs, not by yt-dlp: yt-dlp
@@ -223,11 +225,11 @@ func (m *mediaRun) toMP3(ctx context.Context, program, work, staged string) (str
 	if err != nil {
 		return "", err
 	}
-	if err := os.Rename(part, target); err != nil {
+	if err := logging.Rename(m.log, part, target); err != nil {
 		return "", err
 	}
 	if target != staged {
-		_ = os.Remove(staged)
+		_ = logging.Remove(m.log, staged)
 	}
 	return target, nil
 }

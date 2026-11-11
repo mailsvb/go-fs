@@ -77,7 +77,7 @@ func runRsync(ctx context.Context, j job, log *slog.Logger) (result, error) {
 		return result{}, err
 	}
 	defer func() { _ = rem.close() }()
-	loc := localSide{root: j.local, virtual: j.sync.LocalFolder, trash: j.trash}
+	loc := localSide{root: j.local, virtual: j.sync.LocalFolder, trash: j.trash, log: log}
 
 	localFiles, err := loc.list(ctx)
 	if err != nil {

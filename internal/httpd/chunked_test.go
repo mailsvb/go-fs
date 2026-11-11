@@ -309,7 +309,7 @@ func TestCopyFileCopiesContent(t *testing.T) {
 	if err := os.WriteFile(src, []byte("hello"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyFile(src, dst, false); err != nil {
+	if err := copyFile(nil, src, dst, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(dst)
@@ -331,7 +331,7 @@ func TestCopyFileRefusesToOverwrite(t *testing.T) {
 	if err := os.WriteFile(dst, []byte("original"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyFile(src, dst, false); err == nil {
+	if err := copyFile(nil, src, dst, false); err == nil {
 		t.Fatal("copying onto an existing file has to fail")
 	}
 	got, err := os.ReadFile(dst)
@@ -353,7 +353,7 @@ func TestCopyFileReplacesWhenAsked(t *testing.T) {
 	if err := os.WriteFile(dst, []byte("the original is longer"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyFile(src, dst, true); err != nil {
+	if err := copyFile(nil, src, dst, true); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(dst)

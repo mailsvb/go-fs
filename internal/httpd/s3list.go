@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // s3Entry is one line of a listing: an object, or a common prefix, which is how
@@ -214,7 +216,7 @@ func (s *Server) s3Folder(user *account, bucket, prefix string) ([]s3Entry, erro
 	if !ok {
 		return nil, nil
 	}
-	listed, err := os.ReadDir(folder)
+	listed, err := logging.ReadDir(s.log, folder)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +233,7 @@ func (s *Server) s3Folder(user *account, bucket, prefix string) ([]s3Entry, erro
 		if !ok || !user.allows(child.target.Virtual) {
 			continue
 		}
-		info, err := os.Stat(child.target.Path)
+		info, err := logging.Stat(s.log, child.target.Path)
 		switch {
 		case err != nil:
 			continue
@@ -257,7 +259,7 @@ func (s *Server) s3Walk(user *account, bucket, prefix string) ([]s3Entry, error)
 	var entries []s3Entry
 	var walk func(path, key string) error
 	walk = func(path, key string) error {
-		listed, err := os.ReadDir(path)
+		listed, err := logging.ReadDir(s.log, path)
 		if err != nil {
 			// a folder below that cannot be read is left out, as the page
 			// leaves out what it cannot stat
@@ -296,7 +298,7 @@ func (s *Server) s3Walk(user *account, bucket, prefix string) ([]s3Entry, error)
 			if !strings.HasPrefix(childKey, prefix) || !user.allows("/"+bucket+"/"+childKey) {
 				continue
 			}
-			info, err := os.Stat(childPath)
+			info, err := logging.Stat(s.log, childPath)
 			if err != nil || !info.Mode().IsRegular() {
 				continue
 			}
@@ -322,7 +324,7 @@ func (s *Server) folderOf(bucket, folderKey string) (string, bool) {
 		}
 		path = folder.target.Path
 	}
-	info, err := os.Stat(path)
+	info, err := logging.Stat(s.log, path)
 	return path, err == nil && info.IsDir()
 }
 

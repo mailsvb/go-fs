@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/sparse"
 )
 
@@ -91,14 +91,14 @@ func (f *Folder) Clone(src, dst string) (*Job, error) {
 		hold.Release()
 		return nil, err
 	}
-	if _, err := os.Lstat(f.path(dst)); err == nil {
+	if _, err := logging.Lstat(f.log, f.path(dst)); err == nil {
 		hold.Release()
 		target.Release()
 		return nil, fmt.Errorf("%q %w", dst, ErrExists)
 	}
 	staging := f.stagingPath("clone", dst)
 	// whatever an earlier clone into the name left behind
-	_ = os.Remove(staging)
+	_ = logging.Remove(f.log, staging)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &Job{ID: newID(), Source: src, Target: dst, Started: time.Now(), cancel: cancel, state: JobRunning,
@@ -118,17 +118,17 @@ func (f *Folder) Clone(src, dst string) (*Job, error) {
 		if err == nil {
 			// the lease on dst kept everything of this process away from
 			// the name; this keeps whatever else may write to the folder
-			if _, statErr := os.Lstat(f.path(dst)); statErr == nil {
+			if _, statErr := logging.Lstat(f.log, f.path(dst)); statErr == nil {
 				err = fmt.Errorf("%q %w", dst, ErrExists)
 			} else if !errors.Is(statErr, fs.ErrNotExist) {
 				err = statErr
 			}
 		}
 		if err == nil {
-			err = os.Rename(staging, f.path(dst))
+			err = logging.Rename(f.log, staging, f.path(dst))
 		}
 		if err != nil {
-			_ = os.Remove(staging)
+			_ = logging.Remove(f.log, staging)
 		}
 		// the disks are free again before the job says it is over, so that
 		// whoever waits for it can attach them at once

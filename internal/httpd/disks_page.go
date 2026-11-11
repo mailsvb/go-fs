@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -33,11 +34,11 @@ import (
 type diskFolder = *disks.Folder
 
 // openDisks opens the folder of the Disks page; empty is no Disks page.
-func openDisks(folder string) (diskFolder, error) {
+func openDisks(folder string, log *slog.Logger) (diskFolder, error) {
 	if folder == "" {
 		return nil, nil
 	}
-	return disks.Open(folder)
+	return disks.Open(folder, log)
 }
 
 const (
@@ -102,7 +103,7 @@ func (s *Server) handleDisks(set *settings, w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Cache-Control", "no-store")
 	cred := s.identify(set, w, r)
 	if !cred.token || cred.user == nil {
-		s.log.Info("http disks refused, no session", "credentials", cred.method,
+		s.logFor(r).Info("http disks refused, no session", "credentials", cred.method,
 			"address", clientAddress(set, r))
 		if action == actionDisks && browserRequest(r) && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			http.Redirect(w, r, loginURL(r.URL), http.StatusSeeOther)
@@ -112,7 +113,7 @@ func (s *Server) handleDisks(set *settings, w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !cred.user.isAdmin {
-		s.log.Warn("http disks refused, the account is not an admin",
+		s.logFor(r).Warn("http disks refused, the account is not an admin",
 			"user", cred.user.name, "address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -158,7 +159,7 @@ var disksScript = template.JS(mustRead("assets/disks.js"))
 func (s *Server) disksPage(set *settings, w http.ResponseWriter, r *http.Request, cred credential) {
 	nonce, err := pageNonce()
 	if err != nil {
-		s.log.Error("http cannot render the disks page", "error", err)
+		s.logFor(r).Error("http cannot render the disks page", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -174,7 +175,7 @@ func (s *Server) disksPage(set *settings, w http.ResponseWriter, r *http.Request
 	}
 	var page bytes.Buffer
 	if err := disksTemplate.Execute(&page, data); err != nil {
-		s.log.Error("http cannot render the disks page", "error", err)
+		s.logFor(r).Error("http cannot render the disks page", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -298,7 +299,7 @@ func (s *Server) diskChange(set *settings, w http.ResponseWriter, r *http.Reques
 		return
 	}
 	folder := set.disks
-	log := s.log.With("user", user.name, "address", clientAddress(set, r))
+	log := s.logFor(r).With("user", user.name, "address", clientAddress(set, r))
 	switch action {
 	case actionDisksCreate:
 		size, err := disks.ParseSize(asked.Size)
@@ -426,7 +427,7 @@ func (s *Server) diskUpload(set *settings, w http.ResponseWriter, r *http.Reques
 	query := r.URL.Query()
 	name := query.Get("name")
 	replace := query.Get("replace") == "1"
-	log := s.log.With("user", user.name, "address", clientAddress(set, r))
+	log := s.logFor(r).With("user", user.name, "address", clientAddress(set, r))
 	if err := disks.ValidName(name); err != nil {
 		s.diskFailed(w, log, "upload", name, err)
 		return
@@ -494,7 +495,7 @@ func (s *Server) diskUpload(set *settings, w http.ResponseWriter, r *http.Reques
 // to it meanwhile, so a disk attached read-write is refused.
 func (s *Server) diskDownload(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
 	name := r.URL.Query().Get("name")
-	log := s.log.With("user", user.name, "address", clientAddress(set, r))
+	log := s.logFor(r).With("user", user.name, "address", clientAddress(set, r))
 	file, lease, err := set.disks.OpenRead(name)
 	if err != nil {
 		s.diskFailed(w, log, "download", name, err)

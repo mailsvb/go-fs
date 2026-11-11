@@ -112,7 +112,7 @@ func (j *jellyfinRequest) serve() {
 		j.page(nil, 0, 0)
 
 	default:
-		j.s.log.Debug("jellyfin unknown endpoint", "method", r.Method, "url", r.URL.Path,
+		j.s.logFor(r).Debug("jellyfin unknown endpoint", "method", r.Method, "url", r.URL.Path,
 			"client", j.client.Client)
 		http.NotFound(w, r)
 	}

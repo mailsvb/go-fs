@@ -7,13 +7,13 @@ package cleanup
 import (
 	"context"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -121,7 +121,7 @@ func (s *Sweeper) sweepOnce() {
 			s.log.Error("cleanup path is outside the base folder", "path", entry.Path)
 			continue
 		}
-		files, err := newestFirst(target.Path)
+		files, err := newestFirst(s.log, target.Path)
 		if err != nil {
 			s.log.Debug("cleanup cannot read the folder", "path", entry.Path, "error", err)
 			continue
@@ -131,7 +131,7 @@ func (s *Sweeper) sweepOnce() {
 		}
 		for _, name := range files[entry.Keep:] {
 			path := filepath.Join(target.Path, name)
-			if err := os.Remove(path); err != nil {
+			if err := logging.Remove(s.log, path); err != nil {
 				s.log.Error("cleanup cannot remove the file",
 					"path", entry.Path+"/"+name, "error", err)
 				continue
@@ -142,8 +142,8 @@ func (s *Sweeper) sweepOnce() {
 }
 
 // newestFirst names the regular files in folder, the newest first.
-func newestFirst(folder string) ([]string, error) {
-	items, err := os.ReadDir(folder)
+func newestFirst(log *slog.Logger, folder string) ([]string, error) {
+	items, err := logging.ReadDir(log, folder)
 	if err != nil {
 		return nil, err
 	}

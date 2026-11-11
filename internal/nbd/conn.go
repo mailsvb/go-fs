@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/disks"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/sparse"
 )
 
@@ -131,6 +132,7 @@ func (c *conn) negotiate() (bool, error) {
 		return false, fmt.Errorf("the client sent the unknown flags %#x", flags)
 	}
 	c.noZeroes = flags&clientFlagNoZeroes != 0
+	c.log.Debug("nbd client flags", "flags", fmt.Sprintf("%#x", flags), "noZeroes", c.noZeroes)
 
 	for {
 		var header [16]byte
@@ -149,6 +151,7 @@ func (c *conn) negotiate() (bool, error) {
 		if _, err := io.ReadFull(c.rw, data); err != nil {
 			return false, err
 		}
+		c.log.Debug("nbd <", "option", optionName(option), "bytes", length)
 
 		tlsDone := c.rw != c.raw
 		switch {
@@ -227,7 +230,9 @@ func (c *conn) startTLS(length uint32) error {
 	c.rw = server
 	id := c.identity()
 	c.log = c.log.With("user", id.account)
-	c.log.Debug("nbd login", "certificate", id.cert.SerialNumber.Text(16), "fingerprint", fingerprint(id.cert))
+	state := server.ConnectionState()
+	c.log.Debug("nbd login", "certificate", id.cert.SerialNumber.Text(16), "fingerprint", fingerprint(id.cert),
+		"tls", logging.TLS(&state))
 	return nil
 }
 
@@ -243,6 +248,7 @@ func (c *conn) reply(option, kind uint32, data []byte) error {
 	binary.BigEndian.PutUint32(b[12:], kind)
 	binary.BigEndian.PutUint32(b[16:], uint32(len(data)))
 	copy(b[20:], data)
+	c.log.Debug("nbd >", "option", optionName(option), "reply", replyName(kind), "bytes", len(data))
 	_, err := c.rw.Write(b)
 	return err
 }

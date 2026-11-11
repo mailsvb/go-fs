@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -183,7 +183,7 @@ func (s *Server) loadImportUpload(set *settings, w http.ResponseWriter, id strin
 	folder, ok := importUploadFolder(set.registry, id)
 	var record importUploadRecord
 	if ok {
-		data, err := os.ReadFile(filepath.Join(folder, uploadRecordFile))
+		data, err := logging.ReadFile(s.log, filepath.Join(folder, uploadRecordFile))
 		ok = err == nil && json.Unmarshal(data, &record) == nil && record.Owner == user.name
 	}
 	if !ok {
@@ -197,7 +197,7 @@ func (s *Server) loadImportUpload(set *settings, w http.ResponseWriter, id strin
 func (s *Server) registryImportUpload(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
 	w.Header().Set("Cache-Control", "no-store")
 	if user == nil {
-		s.log.Info("http registry import refused, no session of a registry account",
+		s.logFor(r).Info("http registry import refused, no session of a registry account",
 			"address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -212,8 +212,8 @@ func (s *Server) registryImportUpload(set *settings, w http.ResponseWriter, r *h
 		if !ok {
 			return
 		}
-		if err := os.RemoveAll(folder); err != nil {
-			s.log.Error("registry cannot remove an import upload", "path", folder, "error", err)
+		if err := logging.RemoveAll(s.logFor(r), folder); err != nil {
+			s.logFor(r).Error("registry cannot remove an import upload", "path", folder, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -251,18 +251,18 @@ func (s *Server) importUploadStart(set *settings, w http.ResponseWriter, r *http
 	record := importUploadRecord{Owner: user.name, Name: name, Size: body.Size, Started: time.Now().UTC()}
 	data, err := json.Marshal(record)
 	if err == nil {
-		err = os.MkdirAll(folder, 0o700)
+		err = logging.MkdirAll(s.logFor(r), folder, 0o700)
 	}
 	if err == nil {
-		err = writeFileAtomic(filepath.Join(folder, uploadRecordFile), data)
+		err = writeFileAtomic(s.logFor(r), filepath.Join(folder, uploadRecordFile), data)
 	}
 	if err != nil {
-		_ = os.RemoveAll(folder)
-		s.log.Error("registry cannot start an import upload", "error", err)
+		_ = logging.RemoveAll(s.logFor(r), folder)
+		s.logFor(r).Error("registry cannot start an import upload", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	s.log.Info("registry import upload started", "name", name, "bytes", body.Size, "user", user.name,
+	s.logFor(r).Info("registry import upload started", "name", name, "bytes", body.Size, "user", user.name,
 		"address", clientAddress(set, r))
 	writeJSON(w, http.StatusCreated, importUploadJSON{ID: id, ChunkSize: set.cfg.MaxChunkSize})
 }
@@ -301,13 +301,13 @@ func (s *Server) importUploadChunk(set *settings, w http.ResponseWriter, r *http
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if info, err := os.Stat(archive); err != nil || info.Size() != record.Size {
-		s.log.Error("registry import upload does not have the size it was started with",
+	if info, err := logging.Stat(s.logFor(r), archive); err != nil || info.Size() != record.Size {
+		s.logFor(r).Error("registry import upload does not have the size it was started with",
 			"name", record.Name, "want", record.Size, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	s.log.Info("registry import upload finished", "name", record.Name, "bytes", record.Size,
+	s.logFor(r).Info("registry import upload finished", "name", record.Name, "bytes", record.Size,
 		"user", user.name, "address", clientAddress(set, r))
 	w.WriteHeader(http.StatusCreated)
 }
@@ -335,7 +335,7 @@ func (s *Server) registryImport(set *settings, w http.ResponseWriter, r *http.Re
 			return
 		}
 		archive := filepath.Join(folder, importArchiveFile)
-		if info, err := os.Stat(archive); err != nil || info.Size() != record.Size {
+		if info, err := logging.Stat(s.logFor(r), archive); err != nil || info.Size() != record.Size {
 			http.Error(w, "The upload is not complete yet.", http.StatusConflict)
 			return
 		}
@@ -355,13 +355,13 @@ func (s *Server) registryImport(set *settings, w http.ResponseWriter, r *http.Re
 	job, err := s.startJob(jobImport, user.name, src.name+" → registry", func(ctx context.Context, job *registryJob) (string, error) {
 		message, err := s.importArchive(ctx, set, job, src, user)
 		if err != nil && ctx.Err() == nil {
-			s.log.Warn("registry import failed", "archive", src.name, "user", user.name,
+			s.logFor(r).Warn("registry import failed", "archive", src.name, "user", user.name,
 				"address", address, "error", err)
 		}
 		return message, err
 	})
 	if err == nil {
-		s.log.Info("registry import started", "archive", src.name, "bytes", src.size,
+		s.logFor(r).Info("registry import started", "archive", src.name, "bytes", src.size,
 			"uploaded", src.upload != "", "user", user.name, "address", address, "job", job.id)
 	}
 	s.answerStarted(w, job, err)
@@ -378,12 +378,12 @@ func (s *Server) importFile(set *settings, w http.ResponseWriter, r *http.Reques
 	}
 	cred := s.identify(set, w, r)
 	if !s.permits(set, cred.user, http.MethodGet, file.Virtual, actRead) {
-		s.log.Info("http registry import refused, the account may not read the file",
+		s.logFor(r).Info("http registry import refused, the account may not read the file",
 			"user", nameOf(cred.user), "file", file.Virtual, "address", clientAddress(set, r))
 		http.Error(w, "This account may not read that file.", http.StatusForbidden)
 		return importSource{}, false
 	}
-	info, err := os.Stat(file.Path)
+	info, err := logging.Stat(s.logFor(r), file.Path)
 	if err != nil || !info.Mode().IsRegular() {
 		http.Error(w, "That file is not there.", http.StatusNotFound)
 		return importSource{}, false
@@ -399,25 +399,25 @@ func (s *Server) importArchive(ctx context.Context, set *settings, job *registry
 	store := set.registry
 	started := time.Now()
 	dir := store.uploadPath(importStagingPrefix + job.id)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := logging.MkdirAll(s.log, dir, 0o700); err != nil {
 		return "", err
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer func() { _ = logging.RemoveAll(s.log, dir) }()
 	if src.upload != "" {
-		defer func() { _ = os.RemoveAll(src.upload) }()
+		defer func() { _ = logging.RemoveAll(s.log, src.upload) }()
 	}
 
-	file, err := os.Open(src.path)
+	file, err := logging.Open(s.log, src.path)
 	if err != nil {
 		return "", fmt.Errorf("the archive cannot be opened: %w", err)
 	}
 	job.setPhase(importReading, src.size)
 	count := func(n int64) { job.bytesDone.Add(n) }
-	archive, err := readImageArchive(ctx, &countingReader{r: file, count: count}, dir, src.name, set.cfg.MaxUploadSize)
+	archive, err := readImageArchive(ctx, &countingReader{r: file, count: count}, dir, src.name, set.cfg.MaxUploadSize, s.log)
 	_ = file.Close()
 	if src.upload != "" {
 		// staged, the upload is only taking room twice
-		_ = os.RemoveAll(src.upload)
+		_ = logging.RemoveAll(s.log, src.upload)
 	}
 	if err != nil {
 		return "", err
@@ -582,7 +582,7 @@ func (s *Server) storeImport(store *registryStore, archive *imageArchive, plans 
 			return fmt.Errorf("the blob %s is not in the archive", blob.Digest)
 		}
 		if _, err := store.blobInfo(blob.Digest); err != nil {
-			if err := syncFile(file.path); err != nil {
+			if err := syncFile(s.log, file.path); err != nil {
 				return err
 			}
 		}
@@ -663,7 +663,7 @@ func (s *Server) registryImportConfirm(set *settings, w http.ResponseWriter, r *
 			targets = append(targets, target.String())
 		}
 	}
-	s.log.Info("registry import confirmed", "job", job.id, "targets", strings.Join(targets, ","),
+	s.logFor(r).Info("registry import confirmed", "job", job.id, "targets", strings.Join(targets, ","),
 		"user", user.name, "address", clientAddress(set, r))
 	writeJSON(w, http.StatusAccepted, job.view())
 }

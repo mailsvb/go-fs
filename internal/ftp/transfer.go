@@ -10,6 +10,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // cmdRetr handles RETR.
@@ -23,7 +25,7 @@ func cmdRetr(c *conn, arg string) {
 		c.reply("550", fmt.Sprintf("Transfer failed %q", arg))
 		return
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(c.log, target.Path)
 	if err != nil || !info.Mode().IsRegular() {
 		c.log.Debug("ftp RETR file not found", "path", target.Virtual, "error", err)
 		c.reply("550", "File not found")
@@ -31,7 +33,7 @@ func cmdRetr(c *conn, arg string) {
 	}
 
 	c.withData("", func(data net.Conn) (string, string) {
-		file, err := os.Open(target.Path)
+		file, err := logging.Open(c.log, target.Path)
 		if err != nil {
 			c.log.Warn("ftp cannot open the file", "file", target.Virtual, "error", err)
 			return "550", fmt.Sprintf("Transfer failed %q", arg)
@@ -88,7 +90,7 @@ func cmdStor(kind string) handler {
 			c.reply("550", fmt.Sprintf("Transfer failed %q", name))
 			return
 		}
-		_, statErr := os.Stat(target.Path)
+		_, statErr := logging.Stat(c.log, target.Path)
 		exists := statErr == nil
 		if exists && !c.perms.FileOverwrite {
 			c.log.Debug("ftp store refused, the file exists and the account may not overwrite",
@@ -143,14 +145,14 @@ func cmdStor(kind string) handler {
 // has to seek into the existing file instead.
 func (c *conn) openForWrite(osPath string, appending, exists bool, offset int64) (*os.File, error) {
 	if appending {
-		return os.OpenFile(osPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+		return logging.OpenFile(c.log, osPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	}
 	if offset > 0 {
 		flags := os.O_WRONLY | os.O_CREATE
 		if !exists {
 			flags |= os.O_TRUNC
 		}
-		file, err := os.OpenFile(osPath, flags, 0o644)
+		file, err := logging.OpenFile(c.log, osPath, flags, 0o644)
 		if err != nil {
 			return nil, err
 		}
@@ -160,7 +162,7 @@ func (c *conn) openForWrite(osPath string, appending, exists bool, offset int64)
 		}
 		return file, nil
 	}
-	return os.OpenFile(osPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	return logging.OpenFile(c.log, osPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 }
 
 // uniqueName picks a name that does not exist yet, for STOU.
@@ -179,7 +181,7 @@ func (c *conn) uniqueName(base string) (string, bool) {
 		if !target.Valid {
 			return "", false
 		}
-		if _, err := os.Stat(target.Path); err != nil {
+		if _, err := logging.Stat(c.log, target.Path); err != nil {
 			return candidate, true
 		}
 	}

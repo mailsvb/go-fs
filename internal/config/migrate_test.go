@@ -284,7 +284,7 @@ baseFolderTemp = "/new-temp"
 			if err := os.WriteFile(path, []byte(tc.file), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			changes, err := Migrate(path)
+			changes, err := Migrate(path, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -304,7 +304,7 @@ baseFolderTemp = "/new-temp"
 			}
 
 			// a second run has nothing left to do
-			again, err := Migrate(path)
+			again, err := Migrate(path, nil)
 			if err != nil || len(again) != 0 {
 				t.Errorf("a second run changed %q, %v", again, err)
 			}
@@ -320,7 +320,7 @@ func TestMigrateLeavesACurrentFileAlone(t *testing.T) {
 	if err := os.WriteFile(path, []byte(file), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	changes, err := Migrate(path)
+	changes, err := Migrate(path, nil)
 	if err != nil || len(changes) != 0 {
 		t.Fatalf("Migrate = %q, %v; want nothing", changes, err)
 	}
@@ -354,7 +354,7 @@ func TestMigrateKeepsTheConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Migrate(path); err != nil {
+	if _, err := Migrate(path, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -387,7 +387,7 @@ func TestMigrateRefusesWhatItCannotEdit(t *testing.T) {
 	if err := os.WriteFile(path, []byte(file), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Migrate(path); err == nil {
+	if _, err := Migrate(path, nil); err == nil {
 		t.Fatal("Migrate edited a file it cannot have understood")
 	}
 	if got, _ := os.ReadFile(path); string(got) != file {
