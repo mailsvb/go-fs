@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -300,8 +301,10 @@ func (c *conn) dispatch(line string) {
 
 	c.commands++
 	logged := strings.TrimSpace(line)
-	if name == "PASS" {
-		logged = "PASS ***"
+	if name == "PASS" || name == "ACCT" {
+		// ACCT is answered without being read, but a client may still send
+		// a password in it
+		logged = name + " " + logging.Masked
 	}
 	c.log.Debug("ftp <", "command", logged)
 

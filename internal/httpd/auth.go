@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/mp3edit"
 	"github.com/mailsvb/go-fs/internal/secrets"
 	"github.com/mailsvb/go-fs/internal/vfs"
@@ -799,8 +800,8 @@ func (s *Server) checkDigest(set *settings, r *http.Request, header string) (*ac
 	// are accepted; either way the path is bound to the response
 	uri := params["uri"]
 	if uri != r.URL.RequestURI() && uri != r.URL.Path {
-		s.log.Debug("http digest uri does not match the request", "uri", uri,
-			"requested", r.URL.RequestURI(), "user", params["username"], "address", clientAddress(set, r))
+		s.log.Debug("http digest uri does not match the request", "uri", logging.URLString(uri),
+			"requested", logging.URL(r.URL), "user", params["username"], "address", clientAddress(set, r))
 		return nil, false
 	}
 	fresh, ours := s.nonceState(params["nonce"])

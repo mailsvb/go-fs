@@ -587,7 +587,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	set := s.settings()
 	// client keeps the port, which is what ties the records of one connection
 	// together on a busy server, as it does for the FTP trace
-	s.log.Debug("http request", "method", r.Method, "url", r.URL.RequestURI(),
+	// the query is shown with its credentials masked: a Subsonic password,
+	// a Jellyfin api_key, the key of a share link, an S3 signature
+	s.log.Debug("http request", "method", r.Method, "url", logging.URL(r.URL),
 		"client", r.RemoteAddr, "proto", r.Proto, "tls", r.TLS != nil,
 		"userAgent", r.UserAgent(), "contentLength", r.ContentLength)
 
