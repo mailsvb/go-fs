@@ -148,28 +148,28 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 	// multipart is the other content type a cross site form can post, so what
 	// is accepted here is narrowed to the one the login form actually sends
 	if kind := r.Header.Get("Content-Type"); !strings.HasPrefix(kind, "application/x-www-form-urlencoded") {
-		s.log.Debug("http login form has the wrong content type", "contentType", kind,
+		s.logFor(r).Debug("http login form has the wrong content type", "contentType", kind,
 			"address", clientAddress(set, r))
 		http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType)
 		return
 	}
 	// refused before the form is read: nothing it says is looked at
 	if remaining, locked := s.lockedOut(set, r); locked {
-		s.log.Info("http login refused, the address is locked out", "method", "form",
+		s.logFor(r).Info("http login refused, the address is locked out", "method", "form",
 			"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
 		s.loginPage(w, r, target, lockoutMessage(remaining))
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBody)
 	if err := r.ParseForm(); err != nil {
-		s.log.Debug("http login form cannot be read", "error", err, "address", clientAddress(set, r))
+		s.logFor(r).Debug("http login form cannot be read", "error", err, "address", clientAddress(set, r))
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
 
 	user := s.checkLogin(set, r.PostFormValue("username"), r.PostFormValue("password"))
 	if user == nil {
-		s.log.Info("http login refused", "user", r.PostFormValue("username"),
+		s.logFor(r).Info("http login refused", "user", r.PostFormValue("username"),
 			"method", "form", "address", clientAddress(set, r))
 		s.recordFailure(set, r)
 		if delay := set.cfg.LoginFailureDelay; delay > 0 {
@@ -184,7 +184,7 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 
 	s.logins.clear(clientAddress(set, r))
 	if err := s.setSession(set, w, r, user); err != nil {
-		s.log.Error("http cannot create a session token", "error", err)
+		s.logFor(r).Error("http cannot create a session token", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -216,7 +216,7 @@ func (s *Server) handleLogout(set *settings, w http.ResponseWriter, r *http.Requ
 	}
 	s.clearSession(w)
 	clearCookie(w, legacyCookie)
-	s.log.Info("http logout", "user", name, "address", clientAddress(set, r))
+	s.logFor(r).Info("http logout", "user", name, "address", clientAddress(set, r))
 	http.Redirect(w, r, cleanURL(r.URL), http.StatusSeeOther)
 }
 
@@ -226,7 +226,7 @@ func (s *Server) handleLogout(set *settings, w http.ResponseWriter, r *http.Requ
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request, target vfs.Target, message string) {
 	nonce, err := pageNonce()
 	if err != nil {
-		s.log.Error("http cannot render the login page", "error", err)
+		s.logFor(r).Error("http cannot render the login page", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -245,7 +245,7 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request, target vfs.Ta
 		Style:   listingStyle,
 	})
 	if err != nil {
-		s.log.Error("http cannot render the login page", "error", err)
+		s.logFor(r).Error("http cannot render the login page", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}

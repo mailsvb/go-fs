@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/net/webdav"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -147,7 +148,7 @@ func (s *Server) serveDAV(set *settings, w http.ResponseWriter, r *http.Request,
 		LockSystem: s.dav.locks,
 		Logger: func(r *http.Request, err error) {
 			if err != nil {
-				s.log.Debug("webdav request failed", "user", nameOf(user), "method", r.Method,
+				s.logFor(r).Debug("webdav request failed", "user", nameOf(user), "method", r.Method,
 					"path", r.URL.Path, "address", clientAddress(set, r), "error", err)
 			}
 		},
@@ -163,7 +164,7 @@ func (s *Server) serveDAV(set *settings, w http.ResponseWriter, r *http.Request,
 // since a refusal halfway would come after the removal.
 func (s *Server) davChecked(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) bool {
 	refuse := func(path string) bool {
-		s.log.Debug("webdav request not allowed for the account",
+		s.logFor(r).Debug("webdav request not allowed for the account",
 			"user", nameOf(user), "method", r.Method, "path", path)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return false
@@ -176,7 +177,7 @@ func (s *Server) davChecked(set *settings, w http.ResponseWriter, r *http.Reques
 		// request without a Depth asks for; Explorer and Finder send 0 or 1,
 		// and anything deeper walks the whole tree for one request
 		if depth := r.Header.Get("Depth"); depth != "0" && depth != "1" {
-			s.log.Debug("webdav propfind refused, the depth is infinite", "path", target.Virtual)
+			s.logFor(r).Debug("webdav propfind refused, the depth is infinite", "path", target.Virtual)
 			w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="utf-8"?>`+
@@ -200,7 +201,7 @@ func (s *Server) davChecked(set *settings, w http.ResponseWriter, r *http.Reques
 		if target.IsRoot() {
 			return refuse(target.Virtual)
 		}
-		if _, err := os.Lstat(target.Path); err != nil {
+		if _, err := logging.Lstat(s.logFor(r), target.Path); err != nil {
 			// what is not there is the WebDAV package's to answer
 			return true
 		}
@@ -220,7 +221,7 @@ func (s *Server) davCheckedTransfer(set *settings, w http.ResponseWriter, r *htt
 	target vfs.Target, user *account, refuse func(string) bool) bool {
 	destination, ok := s.davDestination(r)
 	if !ok {
-		s.log.Debug("webdav destination refused", "method", r.Method, "from", target.Virtual,
+		s.logFor(r).Debug("webdav destination refused", "method", r.Method, "from", target.Virtual,
 			"destination", r.Header.Get("Destination"))
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return false
@@ -228,7 +229,7 @@ func (s *Server) davCheckedTransfer(set *settings, w http.ResponseWriter, r *htt
 	if target.IsRoot() || destination.IsRoot() {
 		return refuse(destination.Virtual)
 	}
-	source, err := os.Lstat(target.Path)
+	source, err := logging.Lstat(s.logFor(r), target.Path)
 	if err != nil {
 		// what is not there is the WebDAV package's to answer
 		return true
@@ -246,7 +247,7 @@ func (s *Server) davCheckedTransfer(set *settings, w http.ResponseWriter, r *htt
 			s.davRenameCase(set, w, r, target, destination, user)
 			return false
 		}
-		s.log.Debug("webdav transfer onto itself refused", "method", r.Method,
+		s.logFor(r).Debug("webdav transfer onto itself refused", "method", r.Method,
 			"from", target.Virtual, "to", destination.Virtual)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return false
@@ -269,7 +270,7 @@ func (s *Server) davCheckedTransfer(set *settings, w http.ResponseWriter, r *htt
 			return refuse(destination.Virtual)
 		}
 	}
-	if _, err := os.Lstat(destination.Path); err == nil && overwrite {
+	if _, err := logging.Lstat(s.logFor(r), destination.Path); err == nil && overwrite {
 		if err := s.davRemovable(set, user, destination); err != nil {
 			return refuse(destination.Virtual)
 		}
@@ -308,12 +309,12 @@ func (s *Server) davRenameCase(set *settings, w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer release()
-	if err := os.Rename(from.Path, to.Path); err != nil {
-		s.log.Error("webdav move failed", "from", from.Virtual, "to", to.Virtual, "error", err)
+	if err := logging.Rename(s.logFor(r), from.Path, to.Path); err != nil {
+		s.logFor(r).Error("webdav move failed", "from", from.Virtual, "to", to.Virtual, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	s.log.Info("webdav move", "user", nameOf(user), "from", from.Virtual, "to", to.Virtual,
+	s.logFor(r).Info("webdav move", "user", nameOf(user), "from", from.Virtual, "to", to.Virtual,
 		"address", clientAddress(set, r))
 	w.WriteHeader(http.StatusCreated)
 }

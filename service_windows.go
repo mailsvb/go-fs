@@ -3,10 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -14,6 +18,63 @@ import (
 
 // serviceName is what the installer registers the service as.
 const serviceName = "go-fs"
+
+// serviceLog takes the trace of what the service manager asks and is told.
+// The service starts answering it before the configuration is read, so
+// before there is a logger: what happens until then is not traced.
+var serviceLog atomic.Pointer[slog.Logger]
+
+// traceService has the conversation with the service manager traced to log
+// from now on.
+func traceService(log *slog.Logger) {
+	serviceLog.Store(log)
+}
+
+// traceStatus tells the service manager a status, with the status traced.
+func traceStatus(status chan<- svc.Status, next svc.Status) {
+	if log := serviceLog.Load(); log != nil {
+		log.Debug("service >", "state", stateName(next.State), "accepts", uint32(next.Accepts), "waitHint", next.WaitHint)
+	}
+	status <- next
+}
+
+func stateName(state svc.State) string {
+	switch state {
+	case svc.Stopped:
+		return "stopped"
+	case svc.StartPending:
+		return "start pending"
+	case svc.StopPending:
+		return "stop pending"
+	case svc.Running:
+		return "running"
+	case svc.ContinuePending:
+		return "continue pending"
+	case svc.PausePending:
+		return "pause pending"
+	case svc.Paused:
+		return "paused"
+	}
+	return fmt.Sprintf("state %d", state)
+}
+
+func commandName(cmd svc.Cmd) string {
+	switch cmd {
+	case svc.Stop:
+		return "stop"
+	case svc.Pause:
+		return "pause"
+	case svc.Continue:
+		return "continue"
+	case svc.Interrogate:
+		return "interrogate"
+	case svc.Shutdown:
+		return "shutdown"
+	case svc.PreShutdown:
+		return "preshutdown"
+	}
+	return fmt.Sprintf("command %d", cmd)
+}
 
 // start runs go-fs, under the service manager when that is what started it.
 // A service has to answer the service manager from its first moments on, or
@@ -46,24 +107,28 @@ type serviceHandler struct {
 
 func (h *serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest,
 	status chan<- svc.Status) (bool, uint32) {
-	status <- svc.Status{State: svc.StartPending}
+	traceStatus(status, svc.Status{State: svc.StartPending})
 
 	stop := make(chan struct{})
 	var once sync.Once
 	done := make(chan error, 1)
 	go func() { done <- run(stop) }()
 
-	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	traceStatus(status, svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown})
 	for {
 		select {
 		case err := <-done:
 			h.err = err
-			status <- svc.Status{State: svc.StopPending}
+			traceStatus(status, svc.Status{State: svc.StopPending})
 			if errors.Is(err, errRestartService) {
 				// the update is in place; ending with an error has the
 				// service manager start the service again on it
 				h.err = nil
-				if err := restartOnFailure(); err != nil {
+				err := restartOnFailure()
+				if log := serviceLog.Load(); log != nil {
+					logging.Syscall(log, "set recovery actions", err, slog.String("service", serviceName))
+				}
+				if err != nil {
 					fmt.Fprintln(errorOutput, "go-fs: the service may not be restarted:", err)
 				}
 				return true, 1
@@ -76,13 +141,16 @@ func (h *serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest,
 			}
 			return false, 0
 		case request := <-requests:
+			if log := serviceLog.Load(); log != nil {
+				log.Debug("service <", "command", commandName(request.Cmd), "eventType", request.EventType)
+			}
 			switch request.Cmd {
 			case svc.Interrogate:
-				status <- request.CurrentStatus
+				traceStatus(status, request.CurrentStatus)
 			case svc.Stop, svc.Shutdown:
 				// the shutdown waits for the servers to close, which is
 				// worth telling the service manager before it gives up
-				status <- svc.Status{State: svc.StopPending, WaitHint: 30000}
+				traceStatus(status, svc.Status{State: svc.StopPending, WaitHint: 30000})
 				once.Do(func() { close(stop) })
 			}
 		}

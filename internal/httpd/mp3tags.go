@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/mp3edit"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -116,12 +117,12 @@ func (s *Server) handleMP3Tags(set *settings, w http.ResponseWriter, r *http.Req
 		may = may && s.permits(set, user, http.MethodPut, target.Virtual, actOverwrite)
 	}
 	if !may {
-		s.log.Debug("http mp3 tags not allowed for the account", "user", nameOf(user),
+		s.logFor(r).Debug("http mp3 tags not allowed for the account", "user", nameOf(user),
 			"part", part, "path", target.Virtual)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(s.logFor(r), target.Path)
 	if err != nil || (part == mp3PartAlbum) != info.IsDir() ||
 		(!info.IsDir() && (!info.Mode().IsRegular() || !mp3edit.IsMP3(info.Name()))) {
 		http.NotFound(w, r)
@@ -136,7 +137,7 @@ func (s *Server) handleMP3Tags(set *settings, w http.ResponseWriter, r *http.Req
 				!s.permits(set, user, http.MethodPut, member.Virtual, actOverwrite) {
 				return mp3edit.Source{}, fs.ErrNotExist
 			}
-			found, err := os.Stat(member.Path)
+			found, err := logging.Stat(s.logFor(r), member.Path)
 			if err != nil || !found.Mode().IsRegular() {
 				return mp3edit.Source{}, fs.ErrNotExist
 			}
@@ -360,7 +361,7 @@ func (s *Server) serveMP3(w http.ResponseWriter, r *http.Request, part string, t
 			s.mp3Failure(w, t, "analyze", err)
 			return
 		}
-		s.log.Debug("http mp3 analyzed", "user", t.user, "file", t.label, "steps", analysis.Track.Steps,
+		s.logFor(r).Debug("http mp3 analyzed", "user", t.user, "file", t.label, "steps", analysis.Track.Steps,
 			"address", t.address, "took", time.Since(started).Round(time.Millisecond))
 		writeJSON(w, http.StatusOK, analysis)
 	case part == mp3PartAlbum:
@@ -418,7 +419,7 @@ func (s *Server) saveMP3(w http.ResponseWriter, r *http.Request, t mp3Target) {
 		}
 	}
 	if changedSince(r, t.source.ModTime) {
-		s.log.Info("http mp3 tags refused, the file changed since it was read", "user", t.user,
+		s.logFor(r).Info("http mp3 tags refused, the file changed since it was read", "user", t.user,
 			"file", t.label, "address", t.address)
 		http.Error(w, "The file was changed since it was opened.", http.StatusPreconditionFailed)
 		return
@@ -433,7 +434,7 @@ func (s *Server) saveMP3(w http.ResponseWriter, r *http.Request, t mp3Target) {
 		s.mp3Failure(w, t, "save", err)
 		return
 	}
-	s.log.Info("http mp3 tags", "user", t.user, "file", t.label, "steps", edit.Steps,
+	s.logFor(r).Info("http mp3 tags", "user", t.user, "file", t.label, "steps", edit.Steps,
 		"address", t.address, "took", time.Since(started).Round(time.Millisecond))
 	w.WriteHeader(http.StatusNoContent)
 }

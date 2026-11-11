@@ -85,7 +85,7 @@ func New(cfg config.NBD, users []config.User, logger *slog.Logger) (*Server, err
 	if cfg.DisksFolder == "" {
 		return nil, errors.New("nbd needs general.baseFolderDisks")
 	}
-	folder, err := disks.Open(cfg.DisksFolder)
+	folder, err := disks.Open(cfg.DisksFolder, logger)
 	if err != nil {
 		return nil, fmt.Errorf("general.baseFolderDisks: %w", err)
 	}

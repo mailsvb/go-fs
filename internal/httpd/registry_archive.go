@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -26,6 +27,8 @@ import (
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/ulikunitz/xz"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // An image archive is what docker save, podman save, skopeo copy, ctr images
@@ -139,6 +142,8 @@ type layerCheck struct {
 
 // imageArchive is what reading an archive found.
 type imageArchive struct {
+	// log takes the trace of the files the archive is staged in
+	log    *slog.Logger
 	format string
 	images []archiveImage
 
@@ -171,8 +176,8 @@ func (a *imageArchive) verifySize() int64 {
 // readImageArchive reads an archive into dir and finds the images in it.
 // name is the file it came from. An archive that is not one, or is damaged,
 // is an error that says why, and leaves dir empty.
-func readImageArchive(ctx context.Context, r io.Reader, dir, name string, maxEntrySize int64) (*imageArchive, error) {
-	a := &imageArchive{dir: dir, name: name, files: map[string]*stagedFile{},
+func readImageArchive(ctx context.Context, r io.Reader, dir, name string, maxEntrySize int64, log *slog.Logger) (*imageArchive, error) {
+	a := &imageArchive{dir: dir, name: name, log: logging.OrDiscard(log), files: map[string]*stagedFile{},
 		links: map[string]string{}, blobs: map[digest.Digest]*stagedFile{}}
 	err := a.read(ctx, r, maxEntrySize)
 	if err == nil {
@@ -187,9 +192,9 @@ func readImageArchive(ctx context.Context, r io.Reader, dir, name string, maxEnt
 
 // discard removes what was staged.
 func (a *imageArchive) discard() {
-	entries, _ := os.ReadDir(a.dir)
+	entries, _ := logging.ReadDir(a.log, a.dir)
 	for _, entry := range entries {
-		_ = os.RemoveAll(filepath.Join(a.dir, entry.Name()))
+		_ = logging.RemoveAll(a.log, filepath.Join(a.dir, entry.Name()))
 	}
 }
 
@@ -458,7 +463,7 @@ func (a *imageArchive) read(ctx context.Context, r io.Reader, maxEntrySize int64
 // on the way.
 func (a *imageArchive) stage(r io.Reader, name string, n int) (*stagedFile, error) {
 	staged := filepath.Join(a.dir, strconv.Itoa(n))
-	out, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	out, err := logging.OpenFile(a.log, staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -478,7 +483,7 @@ func (a *imageArchive) stage(r io.Reader, name string, n int) (*stagedFile, erro
 		err = closeErr
 	}
 	if err != nil {
-		_ = os.Remove(staged)
+		_ = logging.Remove(a.log, staged)
 		return nil, fmt.Errorf("%s cannot be read from the archive: %w", name, err)
 	}
 	file := &stagedFile{path: staged, size: size, sha256: digest.NewDigest(digest.SHA256, sum), magic: head.b}
@@ -487,7 +492,7 @@ func (a *imageArchive) stage(r io.Reader, name string, n int) (*stagedFile, erro
 	}
 	// a file the archive has twice, under two names, is kept once
 	if had, ok := a.blobs[file.sha256]; ok && had.size == size {
-		_ = os.Remove(staged)
+		_ = logging.Remove(a.log, staged)
 		if file.sha512 != "" && had.sha512 == "" {
 			had.sha512 = file.sha512
 			a.blobs[had.sha512] = had
@@ -1002,7 +1007,7 @@ func (a *imageArchive) verifyLayers(ctx context.Context, count func(int64)) erro
 			}
 			continue
 		}
-		file, err := os.Open(check.file.path)
+		file, err := logging.Open(a.log, check.file.path)
 		if err != nil {
 			return err
 		}

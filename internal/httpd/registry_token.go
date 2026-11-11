@@ -166,7 +166,7 @@ func (s *Server) handleRegistryToken(set *settings, w http.ResponseWriter, r *ht
 	header := r.Header.Get("Authorization")
 	if strings.HasPrefix(header, "Basic ") {
 		if remaining, locked := s.lockedOut(set, r); locked {
-			s.log.Info("http login refused, the address is locked out", "method", "registry",
+			s.logFor(r).Info("http login refused, the address is locked out", "method", "registry",
 				"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
 			w.Header().Set("Retry-After", strconv.Itoa(retryAfter(remaining)))
 			writeRegistryError(w, r, regErr(http.StatusTooManyRequests, "TOOMANYREQUESTS",
@@ -184,14 +184,14 @@ func (s *Server) handleRegistryToken(set *settings, w http.ResponseWriter, r *ht
 			// the right password of an account without registry: it may pull
 			// where anyone may, and nothing more
 			if !set.cfg.RegistryAnonymousRead {
-				s.log.Info("registry refused an account that does not set registry", "user", name,
+				s.logFor(r).Info("registry refused an account that does not set registry", "user", name,
 					"method", r.Method, "path", r.URL.Path, "address", clientAddress(set, r))
 				writeRegistryError(w, r, regErr(http.StatusForbidden, "DENIED",
 					"requested access to the resource is denied"))
 				return
 			}
 		default:
-			s.log.Info("http login refused", "user", name, "method", "registry",
+			s.logFor(r).Info("http login refused", "user", name, "method", "registry",
 				"address", clientAddress(set, r))
 			s.recordFailure(set, r)
 			s.basicChallenge(set, w, r, true)
@@ -203,11 +203,11 @@ func (s *Server) handleRegistryToken(set *settings, w http.ResponseWriter, r *ht
 	}
 	token, expires, err := s.tokens.mintRegistry(user, registryTokenLifetime)
 	if err != nil {
-		s.log.Error("registry cannot sign a token", "error", err)
+		s.logFor(r).Error("registry cannot sign a token", "error", err)
 		writeRegistryError(w, r, errRegistryInternal)
 		return
 	}
-	s.log.Debug("registry token issued", "user", nameOf(user), "scope", r.URL.Query().Get("scope"),
+	s.logFor(r).Debug("registry token issued", "user", nameOf(user), "scope", r.URL.Query().Get("scope"),
 		"address", clientAddress(set, r))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":        token,

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/opencontainers/go-digest"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // sweepRegistry keeps the registry folder from growing without bound: it
@@ -48,7 +50,7 @@ func (s *Server) cleanRegistryNow(store *registryStore) (int, int64) {
 // upload that is still arriving is never taken for an abandoned one.
 func (s *Server) sweepRegistryUploads(store *registryStore, cutoff time.Time) {
 	folder := store.uploadsPath()
-	entries, err := os.ReadDir(folder)
+	entries, err := logging.ReadDir(s.log, folder)
 	if err != nil {
 		return
 	}
@@ -59,7 +61,7 @@ func (s *Server) sweepRegistryUploads(store *registryStore, cutoff time.Time) {
 		}
 		// a loose file is what a manifest being stored left behind when the
 		// server stopped halfway through writing it
-		if err := os.RemoveAll(path); err != nil {
+		if err := logging.RemoveAll(s.log, path); err != nil {
 			s.log.Error("registry cleanup cannot remove an abandoned upload", "path", path, "error", err)
 			continue
 		}
@@ -130,7 +132,7 @@ func (s *Server) collectRegistryGarbage(store *registryStore, cutoff time.Time) 
 			case link.changed.After(cutoff):
 				marked[link.digest] = true
 			default:
-				if err := os.Remove(store.layerPath(name, link.digest)); err == nil {
+				if err := logging.Remove(s.log, store.layerPath(name, link.digest)); err == nil {
 					s.log.Debug("registry cleanup removed an unreferenced link",
 						"repository", name, "digest", link.digest.String())
 				}
@@ -140,7 +142,7 @@ func (s *Server) collectRegistryGarbage(store *registryStore, cutoff time.Time) 
 
 	removed, freed := 0, int64(0)
 	blobs := filepath.Join(store.base, "blobs")
-	_ = filepath.WalkDir(blobs, func(path string, entry fs.DirEntry, err error) error {
+	_ = logging.WalkDir(s.log, blobs, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return nil
 		}
@@ -160,13 +162,13 @@ func (s *Server) collectRegistryGarbage(store *registryStore, cutoff time.Time) 
 		if err != nil || info.ModTime().After(cutoff) {
 			return nil
 		}
-		if err := os.Remove(path); err != nil {
+		if err := logging.Remove(s.log, path); err != nil {
 			s.log.Error("registry cleanup cannot remove a blob", "digest", d.String(), "error", err)
 			return nil
 		}
 		// the fan-out folder goes with its last blob; a folder that still
 		// holds one is not removed
-		_ = os.Remove(filepath.Dir(path))
+		_ = logging.Remove(s.log, filepath.Dir(path))
 		removed++
 		freed += info.Size()
 		s.log.Info("registry cleanup removed an unreferenced blob", "digest", d.String(),
@@ -219,13 +221,13 @@ type blobLink struct {
 // links lists the blobs a repository links to.
 func (st *registryStore) links(name string) []blobLink {
 	root := filepath.Join(st.repoPath(name), "_layers")
-	algorithms, err := os.ReadDir(root)
+	algorithms, err := logging.ReadDir(st.log, root)
 	if err != nil {
 		return nil
 	}
 	var found []blobLink
 	for _, algorithm := range algorithms {
-		entries, err := os.ReadDir(filepath.Join(root, algorithm.Name()))
+		entries, err := logging.ReadDir(st.log, filepath.Join(root, algorithm.Name()))
 		if err != nil {
 			continue
 		}
@@ -246,7 +248,7 @@ func (st *registryStore) links(name string) []blobLink {
 func (st *registryStore) repositoryFolders() ([]string, error) {
 	root := filepath.Join(st.base, "repositories")
 	var names []string
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	err := logging.WalkDir(st.log, root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) && path == root {
 				return filepath.SkipDir
@@ -260,7 +262,7 @@ func (st *registryStore) repositoryFolders() ([]string, error) {
 			return filepath.SkipDir
 		}
 		for _, own := range []string{"_manifests", "_layers", registryTagsFile} {
-			if _, err := os.Stat(filepath.Join(path, own)); err == nil {
+			if _, err := logging.Stat(st.log, filepath.Join(path, own)); err == nil {
 				rel, err := filepath.Rel(root, path)
 				if err != nil {
 					return err

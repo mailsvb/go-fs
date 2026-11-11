@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -89,7 +91,7 @@ func fetchGranted(user *account, virtual string, act action) bool {
 // handleFetch answers the fetch endpoints, on a folder.
 func (s *Server) handleFetch(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, cred credential, action string) {
 	w.Header().Set("Cache-Control", "no-store")
-	if info, err := os.Stat(target.Path); err != nil || !info.IsDir() {
+	if info, err := logging.Stat(s.logFor(r), target.Path); err != nil || !info.IsDir() {
 		http.NotFound(w, r)
 		return
 	}
@@ -120,7 +122,7 @@ func (s *Server) handleFetch(set *settings, w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if job.dismiss() {
-			s.log.Info("http "+job.kind+" stopped", "job", job.id, "what", job.what, "user", cred.user.name)
+			s.logFor(r).Info("http "+job.kind+" stopped", "job", job.id, "what", job.what, "user", cred.user.name)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -295,19 +297,20 @@ func newFetchTransport(base http.RoundTripper) http.RoundTripper {
 }
 
 // fetchClientFor is the client of a fetch, by whether it validates the
-// connection.
-func fetchClientFor(skipVerify bool) *http.Client {
+// connection, with every request it sends traced to log.
+func fetchClientFor(skipVerify bool, log *slog.Logger) *http.Client {
+	base := fetchClient
 	if skipVerify {
-		return insecureFetchClient
+		base = insecureFetchClient
 	}
-	return fetchClient
+	return &http.Client{Transport: logging.Transport(log, "fetch", base.Transport), CheckRedirect: base.CheckRedirect}
 }
 
 // fetchStart starts a fetch into a folder.
 func (s *Server) fetchStart(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, cred credential) {
 	folder := vfs.AsFolder(target.Virtual)
 	if !mayFetch(cred, folder) {
-		s.log.Info("http fetch refused, no session of an account that may create here",
+		s.logFor(r).Info("http fetch refused, no session of an account that may create here",
 			"user", nameOf(cred.user), "folder", folder, "address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -340,13 +343,13 @@ func (s *Server) fetchStart(set *settings, w http.ResponseWriter, r *http.Reques
 			message, err = s.fetchFile(ctx, set, job, fetch, folder, user, address)
 		}
 		if err != nil && ctx.Err() == nil {
-			s.log.Warn("http fetch failed", "url", shown, "folder", folder, "user", user.name,
+			s.logFor(r).Warn("http fetch failed", "url", shown, "folder", folder, "user", user.name,
 				"address", address, "error", err)
 		}
 		return message, err
 	})
 	if err == nil {
-		s.log.Info("http fetch started", "url", shown, "folder", folder, "headers", len(fetch.header),
+		s.logFor(r).Info("http fetch started", "url", shown, "folder", folder, "headers", len(fetch.header),
 			"login", fetch.username != "", "verify", !fetch.skipVerify, "media", fetch.media,
 			"user", user.name, "address", address, "job", job.id)
 	}
@@ -369,7 +372,7 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 	if fetch.username != "" || fetch.password != "" {
 		req.SetBasicAuth(fetch.username, fetch.password)
 	}
-	res, err := fetchClientFor(fetch.skipVerify).Do(req)
+	res, err := fetchClientFor(fetch.skipVerify, s.log).Do(req)
 	if err != nil {
 		var urlErr *url.Error
 		if errors.As(err, &urlErr) {
@@ -402,7 +405,7 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 		return "", fetchTooLarge(name, limit)
 	}
 	if res.ContentLength > 0 {
-		if err := checkRoom(set, filepath.Dir(target.Path), folder, res.ContentLength, res.ContentLength); err != nil {
+		if err := checkRoom(s.log, set, filepath.Dir(target.Path), folder, res.ContentLength, res.ContentLength); err != nil {
 			return "", err
 		}
 	}
@@ -432,15 +435,15 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 func (s *Server) storeFetched(set *settings, job *registryJob, body io.Reader, cancel context.CancelCauseFunc,
 	target vfs.Target, name, from string, user *account) (int64, bool, error) {
 	staging := stagingFolder(set)
-	if err := os.MkdirAll(staging, 0o755); err != nil {
+	if err := logging.MkdirAll(s.log, staging, 0o755); err != nil {
 		return 0, false, err
 	}
-	staged, err := os.CreateTemp(staging, "fetch-*")
+	staged, err := logging.CreateTemp(s.log, staging, "fetch-*")
 	if err != nil {
 		return 0, false, err
 	}
 	stagedPath := staged.Name()
-	defer func() { _ = os.Remove(stagedPath) }()
+	defer func() { _ = logging.Remove(s.log, stagedPath) }()
 	// a temporary file is the owner's alone, and this one is about to be a
 	// file of the served folder like an upload
 	_ = staged.Chmod(0o644)
@@ -481,7 +484,7 @@ func (s *Server) placeFetched(target vfs.Target, name, stagedPath string, user *
 	if err != nil {
 		return false, err
 	}
-	if err := finalizeUpload(stagedPath, target.Path, replace); err != nil {
+	if err := finalizeUpload(s.log, stagedPath, target.Path, replace); err != nil {
 		return false, err
 	}
 	return replace, nil
@@ -512,24 +515,31 @@ func fetchReplaces(target vfs.Target, name string, user *account) (bool, error) 
 // cannot be told: diskFree, but for a test, which fills the disk.
 var freeSpace = diskFree
 
+// tracedFreeSpace is freeSpace with the question and its answer traced.
+func tracedFreeSpace(log *slog.Logger, dir string) int64 {
+	free := freeSpace(dir)
+	logging.Syscall(log, "statfs", nil, slog.String("path", dir), slog.Int64("free", free))
+	return free
+}
+
 // checkRoom decides whether a fetch of total bytes fits into the folder at
 // dir, which the account knows as shown, and whether the largest file of it
 // fits into the staging folder, where each file is stored before it goes
 // where it belongs. A file that is replaced is not counted as room, so what
 // is asked for may be more than the fetch takes in the end; room that cannot
 // be told is taken to be there.
-func checkRoom(set *settings, dir, shown string, total, largest int64) error {
-	if free := freeSpace(dir); free >= 0 && total > free {
+func checkRoom(log *slog.Logger, set *settings, dir, shown string, total, largest int64) error {
+	if free := tracedFreeSpace(log, dir); free >= 0 && total > free {
 		return fmt.Errorf("there is not enough room in %s: it needs %s, and %s is free",
 			shown, readableSize(total), readableSize(free))
 	}
 	staging := stagingFolder(set)
 	// the staging folder is made by the first upload or fetch, and may not
 	// be there yet
-	if err := os.MkdirAll(staging, 0o755); err != nil {
+	if err := logging.MkdirAll(log, staging, 0o755); err != nil {
 		return nil
 	}
-	if free := freeSpace(staging); free >= 0 && largest > free {
+	if free := tracedFreeSpace(log, staging); free >= 0 && largest > free {
 		return fmt.Errorf("there is not enough room in the upload staging folder: it needs %s, and %s is free",
 			readableSize(largest), readableSize(free))
 	}

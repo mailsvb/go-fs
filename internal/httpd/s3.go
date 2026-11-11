@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -181,14 +182,14 @@ func newRequestID() string {
 func (s *Server) handleS3(set *settings, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Amz-Request-Id", newRequestID())
 	if !set.cfg.EnableS3 {
-		s.log.Debug("s3 request refused, http.enableS3 is off", "method", r.Method, "path", r.URL.Path,
+		s.logFor(r).Debug("s3 request refused, http.enableS3 is off", "method", r.Method, "path", r.URL.Path,
 			"address", clientAddress(set, r))
 		writeS3Error(w, r, s3Err(http.StatusForbidden, "AccessDenied",
 			"The S3 API is switched off on this server."))
 		return
 	}
 	if remaining, locked := s.lockedOut(set, r); locked {
-		s.log.Info("http login refused, the address is locked out", "method", "s3",
+		s.logFor(r).Info("http login refused, the address is locked out", "method", "s3",
 			"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter(remaining)))
 		writeS3Error(w, r, s3Err(http.StatusServiceUnavailable, "SlowDown",
@@ -203,14 +204,14 @@ func (s *Server) handleS3(set *settings, w http.ResponseWriter, r *http.Request)
 				time.Sleep(time.Duration(delay) * time.Second)
 			}
 		} else {
-			s.log.Debug("s3 request refused", "code", failure.code, "message", failure.message,
+			s.logFor(r).Debug("s3 request refused", "code", failure.code, "message", failure.message,
 				"address", clientAddress(set, r))
 		}
 		writeS3Error(w, r, failure)
 		return
 	}
 	s.logins.clear(clientAddress(set, r))
-	s.log.Debug("http authenticated", "user", sig.user.name, "method", "s3",
+	s.logFor(r).Debug("http authenticated", "user", sig.user.name, "method", "s3",
 		"address", clientAddress(set, r), "path", r.URL.Path)
 
 	q := &s3Request{set: set, w: w, r: r, sig: sig, user: sig.user}
@@ -380,7 +381,7 @@ func (s *Server) bucketFolder(name string) (os.FileInfo, bool) {
 	if !target.Valid || target.Virtual != "/"+name {
 		return nil, false
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(s.log, target.Path)
 	if err != nil || !info.IsDir() {
 		return nil, false
 	}
@@ -394,7 +395,7 @@ func (s *Server) findBucket(name string) (string, bool) {
 	if name == "" {
 		return "", false
 	}
-	listed, err := os.ReadDir(s.root.Base())
+	listed, err := logging.ReadDir(s.log, s.root.Base())
 	if err != nil {
 		return "", false
 	}
@@ -423,7 +424,7 @@ func (s *Server) s3ListBuckets(q *s3Request) {
 		Name         string `xml:"Name"`
 		CreationDate string `xml:"CreationDate"`
 	}
-	listed, err := os.ReadDir(s.root.Base())
+	listed, err := logging.ReadDir(s.log, s.root.Base())
 	if err != nil {
 		s.log.Error("s3 cannot list the served folder", "error", err)
 		q.fail(errInternal)

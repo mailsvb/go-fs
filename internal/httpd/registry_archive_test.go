@@ -190,7 +190,7 @@ func named(desc v1.Descriptor, annotations ...string) v1.Descriptor {
 func readArchive(t *testing.T, data []byte, name string) (*imageArchive, string, error) {
 	t.Helper()
 	dir := t.TempDir()
-	archive, err := readImageArchive(context.Background(), bytes.NewReader(data), dir, name, 0)
+	archive, err := readImageArchive(context.Background(), bytes.NewReader(data), dir, name, 0, nil)
 	return archive, dir, err
 }
 
@@ -584,7 +584,7 @@ func TestImportArchiveRefusals(t *testing.T) {
 func TestImportArchiveEntryLimit(t *testing.T) {
 	img := newOCIImage(t, "linux/amd64", "big")
 	_, err := readImageArchive(context.Background(),
-		bytes.NewReader(tarOf(t, layoutEntries([]v1.Descriptor{img.desc}, img.blobs)...)), t.TempDir(), "x.tar", 64)
+		bytes.NewReader(tarOf(t, layoutEntries([]v1.Descriptor{img.desc}, img.blobs)...)), t.TempDir(), "x.tar", 64, nil)
 	if err == nil || !strings.Contains(err.Error(), "maxUploadSize") {
 		t.Errorf("a file over the limit: %v", err)
 	}
@@ -595,7 +595,7 @@ func TestImportArchiveStopped(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := readImageArchive(ctx, bytes.NewReader(tarOf(t, layoutEntries([]v1.Descriptor{img.desc}, img.blobs)...)),
-		t.TempDir(), "x.tar", 0)
+		t.TempDir(), "x.tar", 0, nil)
 	if err == nil {
 		t.Error("a stopped import read on")
 	}

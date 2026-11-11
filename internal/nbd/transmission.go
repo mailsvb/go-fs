@@ -23,6 +23,10 @@ type request struct {
 	data []byte
 	// budgeted is what the request holds of the connection's budget
 	budgeted int64
+	// failed is the error the request was answered with, 0 for none, and
+	// reason why, for the trace
+	failed uint32
+	reason string
 }
 
 // transmit runs the transmission phase: requests are read in order and run
@@ -62,6 +66,7 @@ requests:
 			offset: binary.BigEndian.Uint64(header[16:]),
 			length: binary.BigEndian.Uint32(header[24:]),
 		}
+		c.traceRequest(req)
 		switch req.kind {
 		case cmdDisc:
 			break requests
@@ -143,6 +148,7 @@ func (t *transmission) handle(req *request) {
 	if req.data != nil {
 		defer putBuffer(req.data)
 	}
+	defer t.c.traceAnswer(req, time.Now())
 	exp := t.exp
 	if req.flags&^cmdFlagsKnown != 0 {
 		t.fail(req, errInvalid, "the request has unknown flags")
@@ -315,6 +321,7 @@ func (t *transmission) done(req *request, err error) {
 // fail answers a request with an error. A read or a block status asked for
 // with structured replies has to fail with a structured reply.
 func (t *transmission) fail(req *request, code uint32, message string) {
+	req.failed, req.reason = code, message
 	if t.c.structured && (req.kind == cmdRead || req.kind == cmdBlockStatus) {
 		payload := make([]byte, 6+len(message))
 		binary.BigEndian.PutUint32(payload[0:], code)

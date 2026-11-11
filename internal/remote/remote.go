@@ -208,7 +208,11 @@ func (l Login) Where(p string) string {
 // and its SHA-256 fingerprint.
 func HostKey(ctx context.Context, l Login, sshCfg config.SSH) (keyType, fingerprint string, err error) {
 	if p, ok := protocols[l.Type]; ok && p.hostKey != nil {
-		return p.hostKey(ctx, l, sshCfg)
+		started := time.Now()
+		keyType, fingerprint, err = p.hostKey(ctx, l, sshCfg)
+		logOf(ctx).Debug("remote host key", "login", l, "keyType", keyType, "fingerprint", fingerprint,
+			"took", time.Since(started).Round(time.Millisecond), "error", err)
+		return keyType, fingerprint, err
 	}
 	return "", "", fmt.Errorf("a host reached by %s shows no key", l.Type)
 }

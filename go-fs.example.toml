@@ -81,9 +81,10 @@ reloadConfig = true
 reloadInterval = 5
 
 # Everything the program has to say goes to standard output, one record per
-# line. debug shows the protocol trace, info reports listeners, logins,
-# transfers and every change to a file, warn and error only what needs
-# attention. The level can be changed here without a restart: the watcher
+# line. debug traces everything go-fs does: what goes in and out of every
+# interface, every file it touches and every program it runs, credentials
+# masked (docs/LOGGING.md). info reports listeners, logins, transfers and
+# every change to a file, warn and error only what needs attention. The level can be changed here without a restart: the watcher
 # applies it within reloadInterval seconds, which is the way to look at a
 # problem on a running server.
 logLevel = "info"

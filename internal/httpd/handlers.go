@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/httpd/viewer"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -29,9 +31,9 @@ import (
 // or as an archive when the marker asks for one.
 func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, cred credential) {
 	user := cred.user
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(s.logFor(r), target.Path)
 	if err != nil {
-		s.log.Debug("http path not found", "path", target.Virtual, "error", err)
+		s.logFor(r).Debug("http path not found", "path", target.Virtual, "error", err)
 		http.NotFound(w, r)
 		return
 	}
@@ -53,13 +55,13 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		}
 		entries, err := readDirectory(s.root, target.Path)
 		if err != nil {
-			s.log.Error("http cannot read the folder", "path", target.Virtual, "error", err)
+			s.logFor(r).Error("http cannot read the folder", "path", target.Virtual, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
 		nonce, err := pageNonce()
 		if err != nil {
-			s.log.Error("http cannot render the listing", "path", target.Virtual, "error", err)
+			s.logFor(r).Error("http cannot render the listing", "path", target.Virtual, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -84,7 +86,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 			parseSort(r.URL.Query()), allowed, send,
 			who, nonce, set.cfg)
 		if err != nil {
-			s.log.Error("http cannot render the listing", "path", target.Virtual, "error", err)
+			s.logFor(r).Error("http cannot render the listing", "path", target.Virtual, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -100,7 +102,7 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !info.Mode().IsRegular() {
-		s.log.Debug("http path is not a regular file", "path", target.Virtual,
+		s.logFor(r).Debug("http path is not a regular file", "path", target.Virtual,
 			"mode", info.Mode().String())
 		http.NotFound(w, r)
 		return
@@ -110,11 +112,11 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	file, err := os.Open(target.Path)
+	file, err := logging.Open(s.logFor(r), target.Path)
 	if err != nil {
 		// the file is there but cannot be read, which is the server's problem
 		// rather than the client's, whatever the 404 says
-		s.log.Warn("http cannot open the file", "path", target.Virtual, "error", err)
+		s.logFor(r).Warn("http cannot open the file", "path", target.Virtual, "error", err)
 		http.NotFound(w, r)
 		return
 	}
@@ -138,16 +140,16 @@ func (s *Server) handleGet(set *settings, w http.ResponseWriter, r *http.Request
 	if recorder, ok := w.(*responseRecorder); ok {
 		if r.Method == http.MethodHead || (recorder.status != http.StatusOK &&
 			recorder.status != http.StatusPartialContent) {
-			s.log.Debug("http file request answered without a body", "file", target.Virtual,
+			s.logFor(r).Debug("http file request answered without a body", "file", target.Virtual,
 				"status", recorder.status, "method", r.Method)
 			return
 		}
-		s.log.Info(event, "user", nameOf(user), "file", target.Virtual,
+		s.logFor(r).Info(event, "user", nameOf(user), "file", target.Virtual,
 			"bytes", recorder.bytes, "size", info.Size(), "status", recorder.status,
 			"address", clientAddress(set, r), "took", time.Since(started).Round(time.Millisecond))
 		return
 	}
-	s.log.Info(event, "user", nameOf(user), "file", target.Virtual,
+	s.logFor(r).Info(event, "user", nameOf(user), "file", target.Virtual,
 		"bytes", info.Size(), "address", clientAddress(set, r))
 }
 
@@ -193,17 +195,17 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 		s.handleChunkedPut(set, w, r, target, user, rangeHeader, replace)
 		return
 	}
-	info, statErr := os.Stat(target.Path)
+	info, statErr := logging.Stat(s.logFor(r), target.Path)
 	if statErr == nil && (!replace || !info.Mode().IsRegular()) {
 		// the original falls through to its not-found handler here
-		s.log.Debug("http upload refused, the name is taken", "file", target.Virtual)
+		s.logFor(r).Debug("http upload refused, the name is taken", "file", target.Virtual)
 		http.NotFound(w, r)
 		return
 	}
 	if statErr == nil && changedSince(r, info.ModTime()) {
 		// the editor of the viewer saves on the condition that nobody
 		// changed the file since it read it, and is told when someone did
-		s.log.Debug("http upload refused, the file changed since the client read it", "file", target.Virtual)
+		s.logFor(r).Debug("http upload refused, the file changed since the client read it", "file", target.Virtual)
 		http.Error(w, "Precondition Failed", http.StatusPreconditionFailed)
 		return
 	}
@@ -212,14 +214,14 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 	binary := rawUpload(contentType)
 	multipart := strings.Contains(contentType, "multipart")
 	if !binary && !multipart {
-		s.log.Debug("http upload refused, the body is neither octet-stream nor multipart",
+		s.logFor(r).Debug("http upload refused, the body is neither octet-stream nor multipart",
 			"file", target.Virtual, "contentType", contentType)
 		http.NotFound(w, r)
 		return
 	}
 
-	if err := os.MkdirAll(filepath.Dir(target.Path), 0o755); err != nil {
-		s.log.Error("http cannot create the folder", "path", target.Virtual, "error", err)
+	if err := logging.MkdirAll(s.logFor(r), filepath.Dir(target.Path), 0o755); err != nil {
+		s.logFor(r).Error("http cannot create the folder", "path", target.Virtual, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -272,7 +274,7 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 				s.tooLarge(set, w, target)
 				return
 			}
-			s.log.Debug("http cannot read the upload", "error", err)
+			s.logFor(r).Debug("http cannot read the upload", "error", err)
 			http.Error(w, "Bad Request", http.StatusBadRequest)
 			return
 		}
@@ -282,7 +284,7 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 			// part is taken rather than failing on the name
 			part, err = firstFilePart(r)
 			if err != nil {
-				s.log.Debug("http upload has no file part", "file", target.Virtual, "error", err)
+				s.logFor(r).Debug("http upload has no file part", "file", target.Virtual, "error", err)
 				http.Error(w, "Bad Request", http.StatusBadRequest)
 				return
 			}
@@ -299,18 +301,18 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 	written, err := s.store(target.Path, body, replace)
 	if errors.Is(err, os.ErrExist) {
 		// taken between the check and the open
-		s.log.Debug("http upload refused, the name is taken", "file", target.Virtual)
+		s.logFor(r).Debug("http upload refused, the name is taken", "file", target.Virtual)
 		http.NotFound(w, r)
 		return
 	}
 	if err == nil && set.cfg.MaxUploadSize > 0 && written > set.cfg.MaxUploadSize {
-		_ = os.Remove(target.Path)
+		_ = logging.Remove(s.logFor(r), target.Path)
 		s.tooLarge(set, w, target)
 		return
 	}
 	if err != nil {
 		// nothing half written is left behind, whatever went wrong
-		_ = os.Remove(target.Path)
+		_ = logging.Remove(s.logFor(r), target.Path)
 		if tooLarge(err) || limited.hit() {
 			s.tooLarge(set, w, target)
 			return
@@ -318,24 +320,24 @@ func (s *Server) handlePut(set *settings, w http.ResponseWriter, r *http.Request
 		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || isClientGone(err) {
 			// the client went away halfway, which is its doing and no fault
 			// of the server: an info record, with what had arrived by then
-			s.log.Info("http upload failed", "user", nameOf(user), "file", target.Virtual,
+			s.logFor(r).Info("http upload failed", "user", nameOf(user), "file", target.Virtual,
 				"bytes", written, "address", clientAddress(set, r),
 				"took", time.Since(started).Round(time.Millisecond), "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
-		s.log.Error("http upload failed", "user", nameOf(user), "file", target.Virtual,
+		s.logFor(r).Error("http upload failed", "user", nameOf(user), "file", target.Virtual,
 			"bytes", written, "address", clientAddress(set, r), "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	s.log.Info("http upload", "user", nameOf(user), "file", target.Virtual,
+	s.logFor(r).Info("http upload", "user", nameOf(user), "file", target.Virtual,
 		"bytes", written, "replaced", replace, "address", clientAddress(set, r),
 		"took", time.Since(started).Round(time.Millisecond))
 	// the time of what was written, which a client that saves again names
 	// as the version it is changing
-	if stored, err := os.Stat(target.Path); err == nil {
+	if stored, err := logging.Stat(s.logFor(r), target.Path); err == nil {
 		w.Header().Set("Last-Modified", stored.ModTime().UTC().Format(http.TimeFormat))
 	}
 	w.WriteHeader(http.StatusOK)
@@ -413,19 +415,19 @@ func rawUpload(contentType string) bool {
 func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.Request,
 	target vfs.Target, user *account, header string, replace bool) {
 	if set.cfg.MaxChunkSize <= 0 {
-		s.log.Debug("http chunked upload refused, chunking is disabled", "file", target.Virtual)
+		s.logFor(r).Debug("http chunked upload refused, chunking is disabled", "file", target.Virtual)
 		http.NotFound(w, r)
 		return
 	}
 	rng, ok := parseContentRange(header)
 	if !ok {
-		s.log.Debug("http chunked upload has a malformed Content-Range",
+		s.logFor(r).Debug("http chunked upload has a malformed Content-Range",
 			"file", target.Virtual, "header", header)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
 	if !rawUpload(r.Header.Get("Content-Type")) {
-		s.log.Debug("http chunked upload refused, the body is not octet-stream",
+		s.logFor(r).Debug("http chunked upload refused, the body is not octet-stream",
 			"file", target.Virtual, "contentType", r.Header.Get("Content-Type"))
 		http.NotFound(w, r)
 		return
@@ -448,18 +450,18 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 	defer lock.Unlock()
 
 	if rng.start == 0 {
-		if info, err := os.Stat(target.Path); err == nil && (!replace || !info.Mode().IsRegular()) {
-			s.log.Debug("http upload refused, the name is taken", "file", target.Virtual)
+		if info, err := logging.Stat(s.logFor(r), target.Path); err == nil && (!replace || !info.Mode().IsRegular()) {
+			s.logFor(r).Debug("http upload refused, the name is taken", "file", target.Virtual)
 			http.NotFound(w, r)
 			return
 		}
-		if err := os.MkdirAll(filepath.Dir(target.Path), 0o755); err != nil {
-			s.log.Error("http cannot create the folder", "path", target.Virtual, "error", err)
+		if err := logging.MkdirAll(s.logFor(r), filepath.Dir(target.Path), 0o755); err != nil {
+			s.logFor(r).Error("http cannot create the folder", "path", target.Virtual, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
-		if err := os.MkdirAll(filepath.Dir(staging), 0o700); err != nil {
-			s.log.Error("http cannot create the upload staging folder", "error", err)
+		if err := logging.MkdirAll(s.logFor(r), filepath.Dir(staging), 0o700); err != nil {
+			s.logFor(r).Error("http cannot create the upload staging folder", "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -471,7 +473,7 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 	}
 
 	if rng.end+1 < rng.total {
-		s.log.Debug("http chunk stored", "user", nameOf(user), "file", target.Virtual,
+		s.logFor(r).Debug("http chunk stored", "user", nameOf(user), "file", target.Virtual,
 			"start", rng.start, "end", rng.end, "total", rng.total, "address", clientAddress(set, r),
 			"took", time.Since(started).Round(time.Millisecond))
 		w.WriteHeader(http.StatusOK)
@@ -480,28 +482,28 @@ func (s *Server) handleChunkedPut(set *settings, w http.ResponseWriter, r *http.
 
 	// the last chunk: what is staged has to match what was promised before it
 	// is allowed to become the real file
-	info, err := os.Stat(staging)
+	info, err := logging.Stat(s.logFor(r), staging)
 	if err != nil || info.Size() != rng.total {
-		s.log.Error("http chunked upload cannot finalize, the staged size does not match",
+		s.logFor(r).Error("http chunked upload cannot finalize, the staged size does not match",
 			"file", target.Virtual, "want", rng.total, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	if info, err := os.Stat(target.Path); err == nil && (!replace || !info.Mode().IsRegular()) {
+	if info, err := logging.Stat(s.logFor(r), target.Path); err == nil && (!replace || !info.Mode().IsRegular()) {
 		// the name was taken while this upload was in progress — the same
 		// refusal a whole-file PUT gives; the staged bytes are left in place
 		// rather than discarded, in case the client retries under another name
-		s.log.Debug("http upload refused, the name is taken", "file", target.Virtual)
+		s.logFor(r).Debug("http upload refused, the name is taken", "file", target.Virtual)
 		http.NotFound(w, r)
 		return
 	}
-	if err := finalizeUpload(staging, target.Path, replace); err != nil {
-		s.log.Error("http cannot finalize the upload", "file", target.Virtual, "error", err)
+	if err := finalizeUpload(s.logFor(r), staging, target.Path, replace); err != nil {
+		s.logFor(r).Error("http cannot finalize the upload", "file", target.Virtual, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	s.log.Info("http upload", "user", nameOf(user), "file", target.Virtual, "bytes", rng.total,
+	s.logFor(r).Info("http upload", "user", nameOf(user), "file", target.Virtual, "bytes", rng.total,
 		"chunked", true, "replaced", replace, "address", clientAddress(set, r),
 		"took", time.Since(started).Round(time.Millisecond))
 	w.WriteHeader(http.StatusCreated)
@@ -519,7 +521,7 @@ func (s *Server) writeRangeChunk(set *settings, w http.ResponseWriter, r *http.R
 	started := time.Now()
 	var alreadyApplied bool
 	if rng.start != 0 {
-		info, err := os.Stat(staging)
+		info, err := logging.Stat(s.logFor(r), staging)
 		switch {
 		case err == nil && info.Size() == rng.start:
 			// continues the upload already in progress
@@ -537,7 +539,7 @@ func (s *Server) writeRangeChunk(set *settings, w http.ResponseWriter, r *http.R
 			s.chunkOutOfSync(w, label, 0)
 			return false
 		default:
-			s.log.Error("http cannot read the upload in progress", "file", label, "error", err)
+			s.logFor(r).Error("http cannot read the upload in progress", "file", label, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return false
 		}
@@ -551,9 +553,9 @@ func (s *Server) writeRangeChunk(set *settings, w http.ResponseWriter, r *http.R
 		if rng.start == 0 {
 			flags |= os.O_TRUNC
 		}
-		file, err := os.OpenFile(staging, flags, 0o600)
+		file, err := logging.OpenFile(s.logFor(r), staging, flags, 0o600)
 		if err != nil {
-			s.log.Error("http cannot write the upload in progress", "file", label, "error", err)
+			s.logFor(r).Error("http cannot write the upload in progress", "file", label, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return false
 		}
@@ -580,19 +582,19 @@ func (s *Server) writeRangeChunk(set *settings, w http.ResponseWriter, r *http.R
 			// only the bytes this chunk was supposed to add are undone: a chunk
 			// that already landed stays landed, so the client can always retry
 			// with the exact same Content-Range
-			_ = os.Truncate(staging, rng.start)
+			_ = logging.Truncate(s.logFor(r), staging, rng.start)
 			if tooLarge(err) || limited.hit() {
 				s.chunkTooLarge(set, w, label)
 				return false
 			}
 			if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || isClientGone(err) {
-				s.log.Info("http chunked upload failed", "user", nameOf(user), "file", label,
+				s.logFor(r).Info("http chunked upload failed", "user", nameOf(user), "file", label,
 					"start", rng.start, "end", rng.end, "total", rng.total, "bytes", written,
 					"address", clientAddress(set, r), "took", time.Since(started).Round(time.Millisecond), "error", err)
 				http.Error(w, "Server Error", http.StatusInternalServerError)
 				return false
 			}
-			s.log.Error("http chunked upload failed", "user", nameOf(user), "file", label,
+			s.logFor(r).Error("http chunked upload failed", "user", nameOf(user), "file", label,
 				"start", rng.start, "end", rng.end, "total", rng.total, "bytes", written,
 				"address", clientAddress(set, r), "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
@@ -654,32 +656,32 @@ func stagingPath(set *settings, target string) string {
 // replace is whether the target may already exist. The rename replaces what is
 // there either way, under the check the caller made a moment earlier and the
 // lock it holds; the copy is where the flag is enforced.
-func finalizeUpload(staging, target string, replace bool) error {
-	if err := os.Rename(staging, target); err == nil {
+func finalizeUpload(log *slog.Logger, staging, target string, replace bool) error {
+	if err := logging.Rename(log, staging, target); err == nil {
 		return nil
 	}
-	if err := copyFile(staging, target, replace); err != nil {
+	if err := copyFile(log, staging, target, replace); err != nil {
 		return err
 	}
-	return os.Remove(staging)
+	return logging.Remove(log, staging)
 }
 
 // copyFile copies src onto dst. Without replace it refuses a dst that already
 // exists, which is what keeps the guarantee the caller's exists check made a
 // moment earlier; with it the file is replaced in place.
-func copyFile(src, dst string, replace bool) error {
-	in, err := os.Open(src)
+func copyFile(log *slog.Logger, src, dst string, replace bool) error {
+	in, err := logging.Open(log, src)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(dst, openFlags(replace), 0o644)
+	out, err := logging.OpenFile(log, dst, openFlags(replace), 0o644)
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
 		_ = out.Close()
-		_ = os.Remove(dst)
+		_ = logging.Remove(log, dst)
 		return err
 	}
 	return out.Close()
@@ -808,7 +810,7 @@ func (s *Server) tooLarge(set *settings, w http.ResponseWriter, target vfs.Targe
 // store writes a body to its final name. Without replace a name that is taken
 // is an error rather than a file truncated; with it the file is written over.
 func (s *Server) store(osPath string, body io.Reader, replace bool) (int64, error) {
-	file, err := os.OpenFile(osPath, openFlags(replace), 0o644)
+	file, err := logging.OpenFile(s.log, osPath, openFlags(replace), 0o644)
 	if err != nil {
 		return 0, err
 	}
@@ -850,13 +852,13 @@ type multipartFile interface {
 func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
 	if target.IsRoot() {
 		// removing the served folder would take every path with it
-		s.log.Debug("http delete refused, the path is the served folder")
+		s.logFor(r).Debug("http delete refused, the path is the served folder")
 		http.NotFound(w, r)
 		return
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(s.logFor(r), target.Path)
 	if err != nil {
-		s.log.Debug("http delete target not found", "path", target.Virtual, "error", err)
+		s.logFor(r).Debug("http delete target not found", "path", target.Virtual, "error", err)
 		http.NotFound(w, r)
 		return
 	}
@@ -865,32 +867,32 @@ func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Requ
 	switch {
 	case info.Mode().IsRegular():
 		if trashed, err = s.discard(set, target, false); err != nil {
-			s.log.Error("http delete failed", "file", target.Virtual, "error", err)
+			s.logFor(r).Error("http delete failed", "file", target.Virtual, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
 	case info.IsDir():
-		entries, err := os.ReadDir(target.Path)
+		entries, err := logging.ReadDir(s.logFor(r), target.Path)
 		if err != nil || len(entries) > 0 {
 			// a folder with anything in it is not removed, as in the original
-			s.log.Debug("http delete refused, the folder is not empty or cannot be read",
+			s.logFor(r).Debug("http delete refused, the folder is not empty or cannot be read",
 				"folder", target.Virtual, "entries", len(entries), "error", err)
 			http.NotFound(w, r)
 			return
 		}
 		if trashed, err = s.discard(set, target, false); err != nil {
-			s.log.Error("http delete failed", "folder", target.Virtual, "error", err)
+			s.logFor(r).Error("http delete failed", "folder", target.Virtual, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
 			return
 		}
 	default:
-		s.log.Debug("http delete refused, the path is neither a file nor a folder",
+		s.logFor(r).Debug("http delete refused, the path is neither a file nor a folder",
 			"path", target.Virtual, "mode", info.Mode().String())
 		http.NotFound(w, r)
 		return
 	}
 
-	s.log.Info("http delete", "user", nameOf(user), "path", target.Virtual,
+	s.logFor(r).Info("http delete", "user", nameOf(user), "path", target.Virtual,
 		"folder", info.IsDir(), "bytes", info.Size(), "trash", trashed, "address", clientAddress(set, r))
 	w.WriteHeader(http.StatusOK)
 }
@@ -900,34 +902,34 @@ func (s *Server) handleDelete(set *settings, w http.ResponseWriter, r *http.Requ
 func (s *Server) handleMkcol(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
 	if r.ContentLength != 0 {
 		// RFC 4918: a body here describes something this server does not know
-		s.log.Debug("http mkdir refused, the request has a body", "folder", target.Virtual)
+		s.logFor(r).Debug("http mkdir refused, the request has a body", "folder", target.Virtual)
 		http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType)
 		return
 	}
 	if target.IsRoot() {
-		s.log.Debug("http mkdir refused, the path is the served folder")
+		s.logFor(r).Debug("http mkdir refused, the path is the served folder")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if _, err := os.Stat(target.Path); err == nil {
-		s.log.Debug("http mkdir refused, the path exists", "folder", target.Virtual)
+	if _, err := logging.Stat(s.logFor(r), target.Path); err == nil {
+		s.logFor(r).Debug("http mkdir refused, the path exists", "folder", target.Virtual)
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	// deliberately not MkdirAll: a typo in the folder above should be an error
 	// rather than a tree nobody asked for
-	if err := os.Mkdir(target.Path, 0o755); err != nil {
+	if err := logging.Mkdir(s.logFor(r), target.Path, 0o755); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			http.Error(w, "Conflict", http.StatusConflict)
 			return
 		}
-		s.log.Error("http mkdir failed", "folder", target.Virtual, "error", err)
+		s.logFor(r).Error("http mkdir failed", "folder", target.Virtual, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	s.log.Info("http mkdir", "user", nameOf(user), "folder", target.Virtual,
+	s.logFor(r).Info("http mkdir", "user", nameOf(user), "folder", target.Virtual,
 		"address", clientAddress(set, r))
 	w.WriteHeader(http.StatusCreated)
 }
@@ -936,12 +938,12 @@ func (s *Server) handleMkcol(set *settings, w http.ResponseWriter, r *http.Reque
 func (s *Server) handleMove(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) {
 	if target.IsRoot() {
 		// renaming the served folder would take every path with it
-		s.log.Debug("http rename refused, the path is the served folder")
+		s.logFor(r).Debug("http rename refused, the path is the served folder")
 		http.NotFound(w, r)
 		return
 	}
-	if _, err := os.Stat(target.Path); err != nil {
-		s.log.Debug("http rename source not found", "from", target.Virtual, "error", err)
+	if _, err := logging.Stat(s.logFor(r), target.Path); err != nil {
+		s.logFor(r).Debug("http rename source not found", "from", target.Virtual, "error", err)
 		http.NotFound(w, r)
 		return
 	}
@@ -950,11 +952,11 @@ func (s *Server) handleMove(set *settings, w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if _, err := os.Stat(destination.Path); err == nil {
+	if _, err := logging.Stat(s.logFor(r), destination.Path); err == nil {
 		// the same refusal PUT makes for a name that is taken, with the status
 		// that says which of the two paths was the problem — a bare 404 here
 		// cannot be told apart from a source that is not there
-		s.log.Debug("http rename refused, the destination exists",
+		s.logFor(r).Debug("http rename refused, the destination exists",
 			"from", target.Virtual, "to", destination.Virtual)
 		http.Error(w, "Precondition Failed", http.StatusPreconditionFailed)
 		return
@@ -965,14 +967,14 @@ func (s *Server) handleMove(set *settings, w http.ResponseWriter, r *http.Reques
 	}
 	defer release()
 
-	if err := os.Rename(target.Path, destination.Path); err != nil {
-		s.log.Error("http rename failed", "from", target.Virtual,
+	if err := logging.Rename(s.logFor(r), target.Path, destination.Path); err != nil {
+		s.logFor(r).Error("http rename failed", "from", target.Virtual,
 			"to", destination.Virtual, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	s.log.Info("http rename", "user", nameOf(user), "from", target.Virtual,
+	s.logFor(r).Info("http rename", "user", nameOf(user), "from", target.Virtual,
 		"to", destination.Virtual, "address", clientAddress(set, r))
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -986,13 +988,13 @@ func (s *Server) handleMove(set *settings, w http.ResponseWriter, r *http.Reques
 func (s *Server) destinationOf(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, user *account) (vfs.Target, bool) {
 	header := r.Header.Get("Destination")
 	if header == "" {
-		s.log.Debug("http rename has no Destination header", "from", target.Virtual)
+		s.logFor(r).Debug("http rename has no Destination header", "from", target.Virtual)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return vfs.Target{}, false
 	}
 	parsed, err := url.Parse(header)
 	if err != nil || parsed.Path == "" {
-		s.log.Debug("http rename Destination header is not a URL", "from", target.Virtual,
+		s.logFor(r).Debug("http rename Destination header is not a URL", "from", target.Virtual,
 			"destination", header, "error", err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return vfs.Target{}, false
@@ -1000,12 +1002,12 @@ func (s *Server) destinationOf(set *settings, w http.ResponseWriter, r *http.Req
 
 	destination := s.root.Resolve("/", parsed.Path)
 	if !destination.Valid || destination.IsRoot() {
-		s.log.Debug("http rename destination refused", "destination", parsed.Path)
+		s.logFor(r).Debug("http rename destination refused", "destination", parsed.Path)
 		http.NotFound(w, r)
 		return vfs.Target{}, false
 	}
 	if folderOf(destination.Virtual) != folderOf(target.Virtual) {
-		s.log.Debug("http rename crosses folders", "from", target.Virtual,
+		s.logFor(r).Debug("http rename crosses folders", "from", target.Virtual,
 			"to", destination.Virtual)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return vfs.Target{}, false
@@ -1013,7 +1015,7 @@ func (s *Server) destinationOf(set *settings, w http.ResponseWriter, r *http.Req
 	// where the name lands is checked as well as where it came from, so a
 	// rename cannot carry a file out of the scope of the account doing it
 	if !s.permits(set, user, methodMove, destination.Virtual, actRename) {
-		s.log.Debug("http rename destination not allowed for the account",
+		s.logFor(r).Debug("http rename destination not allowed for the account",
 			"user", nameOf(user), "path", destination.Virtual)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return vfs.Target{}, false
@@ -1104,7 +1106,7 @@ func (s *Server) handleDirectoryReader(set *settings, w http.ResponseWriter, r *
 	}
 	folder := r.FormValue("dir")
 	if folder == "" {
-		s.log.Debug("http directory reader called without a dir")
+		s.logFor(r).Debug("http directory reader called without a dir")
 		http.NotFound(w, r)
 		return
 	}
@@ -1114,20 +1116,20 @@ func (s *Server) handleDirectoryReader(set *settings, w http.ResponseWriter, r *
 	base := path.Dir(target.Virtual)
 	listed := s.root.Resolve(base, folder)
 	if !listed.Valid {
-		s.log.Debug("http directory reader path refused", "dir", folder)
+		s.logFor(r).Debug("http directory reader path refused", "dir", folder)
 		http.NotFound(w, r)
 		return
 	}
 	if !s.permits(set, user, http.MethodGet, listed.Virtual, actRead) {
 		// answered as a folder that is not there, as the escapes above are,
 		// so the reader does not tell which protected folders exist
-		s.log.Debug("http directory reader folder not allowed for the account",
+		s.logFor(r).Debug("http directory reader folder not allowed for the account",
 			"user", nameOf(user), "dir", listed.Virtual)
 		http.NotFound(w, r)
 		return
 	}
-	if info, err := os.Stat(listed.Path); err != nil || !info.IsDir() {
-		s.log.Debug("http directory reader folder does not exist", "dir", listed.Virtual)
+	if info, err := logging.Stat(s.logFor(r), listed.Path); err != nil || !info.IsDir() {
+		s.logFor(r).Debug("http directory reader folder does not exist", "dir", listed.Virtual)
 		http.NotFound(w, r)
 		return
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/remote"
 )
 
@@ -97,7 +98,7 @@ func (h *Handler) handleServerHostKey(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), serverTimeout)
 	defer cancel()
-	keyType, fingerprint, err := remote.HostKey(ctx, login, cfg.General.SSH)
+	keyType, fingerprint, err := remote.HostKey(logging.Ensure(ctx, h.log), login, cfg.General.SSH)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -190,7 +191,7 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 	// a new vault is made before the login is tried, which then opens it
 	var recoveryKey string
 	if body.Server.CreateVault {
-		recoveryKey, err = remote.CreateVault(ctx, login, cfg.General.SSH)
+		recoveryKey, err = remote.CreateVault(logging.Ensure(ctx, h.log), login, cfg.General.SSH)
 		if err != nil {
 			h.log.Info("the admin interface did not make a vault",
 				"server", name, "host", login.Shown(), "vault", login.VaultPath, "error", err, "address", addressOf(r))
@@ -200,7 +201,7 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 		h.log.Info("the admin interface made a vault",
 			"server", name, "host", login.Shown(), "vault", login.VaultPath, "address", addressOf(r))
 	}
-	if err := remote.Test(ctx, login, cfg.General.SSH); err != nil {
+	if err := remote.Test(logging.Ensure(ctx, h.log), login, cfg.General.SSH); err != nil {
 		h.log.Info("the admin interface did not store a server, its login failed",
 			"server", name, "host", login.Shown(), "error", err, "address", addressOf(r))
 		status := http.StatusBadGateway

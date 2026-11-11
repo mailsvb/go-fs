@@ -11,7 +11,7 @@ import (
 // than Keep rotated files are kept.
 func TestFileRotates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "logs", "go-fs.log")
-	f, err := OpenFile(path)
+	f, err := OpenLogFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestFileAppends(t *testing.T) {
 	if err := os.WriteFile(path, []byte("earlier\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	f, err := OpenFile(path)
+	f, err := OpenLogFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}

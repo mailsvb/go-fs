@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/sparse"
 )
 
@@ -59,7 +60,7 @@ func (f *Folder) WriteChunk(name string, chunk Chunk, body io.Reader) (complete 
 
 	staging := f.stagingPath("upload", name)
 	if chunk.Start != 0 {
-		info, err := os.Stat(staging)
+		info, err := logging.Stat(f.log, staging)
 		switch {
 		case err == nil && info.Size() == chunk.Start:
 			// continues the upload
@@ -75,7 +76,7 @@ func (f *Folder) WriteChunk(name string, chunk Chunk, body io.Reader) (complete 
 		}
 	}
 
-	file, err := os.OpenFile(staging, os.O_RDWR|os.O_CREATE, 0o640)
+	file, err := logging.OpenFile(f.log, staging, os.O_RDWR|os.O_CREATE, 0o640)
 	if err != nil {
 		return false, err
 	}
@@ -86,7 +87,7 @@ func (f *Folder) WriteChunk(name string, chunk Chunk, body io.Reader) (complete 
 		if err := file.Truncate(0); err != nil {
 			return false, err
 		}
-		if err := sparse.SetSparse(file); err != nil {
+		if err := f.setSparse(file); err != nil {
 			return false, err
 		}
 	}
@@ -133,7 +134,7 @@ func (f *Folder) FinishUpload(name string, total int64, replace bool) error {
 		return err
 	}
 	staging := f.stagingPath("upload", name)
-	info, err := os.Stat(staging)
+	info, err := logging.Stat(f.log, staging)
 	if err != nil {
 		return err
 	}
@@ -145,14 +146,14 @@ func (f *Folder) FinishUpload(name string, total int64, replace bool) error {
 		return err
 	}
 	defer lease.Release()
-	if existing, err := os.Lstat(f.path(name)); err == nil {
+	if existing, err := logging.Lstat(f.log, f.path(name)); err == nil {
 		if !replace || !existing.Mode().IsRegular() {
 			return fmt.Errorf("%q %w", name, ErrExists)
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return os.Rename(staging, f.path(name))
+	return logging.Rename(f.log, staging, f.path(name))
 }
 
 // Exists reports whether there is an image called name.

@@ -235,7 +235,7 @@ func (s *Server) verifyS3(set *settings, r *http.Request, now time.Time) (*s3Sig
 		if user == nil {
 			reason = "the access key is not an s3 account"
 		}
-		s.log.Info("s3 login refused", "user", p.accessKey, "reason", reason,
+		s.logFor(r).Info("s3 login refused", "user", p.accessKey, "reason", reason,
 			"address", clientAddress(set, r))
 		failure := s3Err(http.StatusForbidden, "SignatureDoesNotMatch",
 			"The request signature we calculated does not match the signature you provided. "+

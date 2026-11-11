@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +14,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // The programs of general.tools are found here: a path that is set is checked,
@@ -122,7 +126,18 @@ type probeResult struct {
 var (
 	probeMu    sync.Mutex
 	probeCache = map[probeKey]probeResult{}
+	// probeLog takes the trace of the programs run to probe them. The first
+	// probes run while the configuration is loaded at the start, before
+	// there is a logger; what they found is cached, and logged by the
+	// supervisor, so only a probe after that is traced.
+	probeLog atomic.Pointer[slog.Logger]
 )
+
+// TraceProbes has the probes of the programs of general.tools traced to
+// log from now on.
+func TraceProbes(log *slog.Logger) {
+	probeLog.Store(log)
+}
 
 // checkTool decides whether the file at path is the program, and reports its
 // version. What a file answered is remembered for as long as it stays the
@@ -167,7 +182,7 @@ func runProbe(kind ToolKind, path string) (string, error) {
 	var out bytes.Buffer
 	cmd.Stdout = &limitedBuffer{buf: &out, limit: 4096}
 	cmd.WaitDelay = 2 * time.Second
-	err := cmd.Run()
+	err := logging.Run(probeLog.Load(), cmd)
 	if ctx.Err() != nil {
 		return "", fmt.Errorf("%s did not answer %s within %s", path, strings.Join(kind.args, " "), toolTimeout)
 	}
@@ -243,7 +258,9 @@ func toolCandidates(kind ToolKind) []string {
 	}
 	// a program the PATH finds in the current directory is no candidate:
 	// that is where a downloaded file would be, not an installed one
-	if path, err := exec.LookPath(kind.Name); err == nil {
+	path, err := exec.LookPath(kind.Name)
+	logging.Syscall(probeLog.Load(), "lookpath", err, slog.String("program", kind.Name), slog.String("found", path))
+	if err == nil {
 		add(path)
 	}
 	file := kind.Name

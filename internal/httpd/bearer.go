@@ -54,12 +54,12 @@ func (s *Server) checkBearer(set *settings, r *http.Request, presented string) *
 		}
 	}
 	if found == nil {
-		s.log.Info("http login refused", "method", "bearer", "address", clientAddress(set, r))
+		s.logFor(r).Info("http login refused", "method", "bearer", "address", clientAddress(set, r))
 		s.recordFailure(set, r)
 		return nil
 	}
 	if !found.expires.IsZero() && !time.Now().Before(found.expires) {
-		s.log.Info("http bearer token expired", "user", found.name,
+		s.logFor(r).Info("http bearer token expired", "user", found.name,
 			"expired", found.expires.Format(time.RFC3339), "address", clientAddress(set, r))
 		return nil
 	}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/pkg/sftp"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -94,9 +95,8 @@ func (s *session) failed(r *sftp.Request, err error) error {
 	return err
 }
 
-// Fileread serves a read, which needs the retrieve right.
-func (s *session) Fileread(r *sftp.Request) (io.ReaderAt, error) {
-	s.trace(r)
+// fileread serves a read, which needs the retrieve right.
+func (s *session) fileread(r *sftp.Request) (io.ReaderAt, error) {
 	user, err := s.account()
 	if err != nil {
 		return nil, err
@@ -108,17 +108,16 @@ func (s *session) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 	if err != nil {
 		return nil, err
 	}
-	file, err := os.Open(target.Path)
+	file, err := logging.Open(s.log, target.Path)
 	if err != nil {
 		return nil, s.failed(r, err)
 	}
 	return &countingReader{file: file, session: s, virtual: target.Virtual, started: time.Now()}, nil
 }
 
-// Filewrite serves a write. A new file needs the create right and an existing
+// filewrite serves a write. A new file needs the create right and an existing
 // one the overwrite right, the same split the FTP STOR command makes.
-func (s *session) Filewrite(r *sftp.Request) (io.WriterAt, error) {
-	s.trace(r)
+func (s *session) filewrite(r *sftp.Request) (io.WriterAt, error) {
 	user, err := s.account()
 	if err != nil {
 		return nil, err
@@ -128,7 +127,7 @@ func (s *session) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 		return nil, err
 	}
 
-	_, statErr := os.Stat(target.Path)
+	_, statErr := logging.Stat(s.log, target.Path)
 	exists := statErr == nil
 	if exists && !user.perms.FileOverwrite {
 		return nil, s.denied(r, "allowUserFileOverwrite")
@@ -154,25 +153,24 @@ func (s *session) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 		flags |= os.O_EXCL
 	}
 	if pflags.Append && exists {
-		info, err := os.Stat(target.Path)
+		info, err := logging.Stat(s.log, target.Path)
 		if err != nil {
 			return nil, s.failed(r, err)
 		}
 		base = info.Size()
 	}
 
-	file, err := os.OpenFile(target.Path, flags, 0o644)
+	file, err := logging.OpenFile(s.log, target.Path, flags, 0o644)
 	if err != nil {
 		return nil, s.failed(r, err)
 	}
 	return &countingWriter{file: file, session: s, virtual: target.Virtual, base: base, started: time.Now()}, nil
 }
 
-// Filecmd serves everything that changes the folder rather than a file's
+// filecmd serves everything that changes the folder rather than a file's
 // content. Each method needs the right that matches what it does, and a rename
 // needs both, because it creates one name and removes another.
-func (s *session) Filecmd(r *sftp.Request) error {
-	s.trace(r)
+func (s *session) filecmd(r *sftp.Request) error {
 	user, err := s.account()
 	if err != nil {
 		return err
@@ -187,7 +185,7 @@ func (s *session) Filecmd(r *sftp.Request) error {
 		if !user.perms.FileDelete || target.IsRoot() {
 			return s.denied(r, "allowUserFileDelete")
 		}
-		info, err := os.Stat(target.Path)
+		info, err := logging.Stat(s.log, target.Path)
 		if err != nil {
 			return s.failed(r, err)
 		}
@@ -196,7 +194,7 @@ func (s *session) Filecmd(r *sftp.Request) error {
 			s.log.Debug("sftp remove refused, the path is a folder", "path", target.Virtual)
 			return sftp.ErrSSHFxFailure
 		}
-		if err := os.Remove(target.Path); err != nil {
+		if err := logging.Remove(s.log, target.Path); err != nil {
 			return s.failed(r, err)
 		}
 		// every removal is recorded, as the HTTP server does: a file that is
@@ -210,7 +208,7 @@ func (s *session) Filecmd(r *sftp.Request) error {
 		if !user.perms.FolderDelete || target.IsRoot() {
 			return s.denied(r, "allowUserFolderDelete")
 		}
-		info, err := os.Stat(target.Path)
+		info, err := logging.Stat(s.log, target.Path)
 		if err != nil {
 			return s.failed(r, err)
 		}
@@ -220,7 +218,7 @@ func (s *session) Filecmd(r *sftp.Request) error {
 		}
 		// rmdir removes an empty folder, here as everywhere else: a tree of
 		// files is only deleted by an account that may delete files, one by one
-		if err := os.Remove(target.Path); err != nil {
+		if err := logging.Remove(s.log, target.Path); err != nil {
 			return s.failed(r, err)
 		}
 		s.log.Info("sftp folder delete", "folder", target.Virtual)
@@ -230,11 +228,11 @@ func (s *session) Filecmd(r *sftp.Request) error {
 		if !user.perms.FolderCreate {
 			return s.denied(r, "allowUserFolderCreate")
 		}
-		if _, err := os.Stat(target.Path); err == nil {
+		if _, err := logging.Stat(s.log, target.Path); err == nil {
 			s.log.Debug("sftp mkdir refused, the path exists", "path", target.Virtual)
 			return sftp.ErrSSHFxFailure
 		}
-		if err := os.MkdirAll(target.Path, 0o755); err != nil {
+		if err := logging.MkdirAll(s.log, target.Path, 0o755); err != nil {
 			return s.failed(r, err)
 		}
 		s.log.Info("sftp mkdir", "folder", target.Virtual)
@@ -251,7 +249,7 @@ func (s *session) Filecmd(r *sftp.Request) error {
 		if destination.IsRoot() {
 			return s.denied(r, "the base folder is not a rename target")
 		}
-		if _, err := os.Stat(destination.Path); err == nil {
+		if _, err := logging.Stat(s.log, destination.Path); err == nil {
 			// plain rename must not clobber. POSIX rename may, but replacing
 			// a file is an overwrite and needs that right as STOR does. The
 			// library serves POSIX rename as a plain rename unless this type
@@ -266,7 +264,7 @@ func (s *session) Filecmd(r *sftp.Request) error {
 				return s.denied(r, "allowUserFileOverwrite")
 			}
 		}
-		if err := os.Rename(target.Path, destination.Path); err != nil {
+		if err := logging.Rename(s.log, target.Path, destination.Path); err != nil {
 			return s.failed(r, err)
 		}
 		s.log.Info("sftp rename", "from", target.Virtual, "to", destination.Virtual)
@@ -298,20 +296,20 @@ func (s *session) setstat(target vfs.Target, r *sftp.Request) error {
 	attrs := r.Attributes()
 	flags := r.AttrFlags()
 	if flags.Size {
-		if err := os.Truncate(target.Path, int64(attrs.Size)); err != nil {
+		if err := logging.Truncate(s.log, target.Path, int64(attrs.Size)); err != nil {
 			return err
 		}
 		s.log.Debug("sftp truncate", "file", target.Virtual, "size", attrs.Size)
 	}
 	if flags.Permissions {
-		if err := os.Chmod(target.Path, attrs.FileMode().Perm()); err != nil {
+		if err := logging.Chmod(s.log, target.Path, attrs.FileMode().Perm()); err != nil {
 			return err
 		}
 		s.log.Info("sftp chmod", "file", target.Virtual,
 			"mode", fmt.Sprintf("%04o", attrs.FileMode().Perm()))
 	}
 	if flags.Acmodtime {
-		if err := os.Chtimes(target.Path, attrs.AccessTime(), attrs.ModTime()); err != nil {
+		if err := logging.Chtimes(s.log, target.Path, attrs.AccessTime(), attrs.ModTime()); err != nil {
 			return err
 		}
 		s.log.Debug("sftp modification time set", "file", target.Virtual, "time", attrs.ModTime())
@@ -323,10 +321,9 @@ func (s *session) setstat(target vfs.Target, r *sftp.Request) error {
 	return nil
 }
 
-// Filelist serves listing and stat, which every account may do, exactly as
+// filelist serves listing and stat, which every account may do, exactly as
 // LIST needs no right over FTP.
-func (s *session) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
-	s.trace(r)
+func (s *session) filelist(r *sftp.Request) (sftp.ListerAt, error) {
 	user, err := s.account()
 	if err != nil {
 		return nil, err
@@ -339,6 +336,7 @@ func (s *session) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 	switch r.Method {
 	case "List":
 		entries, err := user.root.ReadDir(target)
+		logging.FileOp(s.log, "readdir", target.Path, err, slog.Int("entries", len(entries)))
 		if err != nil {
 			return nil, s.failed(r, err)
 		}
@@ -356,7 +354,7 @@ func (s *session) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 		return listerAt(infos), nil
 
 	case "Stat":
-		info, err := os.Stat(target.Path)
+		info, err := logging.Stat(s.log, target.Path)
 		if err != nil {
 			return nil, s.failed(r, err)
 		}
@@ -365,7 +363,7 @@ func (s *session) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 	case "Readlink":
 		// the client is told where a link points only if the target stays
 		// inside the base folder
-		destination, err := os.Readlink(target.Path)
+		destination, err := logging.Readlink(s.log, target.Path)
 		if err != nil {
 			return nil, s.failed(r, err)
 		}
@@ -377,7 +375,7 @@ func (s *session) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
 				"path", target.Virtual, "destination", destination)
 			return nil, sftp.ErrSSHFxPermissionDenied
 		}
-		info, err := os.Stat(resolved.Path)
+		info, err := logging.Stat(s.log, resolved.Path)
 		if err != nil {
 			return nil, s.failed(r, err)
 		}

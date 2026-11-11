@@ -58,11 +58,23 @@ type Chtimer interface {
 // when it has one. Whatever it holds open lives as long as ctx, which is what
 // stops a transfer that hangs.
 func Open(ctx context.Context, l Login, sshCfg config.SSH) (FS, error) {
+	started := time.Now()
 	fsys, err := openHost(ctx, l, sshCfg)
-	if err != nil || l.VaultPath == "" {
-		return fsys, err
+	traceLogin(ctx, "login", l, started, err)
+	if err != nil {
+		return nil, err
 	}
-	return openVault(fsys, l.VaultPath, l.VaultPassword)
+	fsys = traced(fsys, logOf(ctx), l, "host")
+	if l.VaultPath == "" {
+		return fsys, nil
+	}
+	started = time.Now()
+	vault, err := openVault(fsys, l.VaultPath, l.VaultPassword)
+	traceLogin(ctx, "vault unlock", l, started, err)
+	if err != nil {
+		return nil, err
+	}
+	return traced(vault, logOf(ctx), l, "vault"), nil
 }
 
 // CreateVault logs in to a host, with a login Checked read, and makes a new
@@ -76,12 +88,19 @@ func CreateVault(ctx context.Context, l Login, sshCfg config.SSH) (string, error
 	if !features.Has(features.Cryptomator) {
 		return "", errNoVaults
 	}
+	started := time.Now()
 	fsys, err := openHost(ctx, l, sshCfg)
+	traceLogin(ctx, "login", l, started, err)
 	if err != nil {
 		return "", err
 	}
+	fsys = traced(fsys, logOf(ctx), l, "host")
 	defer func() { _ = fsys.Close() }()
-	return createVault(fsys, l.VaultPath, l.VaultPassword)
+	started = time.Now()
+	key, err := createVault(fsys, l.VaultPath, l.VaultPassword)
+	// the recovery key is what opens the vault: it is never in a record
+	traceLogin(ctx, "vault create", l, started, err)
+	return key, err
 }
 
 // openHost logs in to a host, without regard to its vault.

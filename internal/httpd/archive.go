@@ -16,6 +16,7 @@ import (
 	"github.com/ulikunitz/xz"
 	"github.com/ulikunitz/xz/lzma"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -57,8 +58,8 @@ func (s *Server) archiveName(target vfs.Target) string {
 func (s *Server) handleArchive(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, cred credential) {
 	// the one refusal that can still be told to the client: once the archive
 	// has started, the status is sent
-	if _, err := os.ReadDir(target.Path); err != nil {
-		s.log.Error("http cannot read the folder", "path", target.Virtual, "error", err)
+	if _, err := logging.ReadDir(s.logFor(r), target.Path); err != nil {
+		s.logFor(r).Error("http cannot read the folder", "path", target.Virtual, "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
@@ -84,16 +85,16 @@ func (s *Server) handleArchive(set *settings, w http.ResponseWriter, r *http.Req
 		// the status went out with the first byte, so all that is left is to
 		// stop: the client is left with an archive that does not end
 		if errors.Is(err, context.Canceled) || isClientGone(err) {
-			s.log.Info("http archive download failed", "user", nameOf(cred.user), "folder", target.Virtual,
+			s.logFor(r).Info("http archive download failed", "user", nameOf(cred.user), "folder", target.Virtual,
 				"files", files, "bytes", sent, "address", clientAddress(set, r),
 				"took", time.Since(started).Round(time.Millisecond), "error", err)
 			return
 		}
-		s.log.Error("http archive download failed", "user", nameOf(cred.user), "folder", target.Virtual,
+		s.logFor(r).Error("http archive download failed", "user", nameOf(cred.user), "folder", target.Virtual,
 			"files", files, "bytes", sent, "address", clientAddress(set, r), "error", err)
 		return
 	}
-	s.log.Info("http archive download", "user", nameOf(cred.user), "folder", target.Virtual,
+	s.logFor(r).Info("http archive download", "user", nameOf(cred.user), "folder", target.Virtual,
 		"files", files, "bytes", sent, "address", clientAddress(set, r),
 		"took", time.Since(started).Round(time.Millisecond))
 }
@@ -133,7 +134,7 @@ func packArchive(out io.Writer, fill func(archive *tar.Writer) (int, error)) (in
 // walkArchive puts the entries of a folder of the served tree into archive.
 func (s *Server) walkArchive(ctx context.Context, set *settings, user *account, target vfs.Target, name string, archive *tar.Writer) (int, error) {
 	files := 0
-	err := filepath.WalkDir(target.Path, func(osPath string, entry fs.DirEntry, walkErr error) error {
+	err := logging.WalkDir(s.log, target.Path, func(osPath string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -174,7 +175,7 @@ func (s *Server) walkArchive(ctx context.Context, set *settings, user *account, 
 		case entry.Type().IsRegular(), entry.Type()&fs.ModeSymlink != 0:
 			// Stat rather than the entry's own info, so that a link is the
 			// file it points to; Resolve above made sure that is inside
-			info, err := os.Stat(osPath)
+			info, err := logging.Stat(s.log, osPath)
 			if err != nil || !info.Mode().IsRegular() {
 				return nil
 			}

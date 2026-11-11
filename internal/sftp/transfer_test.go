@@ -32,6 +32,11 @@ func TestDownload(t *testing.T) {
 		t.Errorf("content = %q", content)
 	}
 
+	if record := server.logs.find("sftp >"); record == nil {
+		t.Error("the request has to be traced with how it ended")
+	} else if record["method"] != "Get" || record["status"] != "ok" {
+		t.Errorf("answer record = %v", record)
+	}
 	if record := server.logs.find("sftp download"); record == nil {
 		t.Error("a download has to be reported")
 	} else if record["file"] != "/hello.txt" || record["bytes"] != int64(10) {

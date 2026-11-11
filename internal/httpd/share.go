@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -60,13 +61,13 @@ func (s *Server) sharedFile(set *settings, r *http.Request, target vfs.Target) b
 	if key == "" {
 		return false
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(s.logFor(r), target.Path)
 	if err != nil || !info.Mode().IsRegular() {
 		return false
 	}
 	expected := shareKey(s.shareSecret(set), target.Virtual, info)
 	if !hmac.Equal([]byte(key), []byte(expected)) {
-		s.log.Debug("http share key does not match", "file", target.Virtual,
+		s.logFor(r).Debug("http share key does not match", "file", target.Virtual,
 			"address", clientAddress(set, r))
 		return false
 	}
@@ -79,17 +80,17 @@ func (s *Server) sharedFile(set *settings, r *http.Request, target vfs.Target) b
 // already decided.
 func (s *Server) handleShare(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, cred credential) {
 	if cred.user == nil {
-		s.log.Debug("http share refused, nobody is signed in", "file", target.Virtual)
+		s.logFor(r).Debug("http share refused, nobody is signed in", "file", target.Virtual)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(s.logFor(r), target.Path)
 	if err != nil || !info.Mode().IsRegular() {
 		http.NotFound(w, r)
 		return
 	}
 	key := shareKey(s.shareSecret(set), target.Virtual, info)
-	s.log.Info("http share link created", "user", cred.user.name, "file", target.Virtual,
+	s.logFor(r).Info("http share link created", "user", cred.user.name, "file", target.Virtual,
 		"address", clientAddress(set, r))
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]string{

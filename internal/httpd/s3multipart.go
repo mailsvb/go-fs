@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // A multipart upload is how every S3 client sends a large file: it is opened,
@@ -65,7 +68,7 @@ func (s *Server) loadUpload(q *s3Request, id string, obj s3Object) (string, uplo
 		return "", uploadRecord{}, errNoSuchUpload
 	}
 	folder := filepath.Join(uploadsFolder(q.set), id)
-	data, err := os.ReadFile(filepath.Join(folder, uploadRecordName))
+	data, err := logging.ReadFile(s.log, filepath.Join(folder, uploadRecordName))
 	if err != nil {
 		return "", uploadRecord{}, errNoSuchUpload
 	}
@@ -84,7 +87,7 @@ func (s *Server) mayWrite(q *s3Request, obj s3Object) *s3Error {
 		return s3Err(http.StatusBadRequest, "InvalidArgument",
 			"A key that ends with a slash is a folder here, and a folder cannot be uploaded.")
 	}
-	info, err := os.Stat(obj.target.Path)
+	info, err := logging.Stat(s.log, obj.target.Path)
 	exists := err == nil
 	if exists && info.IsDir() {
 		return errFolderInTheWay
@@ -114,13 +117,13 @@ func (s *Server) s3CreateUpload(q *s3Request, obj s3Object) {
 	folder := filepath.Join(uploadsFolder(q.set), id)
 	record, _ := json.Marshal(uploadRecord{Owner: q.user.name, Bucket: obj.bucket, Key: obj.key,
 		Initiated: time.Now().UTC()})
-	if err := os.MkdirAll(folder, 0o700); err != nil {
+	if err := logging.MkdirAll(s.log, folder, 0o700); err != nil {
 		s.log.Error("s3 cannot create the upload folder", "path", folder, "error", err)
 		q.fail(errInternal)
 		return
 	}
-	if err := os.WriteFile(filepath.Join(folder, uploadRecordName), record, 0o600); err != nil {
-		_ = os.RemoveAll(folder)
+	if err := logging.WriteFile(s.log, filepath.Join(folder, uploadRecordName), record, 0o600); err != nil {
+		_ = logging.RemoveAll(s.log, folder)
 		s.log.Error("s3 cannot record the upload", "path", folder, "error", err)
 		q.fail(errInternal)
 		return
@@ -179,14 +182,14 @@ func (s *Server) s3UploadPart(q *s3Request, obj s3Object, id, number, copySource
 	// the MD5 is written before the part is put in place, so a part that is
 	// there always has one; a part sent again replaces both
 	partPath := filepath.Join(folder, partName(part))
-	if err := os.WriteFile(partPath+".etag", []byte(etag), 0o600); err != nil {
-		_ = os.Remove(staged)
+	if err := logging.WriteFile(s.log, partPath+".etag", []byte(etag), 0o600); err != nil {
+		_ = logging.Remove(s.log, staged)
 		s.log.Error("s3 cannot record the part", "path", partPath, "error", err)
 		q.fail(errInternal)
 		return
 	}
-	if err := os.Rename(staged, partPath); err != nil {
-		_ = os.Remove(staged)
+	if err := logging.Rename(s.log, staged, partPath); err != nil {
+		_ = logging.Remove(s.log, staged)
 		s.log.Error("s3 cannot store the part", "path", partPath, "error", err)
 		q.fail(errInternal)
 		return
@@ -215,7 +218,7 @@ func (s *Server) stagePartCopy(q *s3Request, folder, copySource string) (string,
 	if !q.may(source.target.Virtual, actRead) {
 		return "", "", errAccessDenied
 	}
-	info, err := os.Stat(source.target.Path)
+	info, err := logging.Stat(s.log, source.target.Path)
 	if err != nil || source.folder || !info.Mode().IsRegular() {
 		return "", "", errNoSuchKey
 	}
@@ -337,15 +340,15 @@ func (s *Server) s3CompleteUpload(q *s3Request, obj s3Object, id string) {
 	}
 
 	started := time.Now()
-	joined, err := os.CreateTemp(folder, "joined-*")
+	joined, err := logging.CreateTemp(s.log, folder, "joined-*")
 	if err != nil {
 		s.log.Error("s3 cannot join the parts", "path", folder, "error", err)
 		q.fail(errInternal)
 		return
 	}
-	defer func() { _ = os.Remove(joined.Name()) }()
+	defer func() { _ = logging.Remove(s.log, joined.Name()) }()
 	for _, part := range chosen {
-		if err = appendFile(joined, filepath.Join(folder, partName(part.number))); err != nil {
+		if err = appendFile(s.log, joined, filepath.Join(folder, partName(part.number))); err != nil {
 			break
 		}
 	}
@@ -362,7 +365,7 @@ func (s *Server) s3CompleteUpload(q *s3Request, obj s3Object, id string) {
 		q.fail(failure)
 		return
 	}
-	_ = os.RemoveAll(folder)
+	_ = logging.RemoveAll(s.log, folder)
 
 	etag := fmt.Sprintf(`"%s-%d"`, hex.EncodeToString(sums.Sum(nil)), len(chosen))
 	s.log.Info("s3 upload", "user", q.user.name, "file", obj.target.Virtual, "bytes", total,
@@ -378,8 +381,8 @@ func (s *Server) s3CompleteUpload(q *s3Request, obj s3Object, id string) {
 		Key: obj.key, ETag: etag})
 }
 
-func appendFile(to *os.File, path string) error {
-	from, err := os.Open(path)
+func appendFile(log *slog.Logger, to *os.File, path string) error {
+	from, err := logging.Open(log, path)
 	if err != nil {
 		return err
 	}
@@ -395,7 +398,7 @@ func (s *Server) s3AbortUpload(q *s3Request, obj s3Object, id string) {
 		q.fail(failure)
 		return
 	}
-	if err := os.RemoveAll(folder); err != nil {
+	if err := logging.RemoveAll(s.log, folder); err != nil {
 		s.log.Error("s3 cannot remove the upload", "path", folder, "error", err)
 		q.fail(errInternal)
 		return
@@ -475,12 +478,12 @@ func (s *Server) s3ListUploads(q *s3Request) {
 		Initiated    string  `xml:"Initiated"`
 	}
 	var uploads []upload
-	entries, _ := os.ReadDir(uploadsFolder(q.set))
+	entries, _ := logging.ReadDir(s.log, uploadsFolder(q.set))
 	for _, entry := range entries {
 		if !entry.IsDir() || !uploadIDPattern.MatchString(entry.Name()) {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(uploadsFolder(q.set), entry.Name(), uploadRecordName))
+		data, err := logging.ReadFile(s.log, filepath.Join(uploadsFolder(q.set), entry.Name(), uploadRecordName))
 		if err != nil {
 			continue
 		}

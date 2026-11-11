@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -65,6 +66,8 @@ type Server struct {
 	snapshot atomic.Pointer[settings]
 	root     *vfs.Root
 	log      *slog.Logger
+	// requests numbers the requests, for the req of their records
+	requests atomic.Uint64
 
 	// tokens signs and reads the session tokens a logged in browser carries.
 	tokens *signer
@@ -196,7 +199,7 @@ func (s *Server) settings() *settings {
 // already filtered. root is the served folder: where it ignores case the path
 // patterns have to as well, and it is the folder a token without its own is
 // served.
-func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.User, tokens []config.Token, servers []config.Server, root *vfs.Root) (*settings, error) {
+func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.User, tokens []config.Token, servers []config.Server, root *vfs.Root, logger *slog.Logger) (*settings, error) {
 	fold := root.CaseInsensitive()
 	var web, s3, registry []config.User
 	for _, user := range users {
@@ -226,7 +229,7 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 	}
 	var store *registryStore
 	if cfg.RegistryBaseFolder != "" {
-		store, err = newRegistryStore(cfg.RegistryBaseFolder)
+		store, err = newRegistryStore(cfg.RegistryBaseFolder, logger)
 		if err != nil {
 			return nil, fmt.Errorf("general.baseFolderRegistry: %w", err)
 		}
@@ -263,7 +266,7 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 		}
 		proxies = append(proxies, prefix)
 	}
-	disks, err := openDisks(cfg.DisksFolder)
+	disks, err := openDisks(cfg.DisksFolder, logger)
 	if err != nil {
 		return nil, fmt.Errorf("general.baseFolderDisks: %w", err)
 	}
@@ -291,7 +294,7 @@ func (s *Server) Reload(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, 
 		https.Cert != current.https.Cert || https.Key != current.https.Key {
 		return service.ErrNeedsRestart
 	}
-	next, err := newSettings(cfg, https, sshCfg, users, tokens, servers, s.root)
+	next, err := newSettings(cfg, https, sshCfg, users, tokens, servers, s.root, s.log)
 	if err != nil {
 		// a broken account or pattern leaves the running one in place
 		return err
@@ -324,7 +327,7 @@ func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.
 		return nil, fmt.Errorf("general.baseFolderFiles: %w", err)
 	}
 
-	set, err := newSettings(cfg, https, sshCfg, users, bearers, servers, root)
+	set, err := newSettings(cfg, https, sshCfg, users, bearers, servers, root, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -400,13 +403,21 @@ func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.
 	return server, nil
 }
 
+// logFor is the logger of a request: the server's, with the number of the
+// request, so that every record a handler writes ties up with the request's
+// "http <" and "http >".
+func (s *Server) logFor(r *http.Request) *slog.Logger {
+	return logging.From(r.Context(), s.log)
+}
+
 // connState is the http.Server's report of a connection's life. Only the
 // ends of it are recorded: the states in between are per request, and the
 // request has a record of its own.
 func (s *Server) connState(conn net.Conn, state http.ConnState) {
 	switch state {
 	case http.StateNew:
-		s.log.Debug("http connection established", "client", conn.RemoteAddr().String())
+		s.log.Debug("http connection established", "client", conn.RemoteAddr().String(),
+			"local", conn.LocalAddr().String())
 	case http.StateClosed, http.StateHijacked:
 		s.log.Debug("http connection closed", "client", conn.RemoteAddr().String())
 	}
@@ -585,21 +596,65 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// one snapshot for the whole request, so a reload halfway through cannot
 	// authenticate against one account list and authorize against another
 	set := s.settings()
-	// client keeps the port, which is what ties the records of one connection
-	// together on a busy server, as it does for the FTP trace
-	s.log.Debug("http request", "method", r.Method, "url", r.URL.RequestURI(),
-		"client", r.RemoteAddr, "proto", r.Proto, "tls", r.TLS != nil,
-		"userAgent", r.UserAgent(), "contentLength", r.ContentLength)
+	// every record of the request carries its number, which is what ties
+	// them together where one connection carries several requests at once,
+	// as HTTP/2 does; client keeps the port, which ties the requests of one
+	// connection together as it does for the FTP trace
+	id := s.requests.Add(1)
+	// only req is added to the logger the handlers take: the records of the
+	// handlers name the address as "address", which honours a proxy, and a
+	// Subsonic record's "client" is the app
+	log := s.logFor(r).With("req", id)
+	trace := log.Enabled(r.Context(), slog.LevelDebug)
+	if trace {
+		// the query is shown with its credentials masked: a Subsonic
+		// password, a Jellyfin api_key, the key of a share link, an S3
+		// signature; the header with what authenticates masked
+		attrs := []slog.Attr{
+			slog.String("method", r.Method),
+			slog.String("url", logging.URL(r.URL)),
+			slog.String("client", r.RemoteAddr),
+			slog.String("host", r.Host),
+			slog.String("proto", r.Proto),
+			slog.Any("header", logging.Headers(r.Header)),
+			slog.Int64("contentLength", r.ContentLength),
+		}
+		if r.TLS != nil {
+			attrs = append(attrs, slog.Any("tls", logging.TLS(r.TLS)))
+		}
+		log.LogAttrs(r.Context(), slog.LevelDebug, "http <", attrs...)
+	}
+	r = r.WithContext(logging.WithLogger(r.Context(), log))
 
 	// the answer is recorded when it is complete, with what the handler
 	// decided and how long it took: one line per request, which is what the
 	// question "what happened at 14:32" is answered from
-	recorder := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
+	recorder := &responseRecorder{ResponseWriter: w, status: http.StatusOK, trace: trace}
+	var body *countingBody
+	if trace && r.Body != nil && r.Body != http.NoBody {
+		body = &countingBody{ReadCloser: r.Body}
+		r.Body = body
+	}
 	started := time.Now()
 	defer func() {
-		s.log.Debug("http response", "method", r.Method, "url", r.URL.Path,
-			"client", r.RemoteAddr, "status", recorder.status, "bytes", recorder.bytes,
-			"took", time.Since(started).Round(time.Millisecond))
+		if !trace {
+			return
+		}
+		attrs := []slog.Attr{
+			slog.String("method", r.Method),
+			slog.String("url", r.URL.Path),
+			slog.String("client", r.RemoteAddr),
+			slog.Int("status", recorder.status),
+			slog.Int64("bytes", recorder.bytes),
+			slog.Duration("took", time.Since(started).Round(time.Millisecond)),
+		}
+		if recorder.header != nil {
+			attrs = append(attrs, slog.Any("header", logging.Headers(recorder.header)))
+		}
+		if body != nil {
+			attrs = append(attrs, slog.Int64("bodyRead", body.n))
+		}
+		log.LogAttrs(r.Context(), slog.LevelDebug, "http >", attrs...)
 	}()
 	w = recorder
 
@@ -664,7 +719,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !target.Valid {
 		// a path that leaves the served folder is answered as a path that is
 		// not there, which is what it is from the client's side
-		s.log.Debug("http path refused", "url", r.URL.Path)
+		s.logFor(r).Debug("http path refused", "url", r.URL.Path)
 		http.NotFound(w, r)
 		return
 	}
@@ -695,14 +750,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// a share link stands in for an account, for the download of the one
 	// file it was made for and nothing else
 	if s.sharedFile(set, r, target) {
-		s.log.Info("http share link used", "file", target.Virtual,
+		s.logFor(r).Info("http share link used", "file", target.Virtual,
 			"address", clientAddress(set, r))
 		s.handleGet(set, w, r, target, credential{method: "share"})
 		return
 	}
 	// and so does the link a Sonos speaker was told to play a file by
 	if s.sonosFile(set, r, target) {
-		s.log.Debug("http sonos link used", "file", target.Virtual,
+		s.logFor(r).Debug("http sonos link used", "file", target.Virtual,
 			"address", clientAddress(set, r))
 		s.handleGet(set, w, r, target, credential{method: "sonos"})
 		return
@@ -714,7 +769,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// with a header; they list a folder, so they need what browsing it
 		// with GET needs, and a protected folder still needs an account
 		method = http.MethodGet
-		s.log.Debug("http directory reader with the DLS credentials", "path", target.Virtual,
+		s.logFor(r).Debug("http directory reader with the DLS credentials", "path", target.Virtual,
 			"address", clientAddress(set, r))
 	}
 	cred, ok := s.authenticate(set, w, r, method, target.Virtual)
@@ -767,7 +822,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	act := actionOf(r.Method, target)
 	if !s.permits(set, user, method, target.Virtual, act) {
-		s.log.Debug("http request not allowed for the account",
+		s.logFor(r).Debug("http request not allowed for the account",
 			"user", nameOf(user), "method", r.Method, "action", act, "path", target.Virtual)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -813,7 +868,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleDirectoryReader(set, w, r, target, user)
 	default:
-		s.log.Debug("http method not allowed", "method", r.Method, "url", r.URL.Path)
+		s.logFor(r).Debug("http method not allowed", "method", r.Method, "url", r.URL.Path)
 		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, POST, MKCOL, MOVE")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
@@ -827,17 +882,24 @@ type responseRecorder struct {
 	status int
 	bytes  int64
 	wrote  bool
+	// trace keeps the header as it was sent, for the record of the answer
+	trace  bool
+	header http.Header
 }
 
 func (r *responseRecorder) WriteHeader(status int) {
 	if !r.wrote {
 		r.status = status
 		r.wrote = true
+		r.keepHeader()
 	}
 	r.ResponseWriter.WriteHeader(status)
 }
 
 func (r *responseRecorder) Write(b []byte) (int, error) {
+	if !r.wrote {
+		r.keepHeader()
+	}
 	r.wrote = true
 	n, err := r.ResponseWriter.Write(b)
 	r.bytes += int64(n)
@@ -846,6 +908,27 @@ func (r *responseRecorder) Write(b []byte) (int, error) {
 
 func (r *responseRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
+}
+
+// keepHeader copies the header the moment it goes out, since a handler may
+// change the map afterwards to no effect.
+func (r *responseRecorder) keepHeader() {
+	if r.trace {
+		r.header = r.ResponseWriter.Header().Clone()
+	}
+}
+
+// countingBody counts what a handler read of a request's body, which can be
+// less than the client sent: a refused upload is answered unread.
+type countingBody struct {
+	io.ReadCloser
+	n int64
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.n += int64(n)
+	return n, err
 }
 
 // headerTimeout is how long the request line and the headers may take. The

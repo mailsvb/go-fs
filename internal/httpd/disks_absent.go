@@ -2,12 +2,15 @@
 
 package httpd
 
-import "net/http"
+import (
+	"log/slog"
+	"net/http"
+)
 
 // diskFolder is nothing in a binary built without the Disks page.
 type diskFolder = *struct{}
 
-func openDisks(string) (diskFolder, error) { return nil, nil }
+func openDisks(string, *slog.Logger) (diskFolder, error) { return nil, nil }
 
 func disksPageAction(*http.Request) string { return "" }
 

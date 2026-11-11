@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 var (
@@ -158,6 +160,9 @@ func (c *conn) withData(opening string, work func(data net.Conn) (code, message 
 		return
 	}
 
+	// at debug the data connection is recorded as it opens and closes, with
+	// what crossed it; that costs the sendfile path, at debug only
+	data = logging.Conn(c.log.With("user", c.username, "mode", mode), "ftp data", data)
 	data = c.boundTransfer(data)
 	c.beginTransfer(data)
 	code, message := work(data)

@@ -11,6 +11,7 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,6 +20,8 @@ import (
 	"time"
 
 	"github.com/opencontainers/go-digest"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // An upload is a folder of its own under _uploads, holding the bytes received
@@ -75,12 +78,12 @@ func (q *registryRequest) startUpload() {
 	if value := query.Get("digest"); value != "" {
 		d, ok := parseBlobDigest(value)
 		if !ok {
-			_ = os.RemoveAll(q.store.uploadPath(id))
+			_ = logging.RemoveAll(q.s.logFor(q.r), q.store.uploadPath(id))
 			q.fail(errDigestInvalid.with(value))
 			return
 		}
 		if failure := q.appendChunk(id, &upload, -1, -1); failure != nil {
-			_ = os.RemoveAll(q.store.uploadPath(id))
+			_ = logging.RemoveAll(q.s.logFor(q.r), q.store.uploadPath(id))
 			q.fail(failure)
 			return
 		}
@@ -136,17 +139,17 @@ func (q *registryRequest) createUpload() (string, registryUpload, error) {
 	upload := registryUpload{Repository: q.route.name, Owner: nameOf(q.user),
 		Started: time.Now().UTC(), Hash: state}
 	folder := q.store.uploadPath(id)
-	if err := os.MkdirAll(folder, 0o700); err != nil {
+	if err := logging.MkdirAll(q.s.logFor(q.r), folder, 0o700); err != nil {
 		return "", registryUpload{}, err
 	}
-	data, err := os.OpenFile(filepath.Join(folder, uploadDataFile), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	data, err := logging.OpenFile(q.s.logFor(q.r), filepath.Join(folder, uploadDataFile), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		_ = os.RemoveAll(folder)
+		_ = logging.RemoveAll(q.s.logFor(q.r), folder)
 		return "", registryUpload{}, err
 	}
 	_ = data.Close()
 	if err := q.saveUpload(id, upload); err != nil {
-		_ = os.RemoveAll(folder)
+		_ = logging.RemoveAll(q.s.logFor(q.r), folder)
 		return "", registryUpload{}, err
 	}
 	return id, upload, nil
@@ -157,7 +160,7 @@ func (q *registryRequest) saveUpload(id string, upload registryUpload) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(filepath.Join(q.store.uploadPath(id), uploadRecordFile), data)
+	return writeFileAtomic(q.s.logFor(q.r), filepath.Join(q.store.uploadPath(id), uploadRecordFile), data)
 }
 
 // loadUpload reads the record of an upload this request may continue: one of
@@ -167,7 +170,7 @@ func (q *registryRequest) loadUpload(id string) (registryUpload, *registryError)
 	if !uploadIDPattern.MatchString(id) {
 		return registryUpload{}, errUploadUnknown.with(id)
 	}
-	data, err := os.ReadFile(filepath.Join(q.store.uploadPath(id), uploadRecordFile))
+	data, err := logging.ReadFile(q.s.logFor(q.r), filepath.Join(q.store.uploadPath(id), uploadRecordFile))
 	if err != nil {
 		return registryUpload{}, errUploadUnknown.with(id)
 	}
@@ -216,7 +219,7 @@ func (q *registryRequest) appendChunk(id string, upload *registryUpload, start, 
 		return errSizeInvalid.with(fmt.Sprintf("a blob cannot be larger than %d bytes", limit))
 	}
 	path := filepath.Join(q.store.uploadPath(id), uploadDataFile)
-	file, err := os.OpenFile(path, os.O_WRONLY, 0o600)
+	file, err := logging.OpenFile(q.s.logFor(q.r), path, os.O_WRONLY, 0o600)
 	if err != nil {
 		return errUploadUnknown.with(id)
 	}
@@ -364,20 +367,20 @@ func (q *registryRequest) completeUpload(id string, upload *registryUpload, d di
 	data := filepath.Join(folder, uploadDataFile)
 	actual, err := uploadDigest(data, upload, d.Algorithm())
 	if err != nil {
-		_ = os.RemoveAll(folder)
+		_ = logging.RemoveAll(q.s.logFor(q.r), folder)
 		q.internal("cannot hash an upload", err)
 		return
 	}
 	if actual != d {
-		_ = os.RemoveAll(folder)
+		_ = logging.RemoveAll(q.s.logFor(q.r), folder)
 		q.s.log.Info("registry upload refused, the digest does not match", "repository", q.route.name,
 			"digest", d.String(), "actual", actual.String(), "user", nameOf(q.user),
 			"address", clientAddress(q.set, q.r))
 		q.fail(errDigestInvalid.with(d.String()))
 		return
 	}
-	if err := syncFile(data); err != nil {
-		_ = os.RemoveAll(folder)
+	if err := syncFile(q.s.logFor(q.r), data); err != nil {
+		_ = logging.RemoveAll(q.s.logFor(q.r), folder)
 		q.internal("cannot write an upload", err)
 		return
 	}
@@ -387,7 +390,7 @@ func (q *registryRequest) completeUpload(id string, upload *registryUpload, d di
 		err = q.store.linkBlob(q.route.name, d)
 	}
 	q.s.registryMu.RUnlock()
-	_ = os.RemoveAll(folder)
+	_ = logging.RemoveAll(q.s.logFor(q.r), folder)
 	if err != nil {
 		q.internal("cannot store a blob", err)
 		return
@@ -427,8 +430,8 @@ func uploadDigest(path string, upload *registryUpload, algorithm digest.Algorith
 
 // syncFile flushes a file to the disk, so that what is renamed into the store
 // is there after a crash.
-func syncFile(path string) error {
-	file, err := os.OpenFile(path, os.O_RDWR, 0)
+func syncFile(log *slog.Logger, path string) error {
+	file, err := logging.OpenFile(log, path, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
@@ -464,7 +467,7 @@ func (q *registryRequest) cancelUpload() {
 		q.fail(failure)
 		return
 	}
-	if err := os.RemoveAll(q.store.uploadPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := logging.RemoveAll(q.s.logFor(q.r), q.store.uploadPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		q.internal("cannot cancel an upload", err)
 		return
 	}

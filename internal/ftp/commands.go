@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -198,7 +199,7 @@ func cmdCwd(c *conn, arg string) {
 		c.reply("530", "CWD not successful")
 		return
 	}
-	if info, err := os.Stat(target.Path); err != nil || !info.IsDir() {
+	if info, err := logging.Stat(c.log, target.Path); err != nil || !info.IsDir() {
 		c.log.Debug("ftp CWD folder not found", "path", folder, "error", err)
 		c.reply("530", "CWD not successful")
 		return
@@ -216,7 +217,7 @@ func cmdSize(c *conn, arg string) {
 	}
 	target := c.root.Resolve(c.cwd, arg)
 	if target.Valid {
-		if info, err := os.Stat(target.Path); err == nil && info.Mode().IsRegular() {
+		if info, err := logging.Stat(c.log, target.Path); err == nil && info.Mode().IsRegular() {
 			c.reply("213", strconv.FormatInt(info.Size(), 10))
 			return
 		}
@@ -227,13 +228,13 @@ func cmdSize(c *conn, arg string) {
 func cmdDele(c *conn, arg string) {
 	target := c.root.Resolve(c.cwd, arg)
 	if target.Valid {
-		if info, err := os.Stat(target.Path); err == nil && info.Mode().IsRegular() {
+		if info, err := logging.Stat(c.log, target.Path); err == nil && info.Mode().IsRegular() {
 			if !c.perms.FileDelete {
 				c.log.Debug("ftp DELE refused, the account may not delete files", "file", target.Virtual)
 				c.reply("550", "Permission denied")
 				return
 			}
-			if err := os.Remove(target.Path); err != nil {
+			if err := logging.Remove(c.log, target.Path); err != nil {
 				c.log.Warn("ftp delete failed", "user", c.username, "file", target.Virtual, "error", err)
 				c.reply("550", "File not found")
 				return
@@ -273,13 +274,13 @@ func cmdRmd(recursive bool) handler {
 			c.reply("550", "Permission denied")
 			return
 		}
-		if info, err := os.Stat(target.Path); err != nil || !info.IsDir() {
+		if info, err := logging.Stat(c.log, target.Path); err != nil || !info.IsDir() {
 			c.log.Debug("ftp RMD folder not found", "path", arg, "error", err)
 			c.reply("550", "Folder not found")
 			return
 		}
 		if !recursive {
-			entries, err := os.ReadDir(target.Path)
+			entries, err := logging.ReadDir(c.log, target.Path)
 			if err != nil {
 				c.log.Debug("ftp RMD cannot read the folder", "folder", target.Virtual, "error", err)
 				c.reply("550", "Folder not found")
@@ -315,12 +316,12 @@ func cmdMkd(c *conn, arg string) {
 		c.reply("550", "Permission denied")
 		return
 	}
-	if info, err := os.Stat(target.Path); err == nil && info.IsDir() {
+	if info, err := logging.Stat(c.log, target.Path); err == nil && info.IsDir() {
 		c.log.Debug("ftp MKD refused, the folder exists", "folder", target.Virtual)
 		c.reply("550", "Folder exists")
 		return
 	}
-	if err := os.MkdirAll(target.Path, 0o755); err != nil {
+	if err := logging.MkdirAll(c.log, target.Path, 0o755); err != nil {
 		c.log.Warn("ftp mkdir failed", "user", c.username, "folder", target.Virtual, "error", err)
 		c.reply("550", "Permission denied")
 		return
@@ -390,7 +391,7 @@ func cmdRnfr(c *conn, arg string) {
 	}
 	target := c.root.Resolve(c.cwd, arg)
 	if target.Valid && !target.IsRoot() {
-		if info, err := os.Stat(target.Path); err == nil && info.Mode().IsRegular() {
+		if info, err := logging.Stat(c.log, target.Path); err == nil && info.Mode().IsRegular() {
 			c.renameFrom = target.Path
 			c.renameFromVirtual = target.Virtual
 			c.reply("350", "File exists")
@@ -415,12 +416,12 @@ func cmdRnto(c *conn, arg string) {
 		c.reply("550", "File already exists")
 		return
 	}
-	if _, err := os.Stat(target.Path); err == nil {
+	if _, err := logging.Stat(c.log, target.Path); err == nil {
 		c.log.Debug("ftp RNTO refused, the destination exists", "to", target.Virtual)
 		c.reply("550", "File already exists")
 		return
 	}
-	if err := os.Rename(c.renameFrom, target.Path); err != nil {
+	if err := logging.Rename(c.log, c.renameFrom, target.Path); err != nil {
 		c.log.Warn("ftp rename failed", "user", c.username,
 			"from", c.renameFromVirtual, "to", target.Virtual, "error", err)
 		c.reply("550", "File rename failed")
@@ -436,7 +437,7 @@ func cmdRnto(c *conn, arg string) {
 func cmdMdtm(c *conn, arg string) {
 	target := c.root.Resolve(c.cwd, arg)
 	if target.Valid {
-		if info, err := os.Stat(target.Path); err == nil && info.Mode().IsRegular() {
+		if info, err := logging.Stat(c.log, target.Path); err == nil && info.Mode().IsRegular() {
 			c.reply("213", formatMLSDTime(info.ModTime()))
 			return
 		}
@@ -465,8 +466,8 @@ func cmdMfmt(c *conn, arg string) {
 	}
 	target := c.root.Resolve(c.cwd, strings.TrimSpace(name))
 	if target.Valid {
-		if info, err := os.Stat(target.Path); err == nil && info.Mode().IsRegular() {
-			if err := os.Chtimes(target.Path, when, when); err != nil {
+		if info, err := logging.Stat(c.log, target.Path); err == nil && info.Mode().IsRegular() {
+			if err := logging.Chtimes(c.log, target.Path, when, when); err != nil {
 				c.log.Warn("ftp cannot set the modification time", "user", c.username,
 					"file", target.Virtual, "error", err)
 				c.reply("550", "File does not exist")
@@ -495,7 +496,7 @@ func cmdStat(c *conn, arg string) {
 		c.reply("450", "File not found")
 		return
 	}
-	info, err := os.Stat(target.Path)
+	info, err := logging.Stat(c.log, target.Path)
 	if err != nil {
 		c.reply("450", "File not found")
 		return
@@ -550,7 +551,7 @@ func cmdSite(c *conn, arg string) {
 		c.reply("550", "File does not exist")
 		return
 	}
-	if _, err := os.Stat(target.Path); err != nil {
+	if _, err := logging.Stat(c.log, target.Path); err != nil {
 		c.reply("550", "File does not exist")
 		return
 	}
@@ -559,7 +560,7 @@ func cmdSite(c *conn, arg string) {
 		c.reply("501", "Syntax error in mode")
 		return
 	}
-	if err := os.Chmod(target.Path, os.FileMode(bits)); err != nil {
+	if err := logging.Chmod(c.log, target.Path, os.FileMode(bits)); err != nil {
 		c.log.Warn("ftp chmod failed", "user", c.username, "file", target.Virtual,
 			"mode", mode, "error", err)
 		c.reply("550", "File does not exist")

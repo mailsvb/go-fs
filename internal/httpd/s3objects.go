@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // s3GetObject answers GetObject and HeadObject. A key ending with a slash is a
@@ -22,7 +24,7 @@ func (s *Server) s3GetObject(q *s3Request, obj s3Object) {
 		q.fail(errAccessDenied)
 		return
 	}
-	info, err := os.Stat(obj.target.Path)
+	info, err := logging.Stat(s.log, obj.target.Path)
 	if err != nil || obj.folder != info.IsDir() || (!obj.folder && !info.Mode().IsRegular()) {
 		// "docs" is not the folder "docs/", and "docs/" is not the file "docs"
 		q.fail(errNoSuchKey)
@@ -38,7 +40,7 @@ func (s *Server) s3GetObject(q *s3Request, obj s3Object) {
 		return
 	}
 
-	file, err := os.Open(obj.target.Path)
+	file, err := logging.Open(s.log, obj.target.Path)
 	if err != nil {
 		s.log.Warn("s3 cannot open the file", "path", obj.target.Virtual, "error", err)
 		q.fail(errNoSuchKey)
@@ -75,7 +77,7 @@ func (s *Server) s3PutObject(q *s3Request, obj s3Object) {
 		s.s3PutFolder(q, obj)
 		return
 	}
-	info, err := os.Stat(obj.target.Path)
+	info, err := logging.Stat(s.log, obj.target.Path)
 	exists := err == nil
 	if exists && info.IsDir() {
 		q.fail(errFolderInTheWay)
@@ -109,7 +111,7 @@ func (s *Server) s3PutObject(q *s3Request, obj s3Object) {
 		q.fail(failure)
 		return
 	}
-	defer func() { _ = os.Remove(staged) }()
+	defer func() { _ = logging.Remove(s.log, staged) }()
 
 	replaced, failure := s.placeS3File(q, obj, staged)
 	if failure != nil {
@@ -170,11 +172,11 @@ func checkWriteConditions(r *http.Request, info os.FileInfo, exists bool) *s3Err
 // served folder before that: a body whose hash does not match is thrown away
 // rather than replacing what was there.
 func (s *Server) stageS3Body(q *s3Request, body *s3Body, folder string) (string, int64, *s3Error) {
-	if err := os.MkdirAll(folder, 0o700); err != nil {
+	if err := logging.MkdirAll(s.log, folder, 0o700); err != nil {
 		s.log.Error("s3 cannot create the upload staging folder", "path", folder, "error", err)
 		return "", 0, errInternal
 	}
-	file, err := os.CreateTemp(folder, "s3-*.part")
+	file, err := logging.CreateTemp(s.log, folder, "s3-*.part")
 	if err != nil {
 		s.log.Error("s3 cannot create a staging file", "path", folder, "error", err)
 		return "", 0, errInternal
@@ -204,7 +206,7 @@ func (s *Server) stageS3Body(q *s3Request, body *s3Body, folder string) (string,
 		failure = body.verify()
 	}
 	if failure != nil {
-		_ = os.Remove(file.Name())
+		_ = logging.Remove(s.log, file.Name())
 		return "", written, failure
 	}
 	return file.Name(), written, nil
@@ -218,7 +220,7 @@ func (s *Server) placeS3File(q *s3Request, obj s3Object, staged string) (bool, *
 	lock := s.uploadLock(obj.target.Path)
 	lock.Lock()
 	defer lock.Unlock()
-	info, err := os.Stat(obj.target.Path)
+	info, err := logging.Stat(s.log, obj.target.Path)
 	exists := err == nil
 	if exists && info.IsDir() {
 		return false, errFolderInTheWay
@@ -230,14 +232,14 @@ func (s *Server) placeS3File(q *s3Request, obj s3Object, staged string) (bool, *
 	if !q.may(obj.target.Virtual, act) {
 		return false, errAccessDenied
 	}
-	if err := os.MkdirAll(filepath.Dir(obj.target.Path), 0o755); err != nil {
+	if err := logging.MkdirAll(s.log, filepath.Dir(obj.target.Path), 0o755); err != nil {
 		if errors.Is(err, os.ErrExist) || isNotDir(err) {
 			return false, errFileInTheWay
 		}
 		s.log.Error("s3 cannot create the folder", "path", obj.target.Virtual, "error", err)
 		return false, errInternal
 	}
-	if err := finalizeUpload(staged, obj.target.Path, exists); err != nil {
+	if err := finalizeUpload(s.log, staged, obj.target.Path, exists); err != nil {
 		s.log.Error("s3 cannot store the upload", "path", obj.target.Virtual, "error", err)
 		return false, errInternal
 	}
@@ -293,13 +295,13 @@ func (s *Server) s3PutFolder(q *s3Request, obj s3Object) {
 // makeFolder creates the folder of a folder key, which is no error when it
 // is already there: S3 overwrites an object as a matter of course.
 func (s *Server) makeFolder(q *s3Request, obj s3Object) *s3Error {
-	if info, err := os.Stat(obj.target.Path); err == nil {
+	if info, err := logging.Stat(s.log, obj.target.Path); err == nil {
 		if !info.IsDir() {
 			return errFileInTheWay
 		}
 		return nil
 	}
-	if err := os.MkdirAll(obj.target.Path, 0o755); err != nil {
+	if err := logging.MkdirAll(s.log, obj.target.Path, 0o755); err != nil {
 		if isNotDir(err) {
 			return errFileInTheWay
 		}
@@ -352,7 +354,7 @@ func (s *Server) s3CopyObject(q *s3Request, obj s3Object, header string) {
 		q.fail(errAccessDenied)
 		return
 	}
-	info, err := os.Stat(source.target.Path)
+	info, err := logging.Stat(s.log, source.target.Path)
 	if err != nil || source.folder != info.IsDir() || (!source.folder && !info.Mode().IsRegular()) {
 		q.fail(errNoSuchKey)
 		return
@@ -401,7 +403,7 @@ func (s *Server) s3CopyObject(q *s3Request, obj s3Object, header string) {
 			LastModified: info.ModTime().UTC().Format(s3TimeFormat), ETag: syntheticETag(info)})
 		return
 	}
-	target, err := os.Stat(obj.target.Path)
+	target, err := logging.Stat(s.log, obj.target.Path)
 	exists := err == nil
 	if exists && target.IsDir() {
 		q.fail(errFolderInTheWay)
@@ -421,7 +423,7 @@ func (s *Server) s3CopyObject(q *s3Request, obj s3Object, header string) {
 		q.fail(failure)
 		return
 	}
-	defer func() { _ = os.Remove(staged) }()
+	defer func() { _ = logging.Remove(s.log, staged) }()
 	replaced, failure := s.placeS3File(q, obj, staged)
 	if failure != nil {
 		q.fail(failure)
@@ -458,17 +460,17 @@ func checkCopyConditions(r *http.Request, info os.FileInfo) *s3Error {
 // stageCopy copies length bytes of a source object from offset into a new
 // file in folder, and reports the file and the ETag of what it holds.
 func (s *Server) stageCopy(source s3Object, folder string, offset, length int64) (string, string, *s3Error) {
-	in, err := os.Open(source.target.Path)
+	in, err := logging.Open(s.log, source.target.Path)
 	if err != nil {
 		s.log.Warn("s3 cannot open the copy source", "path", source.target.Virtual, "error", err)
 		return "", "", errNoSuchKey
 	}
 	defer func() { _ = in.Close() }()
-	if err := os.MkdirAll(folder, 0o700); err != nil {
+	if err := logging.MkdirAll(s.log, folder, 0o700); err != nil {
 		s.log.Error("s3 cannot create the upload staging folder", "path", folder, "error", err)
 		return "", "", errInternal
 	}
-	out, err := os.CreateTemp(folder, "s3-*.part")
+	out, err := logging.CreateTemp(s.log, folder, "s3-*.part")
 	if err != nil {
 		s.log.Error("s3 cannot create a staging file", "path", folder, "error", err)
 		return "", "", errInternal
@@ -479,7 +481,7 @@ func (s *Server) stageCopy(source s3Object, folder string, offset, length int64)
 		err = closeErr
 	}
 	if err != nil {
-		_ = os.Remove(out.Name())
+		_ = logging.Remove(s.log, out.Name())
 		s.log.Error("s3 copy failed", "from", source.target.Virtual, "error", err)
 		return "", "", errInternal
 	}
@@ -506,12 +508,12 @@ func (s *Server) s3DeleteObject(q *s3Request, obj s3Object) *s3Error {
 	if !q.may(obj.target.Virtual, act) {
 		return errAccessDenied
 	}
-	info, err := os.Stat(obj.target.Path)
+	info, err := logging.Stat(s.log, obj.target.Path)
 	if err != nil || obj.folder != info.IsDir() {
 		return nil
 	}
 	if obj.folder {
-		entries, err := os.ReadDir(obj.target.Path)
+		entries, err := logging.ReadDir(s.log, obj.target.Path)
 		if err != nil || len(entries) > 0 {
 			return nil
 		}
@@ -546,7 +548,7 @@ func (s *Server) pruneFolders(q *s3Request, virtual string) {
 			return
 		}
 		target := s.root.Resolve("/", folder)
-		if !target.Valid || os.Remove(target.Path) != nil {
+		if !target.Valid || logging.Remove(s.log, target.Path) != nil {
 			return
 		}
 		s.log.Info("s3 delete", "user", q.user.name, "path", folder, "folder", true,

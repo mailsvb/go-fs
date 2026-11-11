@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/opencontainers/go-digest"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // registryStore is the on-disk layout of the container registry under
@@ -32,6 +35,8 @@ import (
 // which no repository name may, so no name can reach them.
 type registryStore struct {
 	base string
+	// log takes the trace of what the store does on disk
+	log *slog.Logger
 }
 
 // revision is what a repository records about a manifest it holds: what the
@@ -50,19 +55,19 @@ const (
 	registryTagsFile      = "_tags.json"
 )
 
-func newRegistryStore(folder string) (*registryStore, error) {
+func newRegistryStore(folder string, log *slog.Logger) (*registryStore, error) {
 	resolved, err := filepath.EvalSymlinks(folder)
 	if err != nil {
 		return nil, err
 	}
-	info, err := os.Stat(resolved)
+	info, err := logging.Stat(log, resolved)
 	if err != nil {
 		return nil, err
 	}
 	if !info.IsDir() {
 		return nil, fmt.Errorf("%q is not a folder", folder)
 	}
-	return &registryStore{base: resolved}, nil
+	return &registryStore{base: resolved, log: log}, nil
 }
 
 func (st *registryStore) blobPath(d digest.Digest) string {
@@ -99,13 +104,13 @@ func (st *registryStore) uploadPath(id string) string {
 
 // repoExists reports whether anything was ever pushed to a repository.
 func (st *registryStore) repoExists(name string) bool {
-	info, err := os.Stat(st.repoPath(name))
+	info, err := logging.Stat(st.log, st.repoPath(name))
 	return err == nil && info.IsDir()
 }
 
 // blobInfo reports a blob of the store, whichever repository it came from.
 func (st *registryStore) blobInfo(d digest.Digest) (os.FileInfo, error) {
-	info, err := os.Stat(st.blobPath(d))
+	info, err := logging.Stat(st.log, st.blobPath(d))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, errRegistryNotFound
 	}
@@ -115,7 +120,7 @@ func (st *registryStore) blobInfo(d digest.Digest) (os.FileInfo, error) {
 // repoBlob reports a blob a repository may serve: one it has a link to and
 // the store still holds.
 func (st *registryStore) repoBlob(name string, d digest.Digest) (os.FileInfo, error) {
-	if _, err := os.Stat(st.layerPath(name, d)); err != nil {
+	if _, err := logging.Stat(st.log, st.layerPath(name, d)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, errRegistryNotFound
 		}
@@ -128,11 +133,11 @@ func (st *registryStore) repoBlob(name string, d digest.Digest) (os.FileInfo, er
 // touched, since its age is what tells the garbage collection that a blob was
 // just pushed and its manifest may still be on the way.
 func (st *registryStore) linkBlob(name string, d digest.Digest) error {
-	return touchFile(st.layerPath(name, d))
+	return touchFile(st.log, st.layerPath(name, d))
 }
 
 func (st *registryStore) unlinkBlob(name string, d digest.Digest) error {
-	err := os.Remove(st.layerPath(name, d))
+	err := logging.Remove(st.log, st.layerPath(name, d))
 	if errors.Is(err, fs.ErrNotExist) {
 		return errRegistryNotFound
 	}
@@ -146,48 +151,48 @@ func (st *registryStore) unlinkBlob(name string, d digest.Digest) error {
 // moment before the push links it.
 func (st *registryStore) commitBlob(staged string, d digest.Digest) error {
 	target := st.blobPath(d)
-	if _, err := os.Stat(target); err == nil {
-		_ = os.Remove(staged)
+	if _, err := logging.Stat(st.log, target); err == nil {
+		_ = logging.Remove(st.log, staged)
 		now := time.Now()
-		return os.Chtimes(target, now, now)
+		return logging.Chtimes(st.log, target, now, now)
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	if err := logging.MkdirAll(st.log, filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
-	if err := os.Chmod(staged, 0o644); err != nil {
+	if err := logging.Chmod(st.log, staged, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(staged, target)
+	return logging.Rename(st.log, staged, target)
 }
 
 // putBlob stores bytes the registry already holds in memory, a manifest, as a
 // blob under their digest in the given algorithm, and returns that digest.
 func (st *registryStore) putBlob(data []byte, algorithm digest.Algorithm) (digest.Digest, error) {
 	d := algorithm.FromBytes(data)
-	if err := os.MkdirAll(st.uploadsPath(), 0o755); err != nil {
+	if err := logging.MkdirAll(st.log, st.uploadsPath(), 0o755); err != nil {
 		return "", err
 	}
-	staged, err := os.CreateTemp(st.uploadsPath(), "blob-*")
+	staged, err := logging.CreateTemp(st.log, st.uploadsPath(), "blob-*")
 	if err != nil {
 		return "", err
 	}
 	name := staged.Name()
 	if _, err := staged.Write(data); err != nil {
 		_ = staged.Close()
-		_ = os.Remove(name)
+		_ = logging.Remove(st.log, name)
 		return "", err
 	}
 	if err := staged.Sync(); err != nil {
 		_ = staged.Close()
-		_ = os.Remove(name)
+		_ = logging.Remove(st.log, name)
 		return "", err
 	}
 	if err := staged.Close(); err != nil {
-		_ = os.Remove(name)
+		_ = logging.Remove(st.log, name)
 		return "", err
 	}
 	if err := st.commitBlob(name, d); err != nil {
-		_ = os.Remove(name)
+		_ = logging.Remove(st.log, name)
 		return "", err
 	}
 	return d, nil
@@ -196,7 +201,7 @@ func (st *registryStore) putBlob(data []byte, algorithm digest.Algorithm) (diges
 // readBlob reads a whole blob, refusing one larger than limit: what is read
 // this way is a manifest or an image configuration, never a layer.
 func (st *registryStore) readBlob(d digest.Digest, limit int64) ([]byte, error) {
-	file, err := os.Open(st.blobPath(d))
+	file, err := logging.Open(st.log, st.blobPath(d))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, errRegistryNotFound
 	}
@@ -215,7 +220,7 @@ func (st *registryStore) readBlob(d digest.Digest, limit int64) ([]byte, error) 
 }
 
 func (st *registryStore) readRevision(name string, d digest.Digest) (revision, error) {
-	data, err := os.ReadFile(st.revisionPath(name, d))
+	data, err := logging.ReadFile(st.log, st.revisionPath(name, d))
 	if errors.Is(err, fs.ErrNotExist) {
 		return revision{}, errRegistryNotFound
 	}
@@ -233,7 +238,7 @@ func (st *registryStore) readRevision(name string, d digest.Digest) (revision, e
 // into one: the revision is written anew each time, and nothing else records
 // the time.
 func (st *registryStore) revisionTime(name string, d digest.Digest) (time.Time, error) {
-	info, err := os.Stat(st.revisionPath(name, d))
+	info, err := logging.Stat(st.log, st.revisionPath(name, d))
 	if errors.Is(err, fs.ErrNotExist) {
 		return time.Time{}, errRegistryNotFound
 	}
@@ -248,11 +253,11 @@ func (st *registryStore) writeRevision(name string, d digest.Digest, rev revisio
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(st.revisionPath(name, d), data)
+	return writeFileAtomic(st.log, st.revisionPath(name, d), data)
 }
 
 func (st *registryStore) removeRevision(name string, d digest.Digest) error {
-	err := os.Remove(st.revisionPath(name, d))
+	err := logging.Remove(st.log, st.revisionPath(name, d))
 	if errors.Is(err, fs.ErrNotExist) {
 		return errRegistryNotFound
 	}
@@ -262,7 +267,7 @@ func (st *registryStore) removeRevision(name string, d digest.Digest) error {
 // revisions lists the manifests a repository holds.
 func (st *registryStore) revisions(name string) ([]digest.Digest, error) {
 	root := filepath.Join(st.repoPath(name), "_manifests")
-	algorithms, err := os.ReadDir(root)
+	algorithms, err := logging.ReadDir(st.log, root)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -271,7 +276,7 @@ func (st *registryStore) revisions(name string) ([]digest.Digest, error) {
 	}
 	var found []digest.Digest
 	for _, algorithm := range algorithms {
-		entries, err := os.ReadDir(filepath.Join(root, algorithm.Name()))
+		entries, err := logging.ReadDir(st.log, filepath.Join(root, algorithm.Name()))
 		if err != nil {
 			return nil, err
 		}
@@ -292,7 +297,7 @@ func (st *registryStore) revisions(name string) ([]digest.Digest, error) {
 // sensitive and a file name, on the filesystems macOS and Windows use, is
 // not: v1 and V1 would be the same file there.
 func (st *registryStore) readTags(name string) (map[string]digest.Digest, error) {
-	data, err := os.ReadFile(filepath.Join(st.repoPath(name), registryTagsFile))
+	data, err := logging.ReadFile(st.log, filepath.Join(st.repoPath(name), registryTagsFile))
 	if errors.Is(err, fs.ErrNotExist) {
 		return map[string]digest.Digest{}, nil
 	}
@@ -311,22 +316,22 @@ func (st *registryStore) writeTags(name string, tags map[string]digest.Digest) e
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(filepath.Join(st.repoPath(name), registryTagsFile), data)
+	return writeFileAtomic(st.log, filepath.Join(st.repoPath(name), registryTagsFile), data)
 }
 
 // addReferrer records that a manifest names subject as its subject.
 func (st *registryStore) addReferrer(name string, subject, d digest.Digest) error {
-	return touchFile(filepath.Join(st.referrersPath(name, subject), referrerFile(d)))
+	return touchFile(st.log, filepath.Join(st.referrersPath(name, subject), referrerFile(d)))
 }
 
 func (st *registryStore) removeReferrer(name string, subject, d digest.Digest) {
-	_ = os.Remove(filepath.Join(st.referrersPath(name, subject), referrerFile(d)))
+	_ = logging.Remove(st.log, filepath.Join(st.referrersPath(name, subject), referrerFile(d)))
 }
 
 // referrers lists the manifests whose subject is the given digest, in the
 // order of their digests.
 func (st *registryStore) referrers(name string, subject digest.Digest) ([]digest.Digest, error) {
-	entries, err := os.ReadDir(st.referrersPath(name, subject))
+	entries, err := logging.ReadDir(st.log, st.referrersPath(name, subject))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -359,7 +364,7 @@ func referrerFile(d digest.Digest) string {
 func (st *registryStore) repositories() ([]string, error) {
 	root := filepath.Join(st.base, "repositories")
 	var names []string
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	err := logging.WalkDir(st.log, root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) && path == root {
 				return filepath.SkipDir
@@ -372,7 +377,7 @@ func (st *registryStore) repositories() ([]string, error) {
 		if strings.HasPrefix(entry.Name(), "_") {
 			return filepath.SkipDir
 		}
-		if info, err := os.Stat(filepath.Join(path, "_manifests")); err == nil && info.IsDir() {
+		if info, err := logging.Stat(st.log, filepath.Join(path, "_manifests")); err == nil && info.IsDir() {
 			rel, err := filepath.Rel(root, path)
 			if err != nil {
 				return err
@@ -390,15 +395,15 @@ func (st *registryStore) repositories() ([]string, error) {
 
 // touchFile creates an empty file, with the folders it is in, or brings the
 // time of one that exists up to now.
-func touchFile(path string) error {
+func touchFile(log *slog.Logger, path string) error {
 	now := time.Now()
-	if err := os.Chtimes(path, now, now); err == nil {
+	if err := logging.Chtimes(log, path, now, now); err == nil {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := logging.MkdirAll(log, filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o644)
+	file, err := logging.OpenFile(log, path, os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
@@ -408,19 +413,19 @@ func touchFile(path string) error {
 // writeFileAtomic replaces a file with new content in a way that leaves either
 // the old content or the new one on disk, never half of it: the content is
 // written and synced beside the target, then renamed over it.
-func writeFileAtomic(path string, data []byte) error {
+func writeFileAtomic(log *slog.Logger, path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := logging.MkdirAll(log, dir, 0o755); err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(dir, ".tmp-*")
+	file, err := logging.CreateTemp(log, dir, ".tmp-*")
 	if err != nil {
 		return err
 	}
 	name := file.Name()
 	fail := func(err error) error {
 		_ = file.Close()
-		_ = os.Remove(name)
+		_ = logging.Remove(log, name)
 		return err
 	}
 	if _, err := file.Write(data); err != nil {
@@ -430,15 +435,15 @@ func writeFileAtomic(path string, data []byte) error {
 		return fail(err)
 	}
 	if err := file.Close(); err != nil {
-		_ = os.Remove(name)
+		_ = logging.Remove(log, name)
 		return err
 	}
-	if err := os.Chmod(name, 0o644); err != nil {
-		_ = os.Remove(name)
+	if err := logging.Chmod(log, name, 0o644); err != nil {
+		_ = logging.Remove(log, name)
 		return err
 	}
-	if err := os.Rename(name, path); err != nil {
-		_ = os.Remove(name)
+	if err := logging.Rename(log, name, path); err != nil {
+		_ = logging.Remove(log, name)
 		return err
 	}
 	return nil

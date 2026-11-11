@@ -218,6 +218,7 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 	if s.applied {
 		s.log.Info("applying the changed configuration",
 			"sections", strings.Join(changedSections(s.current, cfg), ","))
+		s.log.Debug("the configuration changed", "keys", config.ChangedKeys(s.current, cfg))
 	}
 	s.applyLog(cfg.General)
 	s.logTools(cfg)
@@ -323,7 +324,9 @@ func changedSections(before, after config.Config) []string {
 // start builds and starts one service.
 func (s *Supervisor) start(ctx context.Context, e entry, current env) error {
 	started := time.Now()
-	server, err := e.create(current, s.log)
+	// every record of the service says which one wrote it; "server" is not
+	// the key, since records name the stored server they reach by it
+	server, err := e.create(current, s.log.With("service", e.name))
 	if err != nil {
 		return err
 	}
@@ -401,6 +404,7 @@ func (s *Supervisor) Watch(ctx context.Context, path string, interval time.Durat
 	if signals := hangupSignals(); len(signals) > 0 {
 		signal.Notify(hangup, signals...)
 		defer signal.Stop(hangup)
+		logging.Syscall(s.log, "signal notify", nil, slog.Any("signals", signals))
 	}
 
 	ticker := time.NewTicker(interval)
@@ -441,6 +445,7 @@ func (s *Supervisor) Watch(ctx context.Context, path string, interval time.Durat
 // reload loads the file and applies it, unless it says the same thing as what
 // is already running.
 func (s *Supervisor) reload(ctx context.Context, path string) {
+	logging.Summary(s.log, "read", path)
 	cfg, err := config.Load(path)
 	if err != nil {
 		s.log.Error("the configuration was not applied, keeping the running one",

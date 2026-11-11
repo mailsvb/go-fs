@@ -9,12 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/sonos"
 )
 
@@ -299,7 +299,8 @@ func (s *Server) sonosStartSession(owner, folder string, files []string, index i
 	if _, err := rand.Read(raw); err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	// what the session asks the speakers is traced to the server's log
+	ctx, cancel := context.WithCancel(logging.WithLogger(context.Background(), s.log))
 	ss := &sonosSession{
 		id: hex.EncodeToString(raw), owner: owner, folder: folder, files: files,
 		started: time.Now(), cancel: cancel,
@@ -402,7 +403,7 @@ func (s *Server) sonosTell(ctx context.Context, ss *sonosSession) bool {
 			return false
 		}
 		target := s.root.Resolve("/", virtual)
-		info, err := os.Stat(target.Path)
+		info, err := logging.Stat(s.log, target.Path)
 		if !target.Valid || err != nil || !info.Mode().IsRegular() {
 			s.log.Info("http sonos session passes over a file that is gone", "file", virtual)
 			if !ss.advance() {

@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -91,7 +92,7 @@ func run(stop <-chan struct{}) error {
 		initPath    = flag.String("init", "", "write a documented starter configuration to this path and exit")
 		checkOnly   = flag.Bool("check", false, "load the configuration, report problems and exit")
 		showVersion = flag.Bool("version", false, "print the version and exit")
-		logFile     = flag.String("logfile", "", "write the log to this file, rotated by size, instead of standard output")
+		logFile     = flag.String("logfile", "", "write the log to this file, rotated by size; from a command line to standard output as well")
 		dataPath    = flag.String("persistent-data", "", "path of the file go-fs keeps what it remembers across a restart in, "+
 			"such as share links and playback progress (default: beside the configuration file, named like it with "+
 			store.FileExtension+")")
@@ -117,13 +118,19 @@ func run(stop <-chan struct{}) error {
 
 	var output io.Writer = os.Stdout
 	if *logFile != "" && !*checkOnly {
-		file, err := logging.OpenFile(*logFile)
+		file, err := logging.OpenLogFile(*logFile)
 		if err != nil {
 			return err
 		}
 		// left open: it takes every record up to the last one, and the
 		// error that ends the program after that
 		output, errorOutput = file, file
+		if stop == nil {
+			// started from a command line rather than by the service
+			// manager: the log goes to the terminal as well, which is
+			// where whoever started it looks
+			output, errorOutput = io.MultiWriter(file, os.Stdout), io.MultiWriter(file, os.Stderr)
+		}
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -150,12 +157,25 @@ func run(stop <-chan struct{}) error {
 		"os", runtime.GOOS,
 		"arch", runtime.GOARCH,
 		"pid", os.Getpid(),
+		"host", hostname(),
+		"workdir", workdir(),
+		"user", runAs(),
+		"cpus", runtime.NumCPU(),
+		"gomaxprocs", runtime.GOMAXPROCS(0),
 		"config", *configPath,
 		"persistentData", *dataPath,
 		"installer", packaging,
 		"service", stop != nil,
 		"logLevel", cfg.General.LogLevel,
 		"logFormat", cfg.General.LogFormat)
+	// the configuration in effect, defaults included, with every credential
+	// masked: what a log handed over for analysis was configured with
+	logger.Debug("configuration in effect", "config", cfg)
+	// the file was read before there was a logger to trace it, and so were
+	// the programs of general.tools probed; later probes are traced
+	logging.Summary(logger.Logger, "read", *configPath)
+	config.TraceProbes(logger.Logger)
+	traceService(logger.Logger)
 	warnAboutSecrets(logger.Logger, *configPath, cfg)
 	warnAboutReserved(logger.Logger, cfg)
 	if viewer.Compiled && !viewer.Available() {
@@ -168,7 +188,7 @@ func run(stop <-chan struct{}) error {
 	// a file written for an older version names the folders by keys that
 	// have since been renamed; it was read through them, and is given the
 	// new ones
-	if changes, err := config.Migrate(*configPath); err != nil {
+	if changes, err := config.Migrate(*configPath, logger.Logger); err != nil {
 		logger.Warn("cannot rename the folder keys of the configuration file, so it is "+
 			"read through the old ones as before", "path", *configPath, "error", err)
 	} else {
@@ -180,7 +200,7 @@ func run(stop <-chan struct{}) error {
 	// the share links of files and the login tokens of browsers are signed
 	// with keys the file keeps, so a link handed out and a browser logged in
 	// survive a restart and an update; a file without them is given them
-	if ensured, generated, err := config.EnsureSecrets(*configPath, cfg); err != nil {
+	if ensured, generated, err := config.EnsureSecrets(*configPath, cfg, logger.Logger); err != nil {
 		logger.Warn("cannot store generated secrets in the configuration file, so share "+
 			"links stop working and browsers are logged out at every restart",
 			"path", *configPath, "error", err)
@@ -196,7 +216,7 @@ func run(stop <-chan struct{}) error {
 	if err != nil {
 		return err
 	}
-	updater := selfupdate.New(currentVersion(), keys)
+	updater := selfupdate.New(currentVersion(), keys, logger.Logger)
 	if packaging == "rpm" || packaging == "docker" {
 		updater.SetManagedBy(packaging)
 	}
@@ -227,6 +247,7 @@ func run(stop <-chan struct{}) error {
 	// that the shutdown record can say which one it was
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	logging.Syscall(logger.Logger, "signal notify", nil, slog.Any("signals", []string{os.Interrupt.String(), syscall.SIGTERM.String()}))
 
 	sup := supervisor.New(logger.Logger, *configPath)
 	sup.TrackLog(logger)
@@ -371,4 +392,30 @@ func managedUpdate(installer string) string {
 		return "pull the newer image and recreate the container instead"
 	}
 	return "update the package instead"
+}
+
+// hostname is the name of the machine for the first record, "" when it
+// cannot be told.
+func hostname() string {
+	name, _ := os.Hostname()
+	return name
+}
+
+// workdir is the folder relative paths are taken from.
+func workdir() string {
+	dir, _ := os.Getwd()
+	return dir
+}
+
+// runAs is the account go-fs runs as, which decides what it may read and
+// write: the name and the numeric ids where the system has them.
+func runAs() string {
+	who, err := user.Current()
+	if err != nil {
+		return fmt.Sprintf("uid=%d gid=%d", os.Getuid(), os.Getgid())
+	}
+	if runtime.GOOS == "windows" {
+		return who.Username
+	}
+	return fmt.Sprintf("%s uid=%s gid=%s", who.Username, who.Uid, who.Gid)
 }

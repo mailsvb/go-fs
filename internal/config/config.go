@@ -126,9 +126,10 @@ type General struct {
 	// ReloadInterval is how many seconds pass between two checks of the file.
 	ReloadInterval int `toml:"reloadInterval"`
 
-	// LogLevel is one of debug, info, warn, error. The protocol trace that
-	// the original reported as 'log' events is written at debug level. It can
-	// be changed without a restart: a reload switches the running logger over.
+	// LogLevel is one of debug, info, warn, error. Debug is the trace of
+	// everything go-fs does: what crosses every interface, every file it
+	// touches, every program it runs, with credentials masked. It can be
+	// changed without a restart: a reload switches the running logger over.
 	LogLevel string `toml:"logLevel"`
 	// LogFormat is text or json. Changing it needs a restart.
 	LogFormat string `toml:"logFormat"`

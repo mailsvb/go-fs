@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"golang.org/x/net/ipv4"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // ssdpGroup is where SSDP searches go.
@@ -59,11 +62,12 @@ func (c *Client) Discover(ctx context.Context, wait time.Duration) ([]Player, er
 		"MAN: \"ssdp:discover\"\r\n" +
 		"MX: 1\r\n" +
 		"ST: " + zonePlayer + "\r\n\r\n")
+	log := logging.From(ctx, logging.Discard)
 	// a datagram may be lost, so the search goes out twice
-	if err := sendSearch(conn, to, search); err != nil {
+	if err := sendSearch(conn, to, search, log); err != nil {
 		return nil, err
 	}
-	resend := time.AfterFunc(wait/3, func() { _ = sendSearch(conn, to, search) })
+	resend := time.AfterFunc(wait/3, func() { _ = sendSearch(conn, to, search, log) })
 	defer resend.Stop()
 
 	_ = conn.SetReadDeadline(time.Now().Add(wait))
@@ -75,6 +79,7 @@ func (c *Client) Discover(ctx context.Context, wait time.Duration) ([]Player, er
 			break
 		}
 		location, ok := answerLocation(buf[:n], from, c.port)
+		log.Debug("ssdp <", "from", from.String(), "bytes", n, "speaker", ok, "location", location)
 		if ok {
 			locations[from.(*net.UDPAddr).IP.String()] = location
 		}
@@ -90,6 +95,10 @@ func (c *Client) Discover(ctx context.Context, wait time.Duration) ([]Player, er
 		wg.Go(func() {
 			player, err := c.describe(ctx, location)
 			if err != nil {
+				// a device that answered the search but cannot be
+				// described is left out, which only the trace says
+				log.Debug("sonos speaker left out, its description cannot be read",
+					"location", location, "error", err)
 				return
 			}
 			mu.Lock()
@@ -103,9 +112,10 @@ func (c *Client) Discover(ctx context.Context, wait time.Duration) ([]Player, er
 
 // sendSearch sends the search to the SSDP group once over every interface
 // that takes multicast, or to a single address as it is.
-func sendSearch(conn net.PacketConn, to *net.UDPAddr, search []byte) error {
+func sendSearch(conn net.PacketConn, to *net.UDPAddr, search []byte, log *slog.Logger) error {
 	if !to.IP.IsMulticast() {
 		_, err := conn.WriteTo(search, to)
+		log.Debug("ssdp >", "to", to.String(), "bytes", len(search), "error", err)
 		return err
 	}
 	pc := ipv4.NewPacketConn(conn)
@@ -121,7 +131,9 @@ func sendSearch(conn net.PacketConn, to *net.UDPAddr, search []byte) error {
 		if pc.SetMulticastInterface(&ifi) != nil {
 			continue
 		}
-		if _, err := pc.WriteTo(search, nil, to); err == nil {
+		_, err := pc.WriteTo(search, nil, to)
+		log.Debug("ssdp >", "to", to.String(), "interface", ifi.Name, "bytes", len(search), "error", err)
+		if err == nil {
 			sent = true
 		}
 	}
@@ -129,7 +141,9 @@ func sendSearch(conn net.PacketConn, to *net.UDPAddr, search []byte) error {
 		return nil
 	}
 	// no interface took it by name; the default route may still
-	if _, err := conn.WriteTo(search, to); err != nil {
+	_, err := conn.WriteTo(search, to)
+	log.Debug("ssdp >", "to", to.String(), "interface", "default route", "bytes", len(search), "error", err)
+	if err != nil {
 		return fmt.Errorf("sonos search: %w", err)
 	}
 	return nil

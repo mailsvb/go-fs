@@ -2,11 +2,14 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // generatedSecret is a key of [http] that the file is given at the first start
@@ -42,7 +45,7 @@ var sectionLine = regexp.MustCompile(`^\s*\[\[?\s*([^\[\]]+?)\s*\]\]?\s*(#.*)?$`
 // file without the section gets both appended. The result is parsed again
 // before anything is written, so a file whose layout this does not understand
 // is left alone and reported rather than broken.
-func EnsureSecrets(path string, cfg Config) (Config, []string, error) {
+func EnsureSecrets(path string, cfg Config, log *slog.Logger) (Config, []string, error) {
 	var missing []generatedSecret
 	for _, secret := range generatedSecrets {
 		if *secret.get(&cfg) == "" {
@@ -57,11 +60,11 @@ func EnsureSecrets(path string, cfg Config) (Config, []string, error) {
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		target = resolved
 	}
-	info, err := os.Stat(target)
+	info, err := logging.Stat(log, target)
 	if err != nil {
 		return cfg, nil, err
 	}
-	data, err := os.ReadFile(target)
+	data, err := logging.ReadFile(log, target)
 	if err != nil {
 		return cfg, nil, err
 	}
@@ -87,7 +90,7 @@ func EnsureSecrets(path string, cfg Config) (Config, []string, error) {
 		}
 	}
 
-	if err := replaceFile(target, []byte(edited), info.Mode().Perm()); err != nil {
+	if err := replaceFile(log, target, []byte(edited), info.Mode().Perm()); err != nil {
 		return cfg, nil, err
 	}
 	for i, secret := range missing {
@@ -98,12 +101,12 @@ func EnsureSecrets(path string, cfg Config) (Config, []string, error) {
 
 // replaceFile writes data beside target and renames it over it, so that the
 // watcher never reads the file half written.
-func replaceFile(target string, data []byte, mode os.FileMode) error {
-	temp, err := os.CreateTemp(filepath.Dir(target), ".go-fs-config-*")
+func replaceFile(log *slog.Logger, target string, data []byte, mode os.FileMode) error {
+	temp, err := logging.CreateTemp(log, filepath.Dir(target), ".go-fs-config-*")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.Remove(temp.Name()) }()
+	defer func() { _ = logging.Remove(log, temp.Name()) }()
 	if _, err := temp.Write(data); err != nil {
 		_ = temp.Close()
 		return err
@@ -111,10 +114,10 @@ func replaceFile(target string, data []byte, mode os.FileMode) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(temp.Name(), mode); err != nil {
+	if err := logging.Chmod(log, temp.Name(), mode); err != nil {
 		return err
 	}
-	return os.Rename(temp.Name(), target)
+	return logging.Rename(log, temp.Name(), target)
 }
 
 // withHTTPKey is the file with key in [http] set to value.

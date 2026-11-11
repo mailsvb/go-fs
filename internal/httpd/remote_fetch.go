@@ -8,13 +8,13 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/remote"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -114,7 +114,7 @@ func (s *Server) localBrowse(set *settings, w http.ResponseWriter, r *http.Reque
 		http.NotFound(w, r)
 		return
 	}
-	if info, err := os.Stat(target.Path); err != nil || !info.IsDir() {
+	if info, err := logging.Stat(s.logFor(r), target.Path); err != nil || !info.IsDir() {
 		http.NotFound(w, r)
 		return
 	}
@@ -125,7 +125,7 @@ func (s *Server) localBrowse(set *settings, w http.ResponseWriter, r *http.Reque
 	}
 	entries, err := readDirectory(s.root, target.Path)
 	if err != nil {
-		s.log.Error("http cannot read the folder", "path", target.Virtual, "error", err)
+		s.logFor(r).Error("http cannot read the folder", "path", target.Virtual, "error", err)
 		http.Error(w, "The folder cannot be read.", http.StatusInternalServerError)
 		return
 	}
@@ -137,7 +137,7 @@ func (s *Server) localBrowse(set *settings, w http.ResponseWriter, r *http.Reque
 		sendFolderJSON: sendFolderJSON{Path: shown, Entries: []sendEntryJSON{}},
 		Writable:       mayFetch(cred, folder),
 		Mkdir:          mayFetchFolder(cred, folder),
-		Free:           freeSpace(target.Path),
+		Free:           tracedFreeSpace(s.logFor(r), target.Path),
 	}
 	if shown != "/" {
 		view.Parent = path.Dir(shown)
@@ -171,7 +171,7 @@ type remoteFetchBody struct {
 func (s *Server) remoteSource(set *settings, w http.ResponseWriter, r *http.Request, cred credential,
 	address string) (config.Server, remote.Login, string, bool) {
 	if !mayBrowseRemote(cred) {
-		s.log.Info("http remote fetch refused, no session of an account that may read",
+		s.logFor(r).Info("http remote fetch refused, no session of an account that may read",
 			"user", nameOf(cred.user), "address", address)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return config.Server{}, remote.Login{}, "", false
@@ -184,7 +184,7 @@ func (s *Server) remoteSource(set *settings, w http.ResponseWriter, r *http.Requ
 		return config.Server{}, remote.Login{}, "", false
 	}
 	if !server.Rights().Download {
-		s.log.Info("http remote fetch refused, the server does not allow downloads",
+		s.logFor(r).Info("http remote fetch refused, the server does not allow downloads",
 			"server", server.Name, "user", cred.user.name, "address", address)
 		http.Error(w, fmt.Sprintf("the server %s does not allow to download", server.Name), http.StatusForbidden)
 		return config.Server{}, remote.Login{}, "", false
@@ -269,7 +269,7 @@ func (s *Server) remoteMeasure(set *settings, w http.ResponseWriter, r *http.Req
 			}
 			return
 		}
-		s.log.Debug("http remote fetch measured", "folder", login.Where(p)+" (server "+login.Server+")",
+		s.logFor(r).Debug("http remote fetch measured", "folder", login.Where(p)+" (server "+login.Server+")",
 			"files", view.Files, "bytes", view.Bytes, "took", time.Since(started).Round(time.Millisecond))
 	default:
 		http.Error(w, fmt.Sprintf("%s on %s is neither a file nor a folder", p, login.Shown()), http.StatusBadRequest)
@@ -299,13 +299,13 @@ func (s *Server) remoteFetchStart(set *settings, w http.ResponseWriter, r *http.
 		http.Error(w, "There is no such folder here.", http.StatusBadRequest)
 		return
 	}
-	if info, err := os.Stat(target.Path); err != nil || !info.IsDir() {
+	if info, err := logging.Stat(s.logFor(r), target.Path); err != nil || !info.IsDir() {
 		http.Error(w, "There is no such folder here.", http.StatusBadRequest)
 		return
 	}
 	folder := vfs.AsFolder(target.Virtual)
 	if !mayFetch(cred, folder) {
-		s.log.Info("http remote fetch refused, no session of an account that may create here",
+		s.logFor(r).Info("http remote fetch refused, no session of an account that may create here",
 			"user", cred.user.name, "folder", folder, "address", address)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -317,13 +317,13 @@ func (s *Server) remoteFetchStart(set *settings, w http.ResponseWriter, r *http.
 		job.named(cleanFetchedName(file), folder)
 		message, err := s.remoteFetchFile(ctx, set, job, login, file, folder, user, address)
 		if err != nil && ctx.Err() == nil {
-			s.log.Warn("http remote fetch failed", "file", shown, "folder", folder, "user", user.name,
+			s.logFor(r).Warn("http remote fetch failed", "file", shown, "folder", folder, "user", user.name,
 				"address", address, "error", err)
 		}
 		return message, err
 	})
 	if err == nil {
-		s.log.Info("http remote fetch started", "file", shown, "folder", folder, "user", user.name,
+		s.logFor(r).Info("http remote fetch started", "file", shown, "folder", folder, "user", user.name,
 			"address", address, "job", job.id)
 	}
 	s.answerStarted(w, job, err)
@@ -338,7 +338,7 @@ func (s *Server) remoteFetchFile(ctx context.Context, set *settings, job *regist
 	// stalls is cut at once; a read leaves nothing behind on the server
 	getCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	fsys, err := remote.Open(getCtx, login, set.ssh)
+	fsys, err := remote.Open(logging.Ensure(getCtx, s.log), login, set.ssh)
 	if err != nil {
 		return "", err
 	}
@@ -375,7 +375,7 @@ func (s *Server) remoteFetchFile(ctx context.Context, set *settings, job *regist
 	if limit := set.cfg.MaxUploadSize; limit > 0 && info.Size() > limit {
 		return "", fetchTooLarge(name, limit)
 	}
-	if err := checkRoom(set, filepath.Dir(target.Path), folder, info.Size(), info.Size()); err != nil {
+	if err := checkRoom(s.log, set, filepath.Dir(target.Path), folder, info.Size(), info.Size()); err != nil {
 		return "", err
 	}
 	job.named(name, "")
@@ -466,7 +466,7 @@ func (s *Server) remoteFetchFolder(ctx context.Context, cancel context.CancelCau
 	}
 
 	for _, dir := range folders {
-		info, err := os.Stat(dir.Path)
+		info, err := logging.Stat(s.log, dir.Path)
 		switch {
 		case err == nil && !info.IsDir():
 			return "", fmt.Errorf("%q is taken here by something that is not a folder", dir.Virtual)
@@ -486,14 +486,14 @@ func (s *Server) remoteFetchFolder(ctx context.Context, cancel context.CancelCau
 			return "", fetchTooLarge(file.target.Virtual, limit)
 		}
 	}
-	if err := checkRoom(set, filepath.Dir(top.Path), folder, total, largest); err != nil {
+	if err := checkRoom(s.log, set, filepath.Dir(top.Path), folder, total, largest); err != nil {
 		return "", err
 	}
 
 	job.plan(len(files), total)
 	job.downloading()
 	for _, dir := range folders {
-		if err := os.MkdirAll(dir.Path, 0o755); err != nil {
+		if err := logging.MkdirAll(s.log, dir.Path, 0o755); err != nil {
 			return "", err
 		}
 	}

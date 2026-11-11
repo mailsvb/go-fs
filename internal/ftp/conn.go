@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -227,12 +228,14 @@ func (c *conn) readLoop(commands chan<- command) {
 		case "ABOR":
 			// a running transfer takes it, otherwise it is a normal command
 			if c.abortTransfer() {
+				c.log.Debug("ftp <", "command", strings.TrimSpace(line), "during", "transfer")
 				continue
 			}
 		case "AUTH":
 			// only reachable before authentication, so no transfer can be in
 			// flight and the reader may answer and upgrade on the spot
 			if !c.authenticated.get() {
+				c.log.Debug("ftp <", "command", strings.TrimSpace(line))
 				c.handleAuth(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), name)))
 				continue
 			}
@@ -300,8 +303,10 @@ func (c *conn) dispatch(line string) {
 
 	c.commands++
 	logged := strings.TrimSpace(line)
-	if name == "PASS" {
-		logged = "PASS ***"
+	if name == "PASS" || name == "ACCT" {
+		// ACCT is answered without being read, but a client may still send
+		// a password in it
+		logged = name + " " + logging.Masked
 	}
 	c.log.Debug("ftp <", "command", logged)
 
@@ -393,8 +398,7 @@ func (c *conn) handleAuth(arg string) {
 	c.reader = bufio.NewReaderSize(secure, c.set.cfg.MaxCommandLength+2)
 	c.secure.set(true)
 	state := secure.ConnectionState()
-	c.log.Debug("ftp control connection is secure",
-		"tls", tls.VersionName(state.Version), "cipher", tls.CipherSuiteName(state.CipherSuite))
+	c.log.Debug("ftp control connection is secure", "tls", logging.TLS(&state))
 }
 
 // beginTransfer marks a transfer as running so that ABOR can reach it.

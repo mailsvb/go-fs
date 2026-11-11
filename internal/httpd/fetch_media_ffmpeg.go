@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // An audio that is to be an MP3 is converted by go-fs, not by yt-dlp: yt-dlp
@@ -223,11 +225,11 @@ func (m *mediaRun) toMP3(ctx context.Context, program, work, staged string) (str
 	if err != nil {
 		return "", err
 	}
-	if err := os.Rename(part, target); err != nil {
+	if err := logging.Rename(m.log, part, target); err != nil {
 		return "", err
 	}
 	if target != staged {
-		_ = os.Remove(staged)
+		_ = logging.Remove(m.log, staged)
 	}
 	return target, nil
 }
@@ -237,7 +239,7 @@ func (m *mediaRun) toMP3(ctx context.Context, program, work, staged string) (str
 func (m *mediaRun) ffmpeg(ctx context.Context, program string, args []string) error {
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.WaitDelay = mediaWaitDelay
-	ownProcessGroup(cmd)
+	ownProcessGroup(cmd, m.log)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -246,7 +248,8 @@ func (m *mediaRun) ffmpeg(ctx context.Context, program string, args []string) er
 	if err != nil {
 		return err
 	}
-	if err := cmd.Start(); err != nil {
+	process, err := logging.Start(m.log, cmd)
+	if err != nil {
 		return fmt.Errorf("ffmpeg cannot be started: %w", err)
 	}
 	m.job.converting()
@@ -259,9 +262,17 @@ func (m *mediaRun) ffmpeg(ctx context.Context, program string, args []string) er
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { defer wg.Done(); scanLines(stdout, conv.progress) }()
-	go func() { defer wg.Done(); scanLines(stderr, conv.said) }()
+	// stdout is the progress, twice a second, which the job shows; what
+	// ffmpeg says on stderr is the trace
+	go func() {
+		defer wg.Done()
+		scanLines(stderr, func(line string) {
+			m.log.Debug("ffmpeg >", "line", logging.Text(line))
+			conv.said(line)
+		})
+	}()
 	wg.Wait()
-	if err := cmd.Wait(); err != nil {
+	if err := process.Wait(); err != nil {
 		conv.mu.Lock()
 		last := tailLine(conv.stderr)
 		conv.mu.Unlock()

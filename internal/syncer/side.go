@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
+	"log/slog"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/remote"
 	"github.com/mailsvb/go-fs/internal/trash"
 )
@@ -40,6 +41,8 @@ func partial(name string) bool {
 
 // localSide is a folder of general.baseFolderFiles.
 type localSide struct {
+	// log takes the trace of what the sync does on disk
+	log *slog.Logger
 	// root is the folder on disk, and virtual where it is in the served
 	// folder, as the file listing and the trash name it.
 	root    string
@@ -55,7 +58,7 @@ func (l localSide) path(rel string) string {
 
 func (l localSide) list(ctx context.Context) (map[string]entry, error) {
 	found := map[string]entry{}
-	err := filepath.WalkDir(l.root, func(at string, d fs.DirEntry, err error) error {
+	err := logging.WalkDir(l.log, l.root, func(at string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -90,18 +93,18 @@ func (l localSide) list(ctx context.Context) (map[string]entry, error) {
 	return found, err
 }
 
-func (l localSide) open(rel string) (io.ReadCloser, error) { return os.Open(l.path(rel)) }
+func (l localSide) open(rel string) (io.ReadCloser, error) { return logging.Open(l.log, l.path(rel)) }
 
 func (l localSide) put(rel string, body io.Reader, _ int64, mod time.Time) (err error) {
 	final := l.path(rel)
-	out, err := os.CreateTemp(filepath.Dir(final), "."+filepath.Base(final)+".go-fs-*.part")
+	out, err := logging.CreateTemp(l.log, filepath.Dir(final), "."+filepath.Base(final)+".go-fs-*.part")
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
 			_ = out.Close()
-			_ = os.Remove(out.Name())
+			_ = logging.Remove(l.log, out.Name())
 		}
 	}()
 	if err := out.Chmod(0o644); err != nil {
@@ -113,19 +116,19 @@ func (l localSide) put(rel string, body io.Reader, _ int64, mod time.Time) (err 
 	if err := out.Close(); err != nil {
 		return err
 	}
-	if err := os.Chtimes(out.Name(), mod, mod); err != nil {
+	if err := logging.Chtimes(l.log, out.Name(), mod, mod); err != nil {
 		return err
 	}
-	return os.Rename(out.Name(), final)
+	return logging.Rename(l.log, out.Name(), final)
 }
 
-func (l localSide) mkdir(rel string) error { return os.Mkdir(l.path(rel), 0o755) }
+func (l localSide) mkdir(rel string) error { return logging.Mkdir(l.log, l.path(rel), 0o755) }
 
 func (l localSide) remove(rel string, dir bool) error {
 	if dir || l.trash == "" {
-		return os.Remove(l.path(rel))
+		return logging.Remove(l.log, l.path(rel))
 	}
-	return trash.Move(l.trash, l.path(rel), path.Join(l.virtual, rel))
+	return trash.Move(l.log, l.trash, l.path(rel), path.Join(l.virtual, rel))
 }
 
 // remoteSide is a folder of a stored server.

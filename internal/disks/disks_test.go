@@ -14,7 +14,7 @@ const mib = 1 << 20
 
 func folder(t *testing.T) *Folder {
 	t.Helper()
-	f, err := Open(t.TempDir())
+	f, err := Open(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,8 +471,8 @@ func TestSweepRemovesOnlyOldLeftovers(t *testing.T) {
 // the Disks page see each other.
 func TestOpensOfOneFolderShareTheLocks(t *testing.T) {
 	dir := t.TempDir()
-	a, _ := Open(dir)
-	b, _ := Open(dir + string(filepath.Separator))
+	a, _ := Open(dir, nil)
+	b, _ := Open(dir+string(filepath.Separator), nil)
 	create(t, a, "d.raw", mib)
 	if _, err := attach(t, a, "d.raw", true, "aa"); err != nil {
 		t.Fatal(err)

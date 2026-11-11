@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/remote"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -94,12 +94,12 @@ func (s *Server) handleSend(set *settings, w http.ResponseWriter, r *http.Reques
 	if !s.sameSite(set, w, r) {
 		return
 	}
-	if info, err := os.Stat(target.Path); err != nil || !info.Mode().IsRegular() {
+	if info, err := logging.Stat(s.logFor(r), target.Path); err != nil || !info.Mode().IsRegular() {
 		http.NotFound(w, r)
 		return
 	}
 	if !maySend(cred, target.Virtual) {
-		s.log.Info("http send refused, no session of an account that may read the file",
+		s.logFor(r).Info("http send refused, no session of an account that may read the file",
 			"user", nameOf(cred.user), "file", target.Virtual, "address", clientAddress(set, r))
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -221,7 +221,7 @@ type sendHostKeyJSON struct {
 func (s *Server) sendHostKey(w http.ResponseWriter, r *http.Request, req sendRequest) {
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	keyType, fingerprint, err := remote.HostKey(ctx, req.Login, s.settings().ssh)
+	keyType, fingerprint, err := remote.HostKey(logging.Ensure(ctx, s.log), req.Login, s.settings().ssh)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -252,7 +252,7 @@ type sendEntryJSON struct {
 func (s *Server) sendBrowse(w http.ResponseWriter, r *http.Request, req sendRequest) {
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	fsys, err := remote.Open(ctx, req.Login, s.settings().ssh)
+	fsys, err := remote.Open(logging.Ensure(ctx, s.log), req.Login, s.settings().ssh)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -326,13 +326,13 @@ func (s *Server) sendStart(set *settings, w http.ResponseWriter, r *http.Request
 		job.named(name, req.Where(req.path))
 		message, err := s.sendFile(ctx, job, req, target, user, address)
 		if err != nil && ctx.Err() == nil {
-			s.log.Warn("http send failed", "file", target.Virtual, "to", shown, "user", user.name,
+			s.logFor(r).Warn("http send failed", "file", target.Virtual, "to", shown, "user", user.name,
 				"address", address, "error", err)
 		}
 		return message, err
 	})
 	if err == nil {
-		s.log.Info("http send started", "file", target.Virtual, "to", shown, "user", user.name,
+		s.logFor(r).Info("http send started", "file", target.Virtual, "to", shown, "user", user.name,
 			"address", address, "job", job.id)
 	}
 	s.answerStarted(w, job, err)
@@ -343,7 +343,7 @@ func (s *Server) sendFile(ctx context.Context, job *registryJob, req sendRequest
 	user *account, address string) (string, error) {
 	started := time.Now()
 	name := filepath.Base(target.Path)
-	file, err := os.Open(target.Path)
+	file, err := logging.Open(s.log, target.Path)
 	if err != nil {
 		return "", fmt.Errorf("%s cannot be read", name)
 	}
@@ -376,7 +376,7 @@ func (s *Server) sendFile(ctx context.Context, job *registryJob, req sendRequest
 	})
 	defer stop()
 
-	fsys, err := remote.Open(connCtx, req.Login, s.settings().ssh)
+	fsys, err := remote.Open(logging.Ensure(connCtx, s.log), req.Login, s.settings().ssh)
 	if err != nil {
 		return "", err
 	}

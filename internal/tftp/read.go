@@ -16,6 +16,8 @@ import (
 // blocks (RFC 7440); with the default window of one this is the lock step
 // exchange of RFC 1350.
 type readTransfer struct {
+	// trace is the protocol trace of the transfer
+	trace  *packetTrace
 	server *Server
 	// set is the snapshot this transfer started under, so a reload halfway
 	// through does not change the rules it runs by.
@@ -85,6 +87,7 @@ func (s *Server) startRead(ctx context.Context, set *settings, slot admission, r
 		retries:    set.limits.retries,
 		acked:      opts.acked,
 	}
+	t.trace = newPacketTrace(t.log, t.blockSize)
 	if req.mode == modeNetascii {
 		t.src = newNetasciiReader(file)
 	} else {
@@ -293,6 +296,7 @@ func (t *readTransfer) complete() {
 }
 
 func (t *readTransfer) send(packet []byte) {
+	t.trace.sent(packet)
 	if _, err := t.conn.WriteTo(packet, t.peer); err != nil {
 		t.log.Debug("tftp send failed", "error", err)
 	}
@@ -341,7 +345,7 @@ func describeError(msg []byte) string {
 // transfer outlives its deadline. Packets from a different address are answered
 // with an unknown transfer id and do not count as an attempt.
 func (t *readTransfer) await(ctx context.Context, hardDeadline time.Time, resend func()) ([]byte, string) {
-	return awaitPacket(ctx, t.conn, t.peer, t.log, t.timeout, t.retries, hardDeadline, resend)
+	return awaitPacket(ctx, t.conn, t.peer, t.trace, t.timeout, t.retries, hardDeadline, resend)
 }
 
 var noDeadline = time.Time{}
@@ -350,8 +354,13 @@ var noDeadline = time.Time{}
 // reason is a packet, anything else ends the transfer and is what its record
 // says. The one exception is a shutdown, which returns "" for the reason too
 // and is told apart by the context.
-func awaitPacket(ctx context.Context, conn *net.UDPConn, peer net.Addr, log *slog.Logger,
+func awaitPacket(ctx context.Context, conn *net.UDPConn, peer net.Addr, trace *packetTrace,
 	timeout time.Duration, retries int, hardDeadline time.Time, resend func()) ([]byte, string) {
+	log := trace.log
+	send := func(packet []byte, to net.Addr) {
+		trace.sent(packet)
+		_, _ = conn.WriteTo(packet, to)
+	}
 
 	buf := make([]byte, 65536)
 	for attempt := 0; attempt <= retries; attempt++ {
@@ -370,7 +379,7 @@ func awaitPacket(ctx context.Context, conn *net.UDPConn, peer net.Addr, log *slo
 						return nil, "the server is shutting down"
 					}
 					if !hardDeadline.IsZero() && !time.Now().Before(hardDeadline) {
-						_, _ = conn.WriteTo(encodeError(errNotDefined, "Transfer took too long"), peer)
+						send(encodeError(errNotDefined, "Transfer took too long"), peer)
 						return nil, "the transfer exceeded tftp.transferTimeout"
 					}
 					break // retransmit and start another attempt
@@ -383,11 +392,12 @@ func awaitPacket(ctx context.Context, conn *net.UDPConn, peer net.Addr, log *slo
 			if !sameClient(from, peer) {
 				log.Debug("tftp packet from another address on the transfer socket",
 					"from", clientKey(from))
-				_, _ = conn.WriteTo(encodeError(errUnknownTID, "Unknown transfer ID"), from)
+				send(encodeError(errUnknownTID, "Unknown transfer ID"), from)
 				continue
 			}
 			msg := make([]byte, n)
 			copy(msg, buf[:n])
+			trace.received(msg)
 			return msg, ""
 		}
 		if attempt < retries {

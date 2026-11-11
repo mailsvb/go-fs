@@ -6,13 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/mailsvb/go-fs/internal/logging"
 )
 
 // Copying an image between this registry and another. A pull fetches the
@@ -135,7 +136,7 @@ func decodeManifest(found remoteManifest) (pulledManifest, error) {
 func (s *Server) pullImage(ctx context.Context, set *settings, job *registryJob, ref remoteRef, filter platformFilter, login remoteLogin, user *account) (string, error) {
 	store := set.registry
 	name, tag := ref.repository, ref.tag
-	client := newRemoteClient(ref, login, "pull")
+	client := newRemoteClient(ref, login, "pull", s.log)
 	if err := client.authenticate(ctx); err != nil {
 		return "", err
 	}
@@ -295,7 +296,7 @@ type remoteImage struct {
 // the login given, and finds the platforms it is for. Of a single image only
 // its configuration is fetched, which says its platform.
 func (s *Server) inspectRemote(ctx context.Context, ref remoteRef, login remoteLogin) (remoteImage, error) {
-	client := newRemoteClient(ref, login, "pull")
+	client := newRemoteClient(ref, login, "pull", s.log)
 	if err := client.authenticate(ctx); err != nil {
 		return remoteImage{}, err
 	}
@@ -362,10 +363,10 @@ func (s *Server) fetchBlob(ctx context.Context, set *settings, client *remoteCli
 	}
 	defer func() { _ = body.Close() }()
 
-	if err := os.MkdirAll(store.uploadsPath(), 0o755); err != nil {
+	if err := logging.MkdirAll(s.log, store.uploadsPath(), 0o755); err != nil {
 		return err
 	}
-	staged, err := os.CreateTemp(store.uploadsPath(), "pull-*")
+	staged, err := logging.CreateTemp(s.log, store.uploadsPath(), "pull-*")
 	if err != nil {
 		return err
 	}
@@ -374,7 +375,7 @@ func (s *Server) fetchBlob(ctx context.Context, set *settings, client *remoteCli
 	defer func() {
 		if !committed {
 			_ = staged.Close()
-			_ = os.Remove(path)
+			_ = logging.Remove(s.log, path)
 		}
 	}()
 
@@ -401,7 +402,7 @@ func (s *Server) fetchBlob(ctx context.Context, set *settings, client *remoteCli
 	if err := staged.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(path, 0o644); err != nil {
+	if err := logging.Chmod(s.log, path, 0o644); err != nil {
 		return err
 	}
 	s.registryMu.RLock()
@@ -553,7 +554,7 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 	}
 	job.plan(len(blobs), blobsSize(blobs))
 
-	client := newRemoteClient(target, login, "pull,push")
+	client := newRemoteClient(target, login, "pull,push", s.log)
 	if err := client.authenticate(ctx); err != nil {
 		return "", err
 	}
@@ -593,7 +594,7 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 
 // sendBlob uploads a blob of the store.
 func (s *Server) sendBlob(ctx context.Context, store *registryStore, client *remoteClient, job *registryJob, blob v1.Descriptor) error {
-	file, err := os.Open(store.blobPath(blob.Digest))
+	file, err := logging.Open(s.log, store.blobPath(blob.Digest))
 	if err != nil {
 		return fmt.Errorf("the blob %s cannot be read: %w", blob.Digest, err)
 	}

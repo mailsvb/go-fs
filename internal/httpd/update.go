@@ -63,7 +63,7 @@ func (s *Server) SetUpdater(updater Updater) {
 func (s *Server) handleUpdate(set *settings, w http.ResponseWriter, r *http.Request) {
 	if s.updater == nil || !set.cfg.EnableSelfUpdate {
 		// switched off, the marker names nothing
-		s.log.Debug("http self update is not enabled", "address", clientAddress(set, r))
+		s.logFor(r).Debug("http self update is not enabled", "address", clientAddress(set, r))
 		http.NotFound(w, r)
 		return
 	}
@@ -79,13 +79,13 @@ func (s *Server) handleUpdate(set *settings, w http.ResponseWriter, r *http.Requ
 		s.refuseLocked(set, w, r)
 		return
 	case cred.user == nil:
-		s.log.Info("http self update refused, no credentials", "credentials", cred.method,
+		s.logFor(r).Info("http self update refused, no credentials", "credentials", cred.method,
 			"address", address)
 		w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q", realm))
 		http.Error(w, "Not authenticated", http.StatusUnauthorized)
 		return
 	case !mayUpdate(cred):
-		s.log.Warn("http self update refused, the credentials do not allow it",
+		s.logFor(r).Warn("http self update refused, the credentials do not allow it",
 			"user", cred.user.name, "credentials", cred.method, "address", address)
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -147,7 +147,7 @@ func (s *Server) acceptUpdate(set *settings, w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	s.log.Warn("http self update received", "user", user, "address", address,
+	s.logFor(r).Warn("http self update received", "user", user, "address", address,
 		"version", current.Version)
 	s.stageAndRestart(w, r, user, address, body, "upload")
 }
@@ -157,7 +157,7 @@ func (s *Server) acceptUpdate(set *settings, w http.ResponseWriter, r *http.Requ
 func (s *Server) describeRelease(set *settings, w http.ResponseWriter, r *http.Request, user string) {
 	release, err := s.updater.Latest(r.Context(), r.URL.Query().Get("refresh") != "")
 	if err != nil {
-		s.log.Info("http self update cannot look up the latest release", "user", user,
+		s.logFor(r).Info("http self update cannot look up the latest release", "user", user,
 			"address", clientAddress(set, r), "error", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -179,7 +179,7 @@ func (s *Server) installRelease(set *settings, w http.ResponseWriter, r *http.Re
 		s.refuseUpdate(w, user, address, err)
 		return
 	}
-	s.log.Warn("http self update from the latest release", "user", user, "address", address,
+	s.logFor(r).Warn("http self update from the latest release", "user", user, "address", address,
 		"version", release.Current, "release", release.Version, "asset", release.Asset)
 	// the write timeout would count the download against the answer, which
 	// is not written until it is done; the download has its own limit instead
@@ -206,7 +206,7 @@ func (s *Server) stageAndRestart(w http.ResponseWriter, r *http.Request, user, a
 		return
 	}
 
-	s.log.Warn("http self update accepted, restarting", "user", user, "address", address,
+	s.logFor(r).Warn("http self update accepted, restarting", "user", user, "address", address,
 		"source", source, "previous", current.Version, "version", staged.Version,
 		"key", staged.Key)
 	w.Header().Set("Connection", "close")
