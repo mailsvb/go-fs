@@ -495,7 +495,7 @@ func (c *conn) attach(name string) (*export, uint32, string) {
 		c.log.Error("nbd cannot read the disk", "disk", name, "error", err)
 		return nil, repErrPlatform, "the disk cannot be read"
 	}
-	var img image = fileImage{file}
+	var img image = fileImage{File: file, log: c.log.With("disk", name)}
 	if c.srv.wrap != nil {
 		img = c.srv.wrap(img)
 	}

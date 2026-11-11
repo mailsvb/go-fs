@@ -273,7 +273,7 @@ func (u *Updater) Stage(ctx context.Context, body io.Reader) (Staged, error) {
 func (u *Updater) smoke(ctx context.Context, name string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, u.smokeTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, name, "-version").Output()
+	out, err := logging.Output(u.log, exec.CommandContext(ctx, name, "-version"))
 	if err != nil {
 		return "", fmt.Errorf("%w: -version failed: %v", ErrNotGoFS, err)
 	}

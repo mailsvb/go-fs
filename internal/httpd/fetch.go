@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -403,7 +404,7 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 		return "", fetchTooLarge(name, limit)
 	}
 	if res.ContentLength > 0 {
-		if err := checkRoom(set, filepath.Dir(target.Path), folder, res.ContentLength, res.ContentLength); err != nil {
+		if err := checkRoom(s.log, set, filepath.Dir(target.Path), folder, res.ContentLength, res.ContentLength); err != nil {
 			return "", err
 		}
 	}
@@ -513,24 +514,31 @@ func fetchReplaces(target vfs.Target, name string, user *account) (bool, error) 
 // cannot be told: diskFree, but for a test, which fills the disk.
 var freeSpace = diskFree
 
+// tracedFreeSpace is freeSpace with the question and its answer traced.
+func tracedFreeSpace(log *slog.Logger, dir string) int64 {
+	free := freeSpace(dir)
+	logging.Syscall(log, "statfs", nil, slog.String("path", dir), slog.Int64("free", free))
+	return free
+}
+
 // checkRoom decides whether a fetch of total bytes fits into the folder at
 // dir, which the account knows as shown, and whether the largest file of it
 // fits into the staging folder, where each file is stored before it goes
 // where it belongs. A file that is replaced is not counted as room, so what
 // is asked for may be more than the fetch takes in the end; room that cannot
 // be told is taken to be there.
-func checkRoom(set *settings, dir, shown string, total, largest int64) error {
-	if free := freeSpace(dir); free >= 0 && total > free {
+func checkRoom(log *slog.Logger, set *settings, dir, shown string, total, largest int64) error {
+	if free := tracedFreeSpace(log, dir); free >= 0 && total > free {
 		return fmt.Errorf("there is not enough room in %s: it needs %s, and %s is free",
 			shown, readableSize(total), readableSize(free))
 	}
 	staging := stagingFolder(set)
 	// the staging folder is made by the first upload or fetch, and may not
 	// be there yet
-	if err := os.MkdirAll(staging, 0o755); err != nil {
+	if err := logging.MkdirAll(log, staging, 0o755); err != nil {
 		return nil
 	}
-	if free := freeSpace(staging); free >= 0 && largest > free {
+	if free := tracedFreeSpace(log, staging); free >= 0 && largest > free {
 		return fmt.Errorf("there is not enough room in the upload staging folder: it needs %s, and %s is free",
 			readableSize(largest), readableSize(free))
 	}

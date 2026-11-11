@@ -5,10 +5,13 @@ package nbd
 import (
 	"errors"
 	"io/fs"
+	"log/slog"
 	"math/bits"
 	"os"
 	"sync"
+	"time"
 
+	"github.com/mailsvb/go-fs/internal/logging"
 	"github.com/mailsvb/go-fs/internal/sparse"
 )
 
@@ -24,13 +27,38 @@ type image interface {
 	Extents(off, n int64) ([]sparse.Extent, error)
 }
 
-// fileImage is an image on disk.
-type fileImage struct{ *os.File }
+// fileImage is an image on disk. The calls below the reads and the writes
+// are traced: the hole punched, the range zeroed, the extents asked for and
+// the sync, each of which is a call into the filesystem of its own.
+type fileImage struct {
+	*os.File
+	log *slog.Logger
+}
 
-func (f fileImage) PunchHole(off, n int64) error { return sparse.PunchHole(f.File, off, n) }
-func (f fileImage) ZeroRange(off, n int64) error { return sparse.ZeroRange(f.File, off, n) }
+func (f fileImage) PunchHole(off, n int64) error {
+	err := sparse.PunchHole(f.File, off, n)
+	logging.Syscall(f.log, "punch hole", err, slog.Int64("offset", off), slog.Int64("length", n))
+	return err
+}
+
+func (f fileImage) ZeroRange(off, n int64) error {
+	err := sparse.ZeroRange(f.File, off, n)
+	logging.Syscall(f.log, "zero range", err, slog.Int64("offset", off), slog.Int64("length", n))
+	return err
+}
+
 func (f fileImage) Extents(off, n int64) ([]sparse.Extent, error) {
-	return sparse.Extents(f.File, off, n)
+	extents, err := sparse.Extents(f.File, off, n)
+	logging.Syscall(f.log, "seek data", err, slog.Int64("offset", off), slog.Int64("length", n),
+		slog.Int("extents", len(extents)))
+	return extents, err
+}
+
+func (f fileImage) Sync() error {
+	started := time.Now()
+	err := f.File.Sync()
+	logging.Syscall(f.log, "fsync", err, slog.Duration("took", time.Since(started).Round(time.Millisecond)))
+	return err
 }
 
 // errno is the NBD error a failed request reports. A full filesystem is told

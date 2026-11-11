@@ -156,8 +156,11 @@ func run(stop <-chan struct{}) error {
 		"service", stop != nil,
 		"logLevel", cfg.General.LogLevel,
 		"logFormat", cfg.General.LogFormat)
-	// the file was read before there was a logger to trace it
+	// the file was read before there was a logger to trace it, and so were
+	// the programs of general.tools probed; later probes are traced
 	logging.Summary(logger.Logger, "read", *configPath)
+	config.TraceProbes(logger.Logger)
+	traceService(logger.Logger)
 	warnAboutSecrets(logger.Logger, *configPath, cfg)
 	warnAboutReserved(logger.Logger, cfg)
 	if viewer.Compiled && !viewer.Available() {
@@ -229,6 +232,7 @@ func run(stop <-chan struct{}) error {
 	// that the shutdown record can say which one it was
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	logging.Syscall(logger.Logger, "signal notify", nil, slog.Any("signals", []string{os.Interrupt.String(), syscall.SIGTERM.String()}))
 
 	sup := supervisor.New(logger.Logger, *configPath)
 	sup.TrackLog(logger)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -111,10 +112,13 @@ func (f *Folder) Clone(src, dst string) (*Job, error) {
 
 	go func() {
 		defer cancel()
+		copyStarted := time.Now()
 		err := sparse.CopyFile(ctx, staging, f.path(src), func(done, total int64) {
 			job.done.Store(done)
 			job.total.Store(total)
 		})
+		logging.Syscall(f.log, "copy sparse", err, slog.String("from", f.path(src)), slog.String("to", staging),
+			slog.Int64("bytes", job.done.Load()), slog.Duration("took", time.Since(copyStarted).Round(time.Millisecond)))
 		if err == nil {
 			// the lease on dst kept everything of this process away from
 			// the name; this keeps whatever else may write to the folder

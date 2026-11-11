@@ -218,3 +218,12 @@ func Args(args []string) []string {
 	}
 	return shown
 }
+
+// urlInText is a URL inside free text, such as a line a program printed.
+var urlInText = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s"'<>]+`)
+
+// Text is free text as a record shows it: every URL in it is shown as URL
+// shows it, and the text is cut to a length a record can carry.
+func Text(text string) string {
+	return cut(urlInText.ReplaceAllStringFunc(text, URLString))
+}

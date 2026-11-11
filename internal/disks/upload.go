@@ -87,7 +87,7 @@ func (f *Folder) WriteChunk(name string, chunk Chunk, body io.Reader) (complete 
 		if err := file.Truncate(0); err != nil {
 			return false, err
 		}
-		if err := sparse.SetSparse(file); err != nil {
+		if err := f.setSparse(file); err != nil {
 			return false, err
 		}
 	}

@@ -18,7 +18,8 @@ import (
 func (u *Updater) Restart() error {
 	cmd := exec.Command(u.exe, os.Args[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Start(); err != nil {
+	// the new process outlives this one, so only its start is recorded
+	if _, err := logging.Start(u.log, cmd); err != nil {
 		return err
 	}
 	return cmd.Process.Release()

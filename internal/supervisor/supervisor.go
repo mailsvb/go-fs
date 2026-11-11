@@ -404,6 +404,7 @@ func (s *Supervisor) Watch(ctx context.Context, path string, interval time.Durat
 	if signals := hangupSignals(); len(signals) > 0 {
 		signal.Notify(hangup, signals...)
 		defer signal.Stop(hangup)
+		logging.Syscall(s.log, "signal notify", nil, slog.Any("signals", signals))
 	}
 
 	ticker := time.NewTicker(interval)

@@ -137,7 +137,7 @@ func (s *Server) localBrowse(set *settings, w http.ResponseWriter, r *http.Reque
 		sendFolderJSON: sendFolderJSON{Path: shown, Entries: []sendEntryJSON{}},
 		Writable:       mayFetch(cred, folder),
 		Mkdir:          mayFetchFolder(cred, folder),
-		Free:           freeSpace(target.Path),
+		Free:           tracedFreeSpace(s.logFor(r), target.Path),
 	}
 	if shown != "/" {
 		view.Parent = path.Dir(shown)
@@ -375,7 +375,7 @@ func (s *Server) remoteFetchFile(ctx context.Context, set *settings, job *regist
 	if limit := set.cfg.MaxUploadSize; limit > 0 && info.Size() > limit {
 		return "", fetchTooLarge(name, limit)
 	}
-	if err := checkRoom(set, filepath.Dir(target.Path), folder, info.Size(), info.Size()); err != nil {
+	if err := checkRoom(s.log, set, filepath.Dir(target.Path), folder, info.Size(), info.Size()); err != nil {
 		return "", err
 	}
 	job.named(name, "")
@@ -486,7 +486,7 @@ func (s *Server) remoteFetchFolder(ctx context.Context, cancel context.CancelCau
 			return "", fetchTooLarge(file.target.Virtual, limit)
 		}
 	}
-	if err := checkRoom(set, filepath.Dir(top.Path), folder, total, largest); err != nil {
+	if err := checkRoom(s.log, set, filepath.Dir(top.Path), folder, total, largest); err != nil {
 		return "", err
 	}
 

@@ -91,3 +91,17 @@ func TestSecretIsMasked(t *testing.T) {
 		t.Errorf("record = %s", out.String())
 	}
 }
+
+func TestTextMasksURLsInALine(t *testing.T) {
+	line := `[generic] Extracting URL: https://cdn.example/v.mp4?token=linetoken&x=1 and "http://h/a?p=pw"`
+	got := Text(line)
+	if strings.Contains(got, "linetoken") || strings.Contains(got, "p=pw") {
+		t.Errorf("Text = %q", got)
+	}
+	if !strings.Contains(got, "token=***&x=1") || !strings.HasPrefix(got, "[generic] Extracting URL: https://cdn.example/v.mp4?") {
+		t.Errorf("Text = %q", got)
+	}
+	if got := Text(strings.Repeat("a", 2*maxHeaderValue)); len(got) > maxHeaderValue+4 {
+		t.Errorf("a long line is not cut: %d", len(got))
+	}
+}

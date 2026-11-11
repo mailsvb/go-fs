@@ -189,6 +189,7 @@ func (f *Folder) List() ([]Disk, error) {
 			continue
 		}
 		allocated, err := sparse.Allocated(f.path(name))
+		logging.Syscall(f.log, "allocated", err, slog.String("path", f.path(name)), slog.Int64("allocated", allocated))
 		if err != nil {
 			allocated = info.Size()
 		}
@@ -244,7 +245,7 @@ func (f *Folder) Create(name string, size int64) (err error) {
 			_ = logging.Remove(f.log, f.path(name))
 		}
 	}()
-	if err := sparse.SetSparse(file); err != nil {
+	if err := f.setSparse(file); err != nil {
 		return err
 	}
 	if err := file.Truncate(roundUp(size)); err != nil {
@@ -285,7 +286,7 @@ func (f *Folder) Resize(name string, size int64, shrink bool) (err error) {
 	if size < info.Size() && !shrink {
 		return fmt.Errorf("%q %w", name, ErrShrink)
 	}
-	if err := sparse.SetSparse(file); err != nil {
+	if err := f.setSparse(file); err != nil {
 		return err
 	}
 	if err := file.Truncate(size); err != nil {
@@ -372,7 +373,7 @@ func (f *Folder) Attach(name string, session *Session) (*os.File, *Lease, error)
 	}
 	if session.Writable {
 		// an image made elsewhere is marked so that a trim gives space back
-		if err := sparse.SetSparse(file); err != nil {
+		if err := f.setSparse(file); err != nil {
 			_ = file.Close()
 			lease.Release()
 			return nil, nil, err
@@ -470,4 +471,12 @@ func stagingName(name string) (kind, disk string, ok bool) {
 		}
 	}
 	return "", "", false
+}
+
+// setSparse marks file as sparse where the filesystem has to be told, with
+// the call traced.
+func (f *Folder) setSparse(file *os.File) error {
+	err := sparse.SetSparse(file)
+	logging.Syscall(f.log, "set sparse", err, slog.String("path", file.Name()))
+	return err
 }

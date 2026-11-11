@@ -199,7 +199,7 @@ func (s *Server) fetchMedia(ctx context.Context, set *settings, job *registryJob
 	}
 	// the bytes are in the staging folder already, so only the folder they
 	// go to has to have room
-	if err := checkRoom(set, filepath.Dir(target.Path), folder, size, 0); err != nil {
+	if err := checkRoom(s.log, set, filepath.Dir(target.Path), folder, size, 0); err != nil {
 		return "", err
 	}
 	// a temporary folder is the owner's alone, and what yt-dlp wrote into it
@@ -275,7 +275,7 @@ type mediaRun struct {
 func (m *mediaRun) ytDlp(ctx context.Context, program string, args []string) error {
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.WaitDelay = mediaWaitDelay
-	ownProcessGroup(cmd)
+	ownProcessGroup(cmd, m.log)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -284,7 +284,8 @@ func (m *mediaRun) ytDlp(ctx context.Context, program string, args []string) err
 	if err != nil {
 		return err
 	}
-	if err := cmd.Start(); err != nil {
+	process, err := logging.Start(m.log, cmd)
+	if err != nil {
 		return fmt.Errorf("yt-dlp cannot be started: %w", err)
 	}
 	m.timer = time.AfterFunc(remoteIdleTimeout, func() { m.cancel(errStalled) })
@@ -295,7 +296,7 @@ func (m *mediaRun) ytDlp(ctx context.Context, program string, args []string) err
 	go func() { defer wg.Done(); m.read(stdout, false) }()
 	go func() { defer wg.Done(); m.read(stderr, true) }()
 	wg.Wait()
-	err = cmd.Wait()
+	err = process.Wait()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -333,6 +334,13 @@ func (m *mediaRun) line(line string, isStderr bool) {
 		m.progress(rest)
 		return
 	}
+	// what yt-dlp says besides its progress, which names the URLs it
+	// fetches: those are shown with their credentials masked
+	stream := "stdout"
+	if isStderr {
+		stream = "stderr"
+	}
+	m.log.Debug("yt-dlp >", "stream", stream, "line", logging.Text(line))
 	switch {
 	case strings.HasPrefix(line, "ERROR: "):
 		m.failure = strings.TrimSpace(strings.TrimPrefix(line, "ERROR: "))
