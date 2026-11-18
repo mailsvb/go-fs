@@ -65,6 +65,11 @@ func parseDocs(src []byte) map[string]string {
 			for _, name := range field.Names {
 				found[spec.Name.Name+"."+name.Name] = text
 			}
+			// an embedded struct, as the tables of [http] are, is named by
+			// its type
+			if ident, ok := field.Type.(*ast.Ident); ok && len(field.Names) == 0 {
+				found[spec.Name.Name+"."+ident.Name] = text
+			}
 		}
 		return true
 	})

@@ -516,7 +516,7 @@ func TestAGeneratedSigningKeyIsWarnedAbout(t *testing.T) {
 	server := newServer(t, func(cfg *httpConfig) {
 		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
-	if server.logs.findLike("no http.httpSessionTokenSecret configured") == nil {
+	if server.logs.findLike("no http.auth.httpSessionTokenSecret configured") == nil {
 		t.Error("a generated signing key was not warned about")
 	}
 
@@ -528,7 +528,7 @@ func TestAGeneratedSigningKeyIsWarnedAbout(t *testing.T) {
 		cfg.SessionTokenSecret = secret
 		cfg.Users = []config.User{fullUser("john", "doe")}
 	})
-	if configured.logs.findLike("no http.httpSessionTokenSecret configured") != nil {
+	if configured.logs.findLike("no http.auth.httpSessionTokenSecret configured") != nil {
 		t.Error("a configured signing key was warned about")
 	}
 }

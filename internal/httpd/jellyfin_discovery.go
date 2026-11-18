@@ -13,7 +13,7 @@ import (
 
 // A Jellyfin client looks for servers on the local network by a broadcast to
 // UDP port 7359 that asks "who is JellyfinServer?", and every server answers
-// the client with its address, id and name. With http.jellyfinDiscovery on,
+// the client with its address, id and name. With http.services.jellyfinDiscovery on,
 // and while there is a jellyfin repository, this server answers as well.
 
 // jellyfinDiscoveryPort is the port the clients broadcast to.
@@ -57,12 +57,12 @@ func (s *Server) discoverJellyfin(set *settings) {
 	address := ""
 	if isLoopback(set.cfg.Address) {
 		address = set.cfg.Address
-		s.log.Warn("http.jellyfinDiscovery is on, but http.address is the loopback one, "+
+		s.log.Warn("http.services.jellyfinDiscovery is on, but http.main.address is the loopback one, "+
 			"so no client on another host finds this server", "address", address)
 	}
 	conn, err := net.ListenPacket("udp", net.JoinHostPort(address, strconv.Itoa(d.port)))
 	if err != nil {
-		s.log.Warn("http.jellyfinDiscovery is on, but Jellyfin clients cannot be answered", "error", err)
+		s.log.Warn("http.services.jellyfinDiscovery is on, but Jellyfin clients cannot be answered", "error", err)
 		return
 	}
 	s.log.Info("jellyfin discovery listening", "address", conn.LocalAddr().String())

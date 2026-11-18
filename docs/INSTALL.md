@@ -173,7 +173,7 @@ uninstall removes the binary and the service, and keeps everything in
 `C:\ProgramData\go-fs`. The firewall stays closed unless `FIREWALL=1` is
 given, since nothing listens beyond `127.0.0.1` as installed.
 
-Once installed, go-fs updates itself: turn on `http.enableSelfUpdate`, and the
+Once installed, go-fs updates itself: turn on `http.main.enableSelfUpdate`, and the
 **UPDATE** tab of the admin interface installs the latest GitHub release (see
 [Updating from GitHub](#updating-from-github)). go-fs replaces `go-fs.exe`,
 keeping the previous one as `go-fs.exe.old`, and ends the service with an
@@ -250,7 +250,7 @@ a release's `.update` file: the go-fs binary with an ed25519 signature appended.
 go-fs checks the file, replaces its executable, and restarts into the new
 version. The configuration file is not touched.
 
-It is off by default. Turn it on with `http.enableSelfUpdate = true`, and allow
+It is off by default. Turn it on with `http.main.enableSelfUpdate = true`, and allow
 at least one client. A go-fs installed by the rpm refuses every update over
 HTTP, since its package owns the binary: update the package instead. The
 **UPDATE** tab then shows the latest release and how to install it.
@@ -318,7 +318,7 @@ How the executable is replaced:
   and started again, so the servers come back either way.
 - Open connections are dropped by the restart, as they are by `SIGTERM`.
 
-Browsers stay logged in across the restart, since `http.httpSessionTokenSecret`
+Browsers stay logged in across the restart, since `http.auth.httpSessionTokenSecret`
 is kept in the configuration file. Only when that file cannot be written, and
 the key is made for each run, does the restart log every browser out, the admin
 page included.
@@ -353,7 +353,7 @@ curl -X POST -H "Authorization: Bearer gofs_…" "https://host:8443/?go-fs=updat
   unauthenticated requests an hour. **Check again** on the tab, or
   `&refresh=1`, asks GitHub anew.
 - go-fs contacts GitHub only when it is asked to: when the admin interface is
-  opened with `http.enableSelfUpdate` on, or when a script asks. Nothing is
+  opened with `http.main.enableSelfUpdate` on, or when a script asks. Nothing is
   checked at startup or in the background.
 - The server needs outbound HTTPS to `api.github.com` and `github.com`, which
   redirects the download to `objects.githubusercontent.com`. `HTTPS_PROXY` and

@@ -44,8 +44,8 @@ func TestTemplateDocs(t *testing.T) {
 		{"users.allowUserFileCreate", "users.allowUserFolderCreate"},
 		{"ftps.cert", "ftps.key"},
 		{"https.cert", "https.key"},
-		{"http.readTimeout", "http.writeTimeout"},
-		{"http.readTimeout", "http.idleTimeout"},
+		{"http.connection.readTimeout", "http.connection.writeTimeout"},
+		{"http.connection.readTimeout", "http.connection.idleTimeout"},
 		{"tftp.maxConnections", "tftp.maxConnectionsPerHost"},
 		{"tftp.allowRead", "tftp.allowWrite"},
 	} {
@@ -64,8 +64,8 @@ func TestTemplateDocs(t *testing.T) {
 	if !strings.HasPrefix(docs["http"], "The HTTP file server") {
 		t.Errorf("the [http] section is described as %q", docs["http"])
 	}
-	if !strings.HasPrefix(docs["http.trustedProxies"], "Addresses or CIDR ranges") {
-		t.Errorf("http.trustedProxies is described as %q", docs["http.trustedProxies"])
+	if !strings.HasPrefix(docs["http.main.trustedProxies"], "Addresses or CIDR ranges") {
+		t.Errorf("http.main.trustedProxies is described as %q", docs["http.main.trustedProxies"])
 	}
 	// the s3 switch of an account is described on its own, not as one of the
 	// servers above it, and the server switch says what a bucket is and names
@@ -73,8 +73,8 @@ func TestTemplateDocs(t *testing.T) {
 	if !strings.HasPrefix(docs["users.s3"], "Let this account use the S3 API") {
 		t.Errorf("users.s3 is described as %q", docs["users.s3"])
 	}
-	if !strings.Contains(docs["http.enableS3"], "Every folder") || !strings.Contains(docs["http.enableS3"], `"us-east-1"`) {
-		t.Errorf("http.enableS3 is described as %q", docs["http.enableS3"])
+	if !strings.Contains(docs["http.services.enableS3"], "Every folder") || !strings.Contains(docs["http.services.enableS3"], `"us-east-1"`) {
+		t.Errorf("http.services.enableS3 is described as %q", docs["http.services.enableS3"])
 	}
 	for key := range docs {
 		if strings.ContainsAny(key, " \"[]") {
@@ -83,7 +83,7 @@ func TestTemplateDocs(t *testing.T) {
 	}
 	// what is set apart by a blank line, or follows a key, is for the file
 	// alone: the shell hints are not shown in the browser
-	for _, key := range []string{"ftps.cert", "sftp.hostkey", "http.httpSessionTokenSecret"} {
+	for _, key := range []string{"ftps.cert", "sftp.hostkey", "http.auth.httpSessionTokenSecret"} {
 		if strings.Contains(docs[key], "base64 <") || strings.Contains(docs[key], "/dev/urandom") {
 			t.Errorf("%s carries its shell hint: %q", key, docs[key])
 		}

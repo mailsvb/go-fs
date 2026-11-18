@@ -116,7 +116,7 @@ func TestAFileWithoutTheSSHSectionGetsTheDefaults(t *testing.T) {
 [general]
 baseFolderFiles = "{{folder}}"
 
-[http]
+[http.main]
 enabled = false
 
 [ftp]

@@ -199,7 +199,7 @@ reloadConfig = false
 enabled = false
 [tftp]
 enabled = false
-[http]
+[http.main]
 enabled = true
 address = "127.0.0.1"
 port = %d

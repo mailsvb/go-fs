@@ -182,7 +182,7 @@ func newRequestID() string {
 func (s *Server) handleS3(set *settings, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Amz-Request-Id", newRequestID())
 	if !set.cfg.EnableS3 {
-		s.logFor(r).Debug("s3 request refused, http.enableS3 is off", "method", r.Method, "path", r.URL.Path,
+		s.logFor(r).Debug("s3 request refused, http.services.enableS3 is off", "method", r.Method, "path", r.URL.Path,
 			"address", clientAddress(set, r))
 		writeS3Error(w, r, s3Err(http.StatusForbidden, "AccessDenied",
 			"The S3 API is switched off on this server."))

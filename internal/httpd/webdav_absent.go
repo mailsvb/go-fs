@@ -9,7 +9,7 @@ import (
 )
 
 // A binary built without WebDAV, go-fs-light for one, keeps none of
-// golang.org/x/net: no request is WebDAV, so http.webdav changes nothing and
+// golang.org/x/net: no request is WebDAV, so http.services.webdav changes nothing and
 // these are never reached.
 
 type davState struct{}

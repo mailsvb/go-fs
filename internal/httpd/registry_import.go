@@ -237,7 +237,7 @@ func (s *Server) importUploadStart(set *settings, w http.ResponseWriter, r *http
 		return
 	}
 	if limit := set.cfg.MaxUploadSize; limit > 0 && body.Size > limit {
-		http.Error(w, fmt.Sprintf("The archive has %d bytes, more than http.maxUploadSize allows.", body.Size),
+		http.Error(w, fmt.Sprintf("The archive has %d bytes, more than http.connection.maxUploadSize allows.", body.Size),
 			http.StatusRequestEntityTooLarge)
 		return
 	}

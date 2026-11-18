@@ -321,7 +321,7 @@ func (s *Server) checkToken(set *settings, w http.ResponseWriter, r *http.Reques
 		return nil
 	}
 	if claims.outlived(sessionWindowOf(set.cfg), time.Now()) {
-		s.logFor(r).Info("http session token is older than http.httpSessionMaxLifetime",
+		s.logFor(r).Info("http session token is older than http.auth.httpSessionMaxLifetime",
 			"user", claims.Subject, "address", clientAddress(set, r))
 		s.clearSession(w)
 		return nil
@@ -411,7 +411,7 @@ func accountNamed(accounts []*account, name string) *account {
 
 // needsAuth decides whether credentials are required at all. Every request
 // needs them, except a reading one whose path matches one of
-// http.pathsWithoutAuth; a folder of a jellyfin or a subsonic repository
+// http.connection.pathsWithoutAuth; a folder of a jellyfin or a subsonic repository
 // needs them even then.
 func (s *Server) needsAuth(set *settings, method, virtual string) bool {
 	return accountMethod(method) || matchesPath(set.musicPaths, virtual) ||
@@ -616,9 +616,9 @@ func (s *Server) setSession(set *settings, w http.ResponseWriter, r *http.Reques
 
 // renewSession hands a browser in use a fresh token for the login it already
 // has, once the one it presents is in the second half of its idle window.
-// This is what makes http.httpSessionTokenLifetime an idle timeout rather than
+// This is what makes http.auth.httpSessionTokenLifetime an idle timeout rather than
 // a lifetime: a browser that keeps making requests keeps being renewed, up to
-// http.httpSessionMaxLifetime after the login. Failing to renew is not worth
+// http.auth.httpSessionMaxLifetime after the login. Failing to renew is not worth
 // failing the request for, since the token it came with is still good.
 func (s *Server) renewSession(set *settings, w http.ResponseWriter, r *http.Request, user *account, claims *sessionClaims) {
 	window := sessionWindowOf(set.cfg)
@@ -647,7 +647,7 @@ func writeSessionCookie(set *settings, w http.ResponseWriter, r *http.Request, t
 		Expires:  expires,
 		HttpOnly: true,
 		// Secure follows the connection, or X-Forwarded-Proto when the
-		// connection is from one of http.trustedProxies. From anywhere else
+		// connection is from one of http.main.trustedProxies. From anywhere else
 		// that header is written by the client, and honouring it would let a
 		// client talk this server out of the flag
 		Secure: secureRequest(set, r),

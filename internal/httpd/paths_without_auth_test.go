@@ -8,7 +8,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/config"
 )
 
-// With nothing in http.pathsWithoutAuth every path needs an account, the root
+// With nothing in http.connection.pathsWithoutAuth every path needs an account, the root
 // and its listing included. What decides for itself before that — the login
 // page and a share link — is still reachable without one.
 func TestEveryPathNeedsAnAccountByDefault(t *testing.T) {
@@ -44,7 +44,7 @@ func TestEveryPathNeedsAnAccountByDefault(t *testing.T) {
 	}
 }
 
-// http.pathsWithoutAuth opens reading and nothing else: a GET or a HEAD of a
+// http.connection.pathsWithoutAuth opens reading and nothing else: a GET or a HEAD of a
 // path it lists needs no account, a write there still does, and every path it
 // does not list needs one.
 func TestPathsWithoutAuthOpensReadingOnly(t *testing.T) {
@@ -102,7 +102,7 @@ func TestPathsWithoutAuthOpensReadingOnly(t *testing.T) {
 // A server that nobody can read from is not refused, since its share links
 // and pages still work, but it is worth a warning.
 func TestNoReaderIsWarnedAbout(t *testing.T) {
-	const warning = "no [[users]] entry sets http, there is no bearer token and http.pathsWithoutAuth is empty, " +
+	const warning = "no [[users]] entry sets http, there is no bearer token and http.connection.pathsWithoutAuth is empty, " +
 		"so nobody can read the files over http"
 	nobody := newServer(t, func(cfg *httpConfig) {
 		cfg.PathsWithoutAuth = nil

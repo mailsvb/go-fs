@@ -15,7 +15,7 @@ func TestChangedKeysNamesKeysNotValues(t *testing.T) {
 	after.HTTP.Port = before.HTTP.Port + 1
 
 	got := ChangedKeys(before, after)
-	if !slices.Contains(got, "users[0].password") || !slices.Contains(got, "http.port") || len(got) != 2 {
+	if !slices.Contains(got, "users[0].password") || !slices.Contains(got, "http.main.port") || len(got) != 2 {
 		t.Errorf("ChangedKeys = %q", got)
 	}
 	if strings.Contains(strings.Join(got, " "), "newsecret") {
@@ -48,7 +48,7 @@ func TestTheConfigurationLogsWithoutCredentials(t *testing.T) {
 			t.Errorf("the record holds %q", secret)
 		}
 	}
-	for _, want := range []string{"config.users[0].username=john", "config.users[0].password=***", "config.http.port=",
+	for _, want := range []string{"config.users[0].username=john", "config.users[0].password=***", "config.http.main.port=",
 		"config.servers[0].host=h", "config.tokens[0].name=phone"} {
 		if !strings.Contains(logged, want) {
 			t.Errorf("the record lacks %q:\n%s", want, logged)

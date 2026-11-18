@@ -798,7 +798,7 @@ func (b *idleUploadBody) Read(p []byte) (int, error) {
 	return b.ReadCloser.Read(p)
 }
 
-// tooLarge answers an upload above http.maxUploadSize with the status that
+// tooLarge answers an upload above http.connection.maxUploadSize with the status that
 // says so, rather than reporting a server error for what the client did.
 func (s *Server) tooLarge(set *settings, w http.ResponseWriter, target vfs.Target) {
 	s.log.Debug("http upload exceeds the maximum size",

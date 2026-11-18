@@ -26,7 +26,7 @@ func (c Config) Ignored() []string {
 		ignored = append(ignored, "nbd")
 	}
 	if c.HTTP.WebDAV && !features.Has(features.WebDAV) {
-		ignored = append(ignored, "http.webdav")
+		ignored = append(ignored, "http.services.webdav")
 	}
 	for i, server := range c.Servers {
 		if absentServerType(server.Type) {

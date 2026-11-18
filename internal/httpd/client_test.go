@@ -137,7 +137,7 @@ func TestBadTrustedProxiesAreRefused(t *testing.T) {
 	cfg.TrustedProxies = []string{"not-an-address"}
 	if _, err := New(cfg, config.Default().HTTPS, config.Default().General.SSH, nil, nil, nil, "", nil, nil, discardLogger()); err == nil {
 		t.Error("New accepted a proxy that is not an address")
-	} else if !strings.Contains(err.Error(), "http.trustedProxies[0]") {
+	} else if !strings.Contains(err.Error(), "http.main.trustedProxies[0]") {
 		t.Errorf("the error does not name the entry: %v", err)
 	}
 

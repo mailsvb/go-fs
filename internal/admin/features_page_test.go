@@ -50,7 +50,7 @@ token = "secret"
 vaultPath = "libs/vault"
 vaultPassword = "pw"
 
-[http]
+[http.main]
 enabled = true
 
 [tftp]

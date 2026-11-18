@@ -54,10 +54,10 @@ func rereadSecrets(t *testing.T, written string, cfg Config) Config {
 }
 
 func TestEnsureSecretsFillsTheEmptyKeys(t *testing.T) {
-	body := "# top comment\n[http]\n# the key below\nshareLinkSecret = \"\"\nport = 9080\n" +
-		"# and this one\nhttpSessionTokenSecret = \"\"\n\n[[users]]\nusername = \"john\"\n"
+	body := "# top comment\n[http.main]\n# the key below\nshareLinkSecret = \"\"\nport = 9080\n" +
+		"[http.auth]\n# and this one\nhttpSessionTokenSecret = \"\"\n\n[[users]]\nusername = \"john\"\n"
 	cfg, written, generated := ensureIn(t, body)
-	if !slices.Equal(generated, []string{"http.shareLinkSecret", "http.httpSessionTokenSecret"}) {
+	if !slices.Equal(generated, []string{"http.main.shareLinkSecret", "http.auth.httpSessionTokenSecret"}) {
 		t.Fatalf("generated = %v", generated)
 	}
 	want := strings.Replace(body, `shareLinkSecret = ""`,
@@ -73,13 +73,18 @@ func TestEnsureSecretsFillsTheEmptyKeys(t *testing.T) {
 }
 
 func TestEnsureSecretsAddsTheKeysToTheSection(t *testing.T) {
-	body := "[general]\nlogLevel = \"info\"\n\n[http] # served\nport = 9081\n\n[[general.cleanup]]\npath = \"/tmp\"\n"
+	body := "[general]\nlogLevel = \"info\"\n\n[http.main] # served\nport = 9081\n\n" +
+		"[[general.cleanup]]\npath = \"/tmp\"\n\n[http.auth]\nloginAttempts = 3\n"
 	cfg, written, _ := ensureIn(t, body)
-	if !strings.Contains(written, "[http] # served\n"+
-		"httpSessionTokenSecret = \""+cfg.HTTP.SessionTokenSecret+"\"\n"+
+	if !strings.Contains(written, "[http.main] # served\n"+
 		"shareLinkSecret = \""+cfg.HTTP.ShareLinkSecret+"\"\n"+
 		"port = 9081\n") {
-		t.Errorf("the keys are not the first of [http]:\n%s", written)
+		t.Errorf("the key is not the first of [http.main]:\n%s", written)
+	}
+	if !strings.Contains(written, "[http.auth]\n"+
+		"httpSessionTokenSecret = \""+cfg.HTTP.SessionTokenSecret+"\"\n"+
+		"loginAttempts = 3\n") {
+		t.Errorf("the key is not the first of [http.auth]:\n%s", written)
 	}
 	if reread := rereadSecrets(t, written, cfg); len(reread.General.Cleanup) != 1 {
 		t.Errorf("cleanup = %+v", reread.General.Cleanup)
@@ -92,8 +97,8 @@ func TestEnsureSecretsAppendsTheSection(t *testing.T) {
 	if !strings.HasPrefix(written, body+"\n") {
 		t.Errorf("what was there changed:\n%s", written)
 	}
-	if strings.Count(written, "[http]") != 1 {
-		t.Errorf("[http] was added more than once:\n%s", written)
+	if strings.Count(written, "[http.main]") != 1 || strings.Count(written, "[http.auth]") != 1 {
+		t.Errorf("[http.main] and [http.auth] were not each added once:\n%s", written)
 	}
 	if reread := rereadSecrets(t, written, cfg); reread.General.LogLevel != "info" {
 		t.Errorf("logLevel = %q", reread.General.LogLevel)
@@ -118,8 +123,8 @@ func TestEnsureSecretsLeavesSetSecretsAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := "[http]\nshareLinkSecret = \"" + strings.Repeat("s", 40) + "\"\n" +
-		"httpSessionTokenSecret = \"" + session + "\"\n"
+	body := "[http.main]\nshareLinkSecret = \"" + strings.Repeat("s", 40) + "\"\n" +
+		"[http.auth]\nhttpSessionTokenSecret = \"" + session + "\"\n"
 	cfg, written, generated := ensureIn(t, body)
 	if generated != nil || written != body || cfg.HTTP.ShareLinkSecret != strings.Repeat("s", 40) ||
 		cfg.HTTP.SessionTokenSecret != session {
@@ -130,9 +135,9 @@ func TestEnsureSecretsLeavesSetSecretsAlone(t *testing.T) {
 // a file that set only one of them, as one written before the session secret
 // was generated does, is given the other and keeps the one it has
 func TestEnsureSecretsFillsOnlyTheMissingOne(t *testing.T) {
-	body := "[http]\nshareLinkSecret = \"" + strings.Repeat("s", 40) + "\"\nhttpSessionTokenSecret = \"\"\n"
+	body := "[http.main]\nshareLinkSecret = \"" + strings.Repeat("s", 40) + "\"\n[http.auth]\nhttpSessionTokenSecret = \"\"\n"
 	cfg, written, generated := ensureIn(t, body)
-	if !slices.Equal(generated, []string{"http.httpSessionTokenSecret"}) {
+	if !slices.Equal(generated, []string{"http.auth.httpSessionTokenSecret"}) {
 		t.Fatalf("generated = %v", generated)
 	}
 	if cfg.HTTP.ShareLinkSecret != strings.Repeat("s", 40) {
@@ -161,5 +166,22 @@ func TestEnsureSecretsKeepsTheFileMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o640 {
 		t.Errorf("mode = %v, want 0640", info.Mode().Perm())
+	}
+}
+
+// The secrets of a file written before [http] had its tables sit directly in
+// [http], where they are no longer read: the file is given new ones in the
+// tables, and the old keys are left where they are.
+func TestEnsureSecretsIgnoresTheFlatKeys(t *testing.T) {
+	body := "[http]\nport = 9082\nshareLinkSecret = \"" + strings.Repeat("s", 40) + "\"\n"
+	cfg, written, generated := ensureIn(t, body)
+	if !slices.Equal(generated, []string{"http.main.shareLinkSecret", "http.auth.httpSessionTokenSecret"}) {
+		t.Fatalf("generated = %v", generated)
+	}
+	if !strings.HasPrefix(written, body) || cfg.HTTP.ShareLinkSecret == strings.Repeat("s", 40) {
+		t.Errorf("the file is\n%s", written)
+	}
+	if reread := rereadSecrets(t, written, cfg); reread.HTTP.Port != 8080 {
+		t.Errorf("port = %d, want the default", reread.HTTP.Port)
 	}
 }

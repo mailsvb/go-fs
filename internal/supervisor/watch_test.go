@@ -42,9 +42,11 @@ enabled = false
 [tftp]
 enabled = false
 
-[http]
+[http.main]
 enabled = true
 port = ` + strconv.Itoa(port) + `
+
+[http.auth]
 loginFailureDelay = 0
 ` + users
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {

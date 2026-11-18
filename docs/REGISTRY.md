@@ -12,8 +12,10 @@ registry keeps its images in; each account that should push sets
 [general]
 baseFolderRegistry = "/var/lib/go-fs/registry"
 
-[http]
+[http.main]
 enabled = true
+
+[http.services]
 registryAnonymousRead = true
 
 [[users]]
@@ -33,7 +35,7 @@ docker pull host:8443/team/app:1.0
 |---|---|
 | Endpoint | `host:8443` (or the plain port), under `/v2/` |
 | Storage | `general.baseFolderRegistry`, which nothing else may serve |
-| Pulling | anyone while `http.registryAnonymousRead = true` (the default), otherwise an account that sets `registry` |
+| Pulling | anyone while `http.services.registryAnonymousRead = true` (the default), otherwise an account that sets `registry` |
 | Pushing, tagging, deleting | an account that sets `registry` |
 | Credentials | a token from `/v2/_token`, fetched with the account's username and password as `docker login` does, or HTTP Basic on every request |
 
@@ -55,7 +57,7 @@ token there, with the username and password it was given by `docker login` or
 without any, and sends the token with every request after. A token without an
 account pulls where pulling is public; a token of an account that sets
 `registry` does everything. Tokens are signed with the key of the browser
-sessions, `http.httpSessionTokenSecret`, but cannot stand in for one, and are
+sessions, `http.auth.httpSessionTokenSecret`, but cannot stand in for one, and are
 accepted for five minutes; changing the account's password ends them at once.
 A request may also carry Basic credentials itself, which is what `curl -u`
 sends. A wrong password counts against the address in the same lock as
@@ -176,7 +178,7 @@ read are kept under `baseFolderRegistry/_uploads` while the import runs and
 removed when it ends.
 
 Who may see the page follows who may pull. With
-`http.registryAnonymousRead = false` a visitor is sent to the login page
+`http.services.registryAnonymousRead = false` a visitor is sent to the login page
 first. The form accepts accounts that set only `registry` wherever it is
 reached, also on a server where no account sets `http`. Such an account lands
 on the registry page after logging in, and its session reaches nothing in the
@@ -213,5 +215,5 @@ swept as the hourly cleanup sweeps them.
 - **Plain HTTP.** Docker only talks to a registry over plain HTTP when it is
   `localhost` or listed in `insecure-registries` of the daemon's
   configuration; use the TLS port everywhere else.
-- **`http.writeTimeout`** caps how long a pull of a large layer may take, as
+- **`http.connection.writeTimeout`** caps how long a pull of a large layer may take, as
   it caps any download.

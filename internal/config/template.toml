@@ -212,14 +212,14 @@ isAdmin = true
 # ftp = true
 # sftp = true
 # http = true
-# Let this account use the S3 API of the http server (see http.enableS3), with
+# Let this account use the S3 API of the http server (see http.services.enableS3), with
 # the username as the access key and the password as the secret key. It is
 # independent of http, and the paths and rights below apply to it alike.
 # s3 = true
 # Let this account push images to and delete them from the container registry
 # of the http server (see general.baseFolderRegistry), logging in with its
 # username and password as docker login does, and pull from it when
-# http.registryAnonymousRead is off. It is independent of http; the paths and
+# http.services.registryAnonymousRead is off. It is independent of http; the paths and
 # rights below do not apply to it.
 # registry = true
 # Let a client certificate whose common name is this username attach the disk
@@ -261,7 +261,7 @@ isAdmin = true
 # Basic or Digest.
 #
 # Let this account into the admin interface, the page that edits this file
-# (see http.enableAdminInterface). It is reached after logging in through the
+# (see http.main.enableAdminInterface). It is reached after logging in through the
 # browser, so the account has to set http as well; the listing then shows it
 # an Admin button.
 # isAdmin = false
@@ -324,7 +324,7 @@ isAdmin = true
 # allowUserFolderDelete = true
 # allowUserFolderCreate = true
 # Whether the token may upload a new go-fs binary to ?go-fs=update, which also
-# needs http.enableSelfUpdate. False when not set.
+# needs http.main.enableSelfUpdate. False when not set.
 # allowSelfUpdate = true
 
 # Remote servers the file listing sends files to, one table per server. The
@@ -603,16 +603,22 @@ loginFailureDelay = 1
 
 # The HTTP file server: browse and download with GET, upload with PUT, remove
 # with DELETE. Access has two layers. Every request needs an account, except a
-# GET or a HEAD whose path matches one of pathsWithoutAuth: every request that
-# changes something (PUT, DELETE, POST, MKCOL, MOVE and the writes of WebDAV)
-# and every WebDAV listing (PROPFIND) always needs one. Such a request has to
-# be answered by one of the [[users]] entries that set http = true, whose own
-# paths and rights then decide what it may do.
+# GET or a HEAD whose path matches one of http.connection.pathsWithoutAuth:
+# every request that changes something (PUT, DELETE, POST, MKCOL, MOVE and the
+# writes of WebDAV) and every WebDAV listing (PROPFIND) always needs one. Such
+# a request has to be answered by one of the [[users]] entries that set
+# http = true, whose own paths and rights then decide what it may do. Its keys
+# are in the four tables below.
 [http]
+
+# Where the server listens, the admin interface, self update, the key share
+# links are signed with and the proxies in front of the server.
+[http.main]
 # Serve the plain port. The TLS listener has its own switch in [https];
-# everything else in this section applies to both of them.
+# everything else in [http] applies to both of them.
 enabled = true
 
+# port of the plain listener; [https] has its own
 port = 8080
 # interface both listeners bind to, empty binds to all; 127.0.0.1 is
 # reachable from this host alone
@@ -640,6 +646,80 @@ enableAdminInterface = true
 # script.
 enableSelfUpdate = false
 
+# The key the share links of files are signed with. Share in the row menu of a
+# file hands out a link with ?key= that lets anyone download that one file
+# without an account, until the file is changed, renamed or replaced. Left
+# empty it is generated at the first start and written in here; changing it
+# revokes every share link handed out so far.
+shareLinkSecret = ""
+
+# Addresses or CIDR ranges of the proxies in front of this server, such as
+# 127.0.0.1 or 10.0.0.0/8. A request from one of them is recorded under the
+# client named in X-Forwarded-For, and X-Forwarded-Proto = https marks the
+# session cookie Secure. From anywhere else both headers are ignored.
+trustedProxies = []
+
+# The limits of a connection and of an upload, and the paths a GET needs no
+# account for.
+[http.connection]
+# maximum simultaneous connections
+maxConnections = 100
+# Seconds, 0 disables one. writeTimeout is off by default because it would cap
+# how long a download may take.
+readTimeout = 120
+writeTimeout = 0
+idleTimeout = 120
+# largest accepted upload in bytes, 0 means no limit
+maxUploadSize = 0
+# Largest single Content-Range chunk of an upload, in bytes (see the docs on
+# chunked uploads). This is what keeps one HTTP request small and fast enough
+# to survive a reverse proxy with a hard per-request cap — Cloudflare's ~100
+# second rule and body-size limits were the motivating case. 0 turns off
+# chunked upload entirely: a PUT carrying a Content-Range header is refused.
+maxChunkSize = 52428800
+
+# Regular expressions; a GET or a HEAD whose path matches one of these needs
+# no account. Every other path needs one, so the empty list makes the whole
+# server private and "^/" makes reading everything public; writing always
+# needs an account. The folders of a jellyfin repository need one even where a
+# pattern here matches them. A dls_directory_reader POST that carries the DLS
+# scanner's fixed credentials in its form is treated as the GET of the folder
+# it lists. On a filesystem that ignores case (the default on Windows and
+# macOS) these and the users' paths ignore case too, so "^/public/" also opens
+# /PUBLIC. This replaces pathsRequireAuth, which is ignored with a warning.
+pathsWithoutAuth = []
+
+# How long a browser login lasts, the key it is signed with, and the lock
+# against guessing passwords.
+[http.auth]
+# How long a browser that logged in with the login form stays logged in
+# without being used, in seconds. A browser in use has its login renewed, so
+# this is an idle timeout. The token cannot be withdrawn once it is signed, so
+# this is what bounds a stolen one.
+httpSessionTokenLifetime = 28800
+# How long a login lasts at most, in seconds, counted from the login however
+# busy the browser has been since. A value below httpSessionTokenLifetime is
+# taken as httpSessionTokenLifetime.
+httpSessionMaxLifetime = 604800
+# The key the login tokens are signed with, base64 of at least 32 random bytes.
+# Left empty it is generated at the first start and written in here, so a login
+# survives a restart and an update. Changing it logs every browser out.
+httpSessionTokenSecret = ""
+# for instance: head -c 32 /dev/urandom | base64
+
+# seconds to wait before answering a request that could not be authenticated
+loginFailureDelay = 1
+# Wrong passwords a client address may send in loginLockout seconds before it
+# is refused; 0 turns the lock off. The lock answers at once, so it also bounds
+# how many loginFailureDelay waits one address can cause.
+loginAttempts = 5
+# seconds a locked address is refused, and the window the attempts are counted
+# over
+loginLockout = 60
+
+# What the server answers besides the files themselves, on both listeners: S3,
+# the container registry, WebDAV, Jellyfin discovery and Play on Sonos.
+[http.services]
 # Answer requests signed with AWS Signature Version 4 as the S3 API, on both
 # listeners, for the [[users]] entries that set s3 = true. Every folder
 # directly in the served folder is a bucket, found by its name ignoring case,
@@ -674,8 +754,8 @@ webdavClients = ["Microsoft-WebDAV-MiniRedir", "WebDAVFS", "WebDAVLib", "Microso
 # network, by a broadcast to UDP port 7359, while there is a jellyfin
 # repository. The answer is the url of the repository, or else this server's
 # address on the network the question came from. It listens on every
-# interface, since a broadcast reaches no other socket, unless address is
-# 127.0.0.1, where no other host is answered.
+# interface, since a broadcast reaches no other socket, unless
+# http.main.address is 127.0.0.1, where no other host is answered.
 jellyfinDiscovery = false
 
 # Offer "Play on Sonos" on the audio files of the listing (MP3, AAC, FLAC,
@@ -684,8 +764,8 @@ jellyfinDiscovery = false
 # tells the one chosen to play the file. The speaker then fetches it from
 # this server, by a link that needs no login and lasts twelve hours, at
 # general.internalAddress if set, or else at this listener's address on the
-# network the speaker is on: so address must not be 127.0.0.1, and a speaker
-# reaches https only with a certificate it trusts.
+# network the speaker is on: so http.main.address must not be 127.0.0.1, and
+# a speaker reaches https only with a certificate it trusts.
 sonos = false
 # Addresses of speakers, "192.168.1.20" or "192.168.1.20:1400", asked
 # directly besides those the search finds, for speakers on a network that
@@ -693,73 +773,10 @@ sonos = false
 # 1400 on the addresses of the private networks it is on.
 sonosSpeakers = []
 
-# maximum simultaneous connections
-maxConnections = 100
-# Seconds, 0 disables one. writeTimeout is off by default because it would cap
-# how long a download may take.
-readTimeout = 120
-writeTimeout = 0
-idleTimeout = 120
-# largest accepted upload in bytes, 0 means no limit
-maxUploadSize = 0
-# Largest single Content-Range chunk of an upload, in bytes (see the docs on
-# chunked uploads). This is what keeps one HTTP request small and fast enough
-# to survive a reverse proxy with a hard per-request cap — Cloudflare's ~100
-# second rule and body-size limits were the motivating case. 0 turns off
-# chunked upload entirely: a PUT carrying a Content-Range header is refused.
-maxChunkSize = 52428800
-# How long a browser that logged in with the login form stays logged in
-# without being used, in seconds. A browser in use has its login renewed, so
-# this is an idle timeout. The token cannot be withdrawn once it is signed, so
-# this is what bounds a stolen one.
-httpSessionTokenLifetime = 28800
-# How long a login lasts at most, in seconds, counted from the login however
-# busy the browser has been since. A value below httpSessionTokenLifetime is
-# taken as httpSessionTokenLifetime.
-httpSessionMaxLifetime = 604800
-# The key the login tokens are signed with, base64 of at least 32 random bytes.
-# Left empty it is generated at the first start and written in here, so a login
-# survives a restart and an update. Changing it logs every browser out.
-httpSessionTokenSecret = ""
-# for instance: head -c 32 /dev/urandom | base64
-
-# The key the share links of files are signed with. Share in the row menu of a
-# file hands out a link with ?key= that lets anyone download that one file
-# without an account, until the file is changed, renamed or replaced. Left
-# empty it is generated at the first start and written in here; changing it
-# revokes every share link handed out so far.
-shareLinkSecret = ""
-
-# seconds to wait before answering a request that could not be authenticated
-loginFailureDelay = 1
-# Wrong passwords a client address may send in loginLockout seconds before it
-# is refused; 0 turns the lock off. The lock answers at once, so it also bounds
-# how many loginFailureDelay waits one address can cause.
-loginAttempts = 5
-# seconds a locked address is refused, and the window the attempts are counted
-# over
-loginLockout = 60
-# Addresses or CIDR ranges of the proxies in front of this server, such as
-# 127.0.0.1 or 10.0.0.0/8. A request from one of them is recorded under the
-# client named in X-Forwarded-For, and X-Forwarded-Proto = https marks the
-# session cookie Secure. From anywhere else both headers are ignored.
-trustedProxies = []
-
-# Regular expressions; a GET or a HEAD whose path matches one of these needs
-# no account. Every other path needs one, so the empty list makes the whole
-# server private and "^/" makes reading everything public; writing always
-# needs an account. The folders of a jellyfin repository need one even where a
-# pattern here matches them. A dls_directory_reader POST that carries the DLS
-# scanner's fixed credentials in its form is treated as the GET of the folder
-# it lists. On a filesystem that ignores case (the default on Windows and
-# macOS) these and the users' paths ignore case too, so "^/public/" also opens
-# /PUBLIC. This replaces pathsRequireAuth, which is ignored with a warning.
-pathsWithoutAuth = []
-
 # The TLS interface of the same HTTP server: it serves the folder, accounts and
 # limits of [http] above.
 [https]
-# Independent of http.enabled, so turning that one off serves HTTPS only.
+# Independent of http.main.enabled, so turning that one off serves HTTPS only.
 enabled = false
 
 port = 8443

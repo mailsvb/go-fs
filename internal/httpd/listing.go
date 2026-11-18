@@ -274,7 +274,7 @@ type rights struct {
 	// offered to a session that may read the files here; see maySend.
 	Send bool
 	// Sonos is Play on Sonos on an audio file, which has a speaker of the
-	// local network play it: offered, while http.sonos is on, where Send
+	// local network play it: offered, while http.services.sonos is on, where Send
 	// is; see sonos.go.
 	Sonos bool
 	// RemoteFetch is Fetch on a file of the page of a stored server, which

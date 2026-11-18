@@ -109,7 +109,7 @@ var fixedFields = map[string][]struct {
 	after string
 	field Field
 }{
-	"http": {
+	"http.services": {
 		{"enableS3", Field{Key: "s3Region", Label: "s3Region", Kind: kindText, ReadOnly: true,
 			Help:  "The one region the S3 API answers for; clients have to sign their requests for it. It is fixed and cannot be changed.",
 			fixed: config.S3Region, constant: true}},
@@ -120,7 +120,7 @@ var fixedFields = map[string][]struct {
 // and nobody types in: the share link secret is generated at the first start,
 // and changing it would revoke every link handed out, so the page only shows
 // it and sends it back as it came.
-var serverMade = map[string]bool{"http.shareLinkSecret": true}
+var serverMade = map[string]bool{"http.main.shareLinkSecret": true}
 
 // withFixed places the constants of a section among its fields.
 func withFixed(section string, fields []Field) []Field {

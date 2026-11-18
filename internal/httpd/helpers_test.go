@@ -335,7 +335,7 @@ func publicServer(cfg *httpConfig) {
 	cfg.PathsWithoutAuth = []string{"^/"}
 }
 
-// publicExcept is the http.pathsWithoutAuth pattern that opens every path but
+// publicExcept is the http.connection.pathsWithoutAuth pattern that opens every path but
 // the named top level folders and what is in them. RE2 has no lookahead, so
 // "not under /private" is spelled out a character at a time: a path is public
 // where it ends before it has spelled out a name, leaves the name's spelling,

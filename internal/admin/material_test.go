@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -62,20 +63,29 @@ func TestSchemaMarksTheKeyMaterial(t *testing.T) {
 	schema, _ := build()
 
 	want := map[string]string{
-		"ftps.cert":                   config.KindCertificate,
-		"ftps.key":                    config.KindTLSKey,
-		"https.cert":                  config.KindCertificate,
-		"https.key":                   config.KindTLSKey,
-		"sftp.hostkey":                config.KindSSHKey,
-		"http.httpSessionTokenSecret": config.KindSessionSecret,
-		"nbd.cert":                    config.KindCertificate,
-		"nbd.key":                     config.KindTLSKey,
-		"nbd.clientCA":                config.KindCertificateAuthority,
-		"nbd.clientCRL":               config.KindCRL,
+		"ftps.cert":                        config.KindCertificate,
+		"ftps.key":                         config.KindTLSKey,
+		"https.cert":                       config.KindCertificate,
+		"https.key":                        config.KindTLSKey,
+		"sftp.hostkey":                     config.KindSSHKey,
+		"http.auth.httpSessionTokenSecret": config.KindSessionSecret,
+		"nbd.cert":                         config.KindCertificate,
+		"nbd.key":                          config.KindTLSKey,
+		"nbd.clientCA":                     config.KindCertificateAuthority,
+		"nbd.clientCRL":                    config.KindCRL,
 	}
 
-	found := map[string]string{}
+	// a table nested in a section, [http.auth], is walked as a section of its
+	// own, named by its whole path
+	sections := slices.Clone(schema.Sections)
 	for _, sec := range schema.Sections {
+		for _, sub := range sec.Subsections {
+			sub.Key = sec.Key + "." + sub.Key
+			sections = append(sections, sub)
+		}
+	}
+	found := map[string]string{}
+	for _, sec := range sections {
 		for _, field := range sec.Fields {
 			if field.Upload == "" {
 				continue

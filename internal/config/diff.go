@@ -7,7 +7,7 @@ import (
 )
 
 // ChangedKeys names the keys of the file whose values differ between two
-// configurations, as the file spells them: "http.port", "users[2].paths".
+// configurations, as the file spells them: "http.main.port", "users[2].paths".
 // It names keys only, never values, so that a record of a change cannot
 // carry a password. A list whose length changed is named as a whole, since
 // its entries no longer pair up.

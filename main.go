@@ -230,11 +230,11 @@ func run(stop <-chan struct{}) error {
 	updater.CleanupOld()
 	switch {
 	case cfg.HTTP.EnableSelfUpdate && updater.Current().ManagedBy != "":
-		logger.Warn("http.enableSelfUpdate is set, but this go-fs "+managedHow(packaging)+
+		logger.Warn("http.main.enableSelfUpdate is set, but this go-fs "+managedHow(packaging)+
 			", so every update over http is refused; "+managedUpdate(packaging),
 			"installer", packaging)
 	case cfg.HTTP.EnableSelfUpdate && len(keys) == 0:
-		logger.Warn("http.enableSelfUpdate is set, but this build trusts no update " +
+		logger.Warn("http.main.enableSelfUpdate is set, but this build trusts no update " +
 			"signing key, so every update will be refused")
 	}
 

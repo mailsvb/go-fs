@@ -425,7 +425,7 @@ func (a *imageArchive) read(ctx context.Context, r io.Reader, maxEntrySize int64
 		switch header.Typeflag {
 		case tar.TypeReg:
 			if maxEntrySize > 0 && header.Size > maxEntrySize {
-				return fmt.Errorf("%s has %d bytes, more than http.maxUploadSize allows", name, header.Size)
+				return fmt.Errorf("%s has %d bytes, more than http.connection.maxUploadSize allows", name, header.Size)
 			}
 			file, err := a.stage(reader, name, entries)
 			if err != nil {

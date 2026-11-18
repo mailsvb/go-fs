@@ -208,9 +208,12 @@ function panel(section, index) {
   // a section with tables nested in it, [general.ssh] and the like, gets a
   // row of tabs of its own: main for the keys of the section itself, then
   // one per nested table, each with its own description, and one per list
-  // that repeats in it, [[general.cleanup]] and the like
+  // that repeats in it, [[general.cleanup]] and the like. A section with no
+  // keys of its own, [http], whose keys are all in its tables, has no such
+  // first tab; its description stands above the row instead.
   const own = Object.assign({}, section, { tables: [] });
-  const parts = [{ key: "main", body: sectionBody(own, values[section.key], section.key) }]
+  const hasOwn = section.fields.length > 0;
+  const parts = (hasOwn ? [{ key: "main", body: sectionBody(own, values[section.key], section.key) }] : [])
     .concat(section.subsections.map((sub) => ({
       key: sub.key,
       body: sectionBody(sub, values[section.key][sub.key], section.key + "." + sub.key),
@@ -235,6 +238,9 @@ function panel(section, index) {
     bodies.forEach((body, j) => (body.hidden = j !== i));
   };
   parts.forEach((part, i) => row.append(tabButton(part.key, () => show(i))));
+  if (!hasOwn && section.help) {
+    element.append(paragraph(section.help, "section-help"));
+  }
   element.append(row, ...bodies);
   show(Math.max(0, parts.findIndex((part) => part.key === selectedSub[section.key])));
   return element;

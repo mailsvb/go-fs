@@ -11,7 +11,7 @@ import (
 // Behind a reverse proxy every request arrives from the proxy's own address,
 // and the client is named in X-Forwarded-For. Those headers are the client's
 // to write, so they are read only when the connection itself came from one of
-// http.trustedProxies: from anywhere else they are ignored, and a request
+// http.main.trustedProxies: from anywhere else they are ignored, and a request
 // that claims to be forwarded is recorded under the address it really came
 // from.
 
@@ -95,7 +95,7 @@ func secureRequest(set *settings, r *http.Request) bool {
 
 // reachableAddress is the address another host on the network reaches this
 // server at, scheme and host and port: the plain listener, or the TLS one when
-// there is no plain one, at http.address or, where that binds every
+// there is no plain one, at http.main.address or, where that binds every
 // interface, at the address of the interface the host is reached through.
 // It is "" while neither listens, or the route to the host is not known.
 func (s *Server) reachableAddress(set *settings, towards net.Addr) string {

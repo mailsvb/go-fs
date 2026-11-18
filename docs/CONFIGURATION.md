@@ -1,7 +1,8 @@
 # Configuration
 
 One TOML file with a `[general]` section, its `[general.ssh]` and `[general.tools]` tables and
-`[[general.cleanup]]` list, a `[[users]]` list, an `[ftp]`, an `[ftps]`, an `[sftp]`, an `[http]`, an
+`[[general.cleanup]]` list, a `[[users]]` list, an `[ftp]`, an `[ftps]`, an `[sftp]`, an `[http]`
+section with its `[http.main]`, `[http.connection]`, `[http.auth]` and `[http.services]` tables, an
 `[https]` and a `[tftp]` section.
 Every key is optional and keeps the documented default when absent, so a
 working file can be this short:
@@ -101,6 +102,17 @@ and go-fs renames the keys in it at the next start, keeping the comments and
 the file as it was beside it as `go-fs.toml.bak`. A `basefolder` in `[ftp]`,
 `[sftp]`, `[http]` or `[tftp]` is no longer read: it is reported at startup and
 removed by the same rename.
+
+The keys of `[http]` live in four tables: `[http.main]` (`enabled`, `port`,
+`address`, `enableAdminInterface`, `enableSelfUpdate`, `shareLinkSecret`,
+`trustedProxies`), `[http.connection]` (`maxConnections`, the timeouts,
+`maxUploadSize`, `maxChunkSize`, `pathsWithoutAuth`), `[http.auth]` (the
+`httpSession…` keys and the `login…` keys) and `[http.services]` (`enableS3`,
+`registryAnonymousRead`, `webdav`, `webdavClients`, `jellyfinDiscovery`,
+`sonos`, `sonosSpeakers`). A file written for an older version that still sets
+one of them directly in `[http]` is not moved: that key is reported at startup
+and not read, so its default applies until it is set in its table. Applying a
+change in the admin interface writes the tables and drops the old keys.
 
 `[[general.cleanup]]` keeps a folder from growing without bound: once an hour
 everything but the newest `keep` files in it is removed. Paths are relative to
@@ -234,7 +246,7 @@ further than its name says:
 | S3 `DeleteObject` | `allowUserFileDelete`, or `allowUserFolderDelete` for a key ending in `/` |
 | S3 `CopyObject`, `UploadPartCopy` | `allowUserFileRetrieve` on the source, and create or overwrite on the target |
 | Registry push, tag and delete | `registry`; the rights above do not apply |
-| Registry pull | nothing while `http.registryAnonymousRead` is on, `registry` when it is off |
+| Registry pull | nothing while `http.services.registryAnonymousRead` is on, `registry` when it is off |
 
 Anonymous access is not a setting of its own, just an account that takes no
 password:
@@ -274,7 +286,7 @@ password = "..."
 http = true
 isAdmin = true
 
-[http]
+[http.main]
 enabled = true
 enableAdminInterface = true   # the default
 ```
@@ -311,11 +323,11 @@ Three things to know about it:
   `go-fs.toml.bak`, and the fully commented original is `go-fs.example.toml`,
 or what go-fs writes when it starts without a configuration file.
 * **It is as exposed as the HTTP server is.** The page shows and edits every
-  password in the file, so serve it over `[https]`: with `http.enabled = true`
+  password in the file, so serve it over `[https]`: with `http.main.enabled = true`
   on an address other than the loopback one, the admin session and every
   password on the page cross the network in the clear, and the server says so
   at startup. Keep the plain port on `127.0.0.1`, or behind a proxy that
-  terminates TLS and is listed in `http.trustedProxies`, or off.
+  terminates TLS and is listed in `http.main.trustedProxies`, or off.
 * **The file it edits holds every private key.** That is what makes the upload
   below possible, and it is a reason to keep the file at `chmod 600`.
 
@@ -352,7 +364,7 @@ written says so before anything is edited.
 
 ## Bind addresses and stalled transfers
 
-`ftp.address`, `sftp.address`, `http.address` and `tftp.address` name the
+`ftp.address`, `sftp.address`, `http.main.address` and `tftp.address` name the
 interface each server binds to. They default to `127.0.0.1`, which only the
 machine itself can reach; empty binds to all interfaces. The FTP one
 covers the passive data ports too, so they follow the control port onto the same
@@ -376,18 +388,18 @@ data connection owes nothing on the control one.
 | `ftp.idleTimeout` | `600` | an idle control connection does not hold a slot forever, though a running transfer is never idle |
 | `ftp.transferIdleTimeout` | `300` | a transfer that stalls gives its slot back, however long a moving one takes |
 | `ftp.loginFailureDelay` | `1` | a wrong password is answered after a second, which slows guessing |
-| `http.loginAttempts`, `http.loginLockout` | `5`, `60` | an address that sends five wrong passwords in a minute is refused for a minute, at once |
-| `http.trustedProxies` | `[]` | a forwarded address, and a forwarded `https`, is believed only from a proxy listed here |
+| `http.auth.loginAttempts`, `http.auth.loginLockout` | `5`, `60` | an address that sends five wrong passwords in a minute is refused for a minute, at once |
+| `http.main.trustedProxies` | `[]` | a forwarded address, and a forwarded `https`, is believed only from a proxy listed here |
 | `users[].ftp`, `users[].sftp`, `users[].http`, `users[].s3` | `false` | an account logs in only to the servers it switches on |
-| `http.enableS3` | `true` | the S3 API is there wherever the HTTP server is, and serves only the accounts that set `s3` |
-| `http.jellyfinDiscovery` | `false` | answering broadcasts opens a UDP port on every interface, so being found on the network is switched on deliberately |
-| `http.sonos` | `false` | playing on a speaker hands it a link that fetches the file without an account, and searches the network by multicast, or else tries port 1400 on its addresses, so it is switched on deliberately |
-| `http.webdav` | `false` | a WebDAV client deletes folders recursively and moves across them, so mounting the folder as a drive is switched on deliberately |
+| `http.services.enableS3` | `true` | the S3 API is there wherever the HTTP server is, and serves only the accounts that set `s3` |
+| `http.services.jellyfinDiscovery` | `false` | answering broadcasts opens a UDP port on every interface, so being found on the network is switched on deliberately |
+| `http.services.sonos` | `false` | playing on a speaker hands it a link that fetches the file without an account, and searches the network by multicast, or else tries port 1400 on its addresses, so it is switched on deliberately |
+| `http.services.webdav` | `false` | a WebDAV client deletes folders recursively and moves across them, so mounting the folder as a drive is switched on deliberately |
 | `users[].allowUser*` | `false` | an account is granted only the rights its table lists |
-| `http.enabled` | `true` | the one server that is on, so the admin interface can be reached to set up the rest |
+| `http.main.enabled` | `true` | the one server that is on, so the admin interface can be reached to set up the rest |
 | `ftp.enabled`, `ftps.enabled`, `sftp.enabled`, `https.enabled`, `tftp.enabled` | `false` | each server is switched on deliberately |
-| `ftp.address`, `sftp.address`, `http.address`, `tftp.address` | `127.0.0.1` | nothing is reachable from another host until an address says so |
-| `ftp.port`, `ftps.port`, `sftp.port`, `http.port`, `https.port`, `tftp.port` | `8021`, `8990`, `8022`, `8080`, `8443`, `8069` | above 1024, so no privileges are needed |
+| `ftp.address`, `sftp.address`, `http.main.address`, `tftp.address` | `127.0.0.1` | nothing is reachable from another host until an address says so |
+| `ftp.port`, `ftps.port`, `sftp.port`, `http.main.port`, `https.port`, `tftp.port` | `8021`, `8990`, `8022`, `8080`, `8443`, `8069` | above 1024, so no privileges are needed |
 | `tftp.allowWrite` | `false` | read only unless switched on |
 | `tftp.maxBlockSize` | `1468` | keeps a block inside a typical ethernet MTU so datagrams are not IP fragmented |
 | `tftp.maxTimeout` | `60` | a client cannot negotiate a retransmit interval that pins a transfer slot |

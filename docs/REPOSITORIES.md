@@ -177,11 +177,11 @@ It differs from the package repositories in these ways:
   Jellyfin server stays one of Jellyfin, because clients refuse a server they
   take to be too old.
 - **Clients on the local network can find the server** with
-  `http.jellyfinDiscovery = true`. Finamp and the Jellyfin apps ask for
+  `http.services.jellyfinDiscovery = true`. Finamp and the Jellyfin apps ask for
   servers by a broadcast to UDP port 7359, and go-fs answers with the `url`
   of the library, or else its own address on the network the question came
   from. To receive a broadcast it listens on every interface, unless
-  `http.address` is `127.0.0.1`, where no other host finds it. A Jellyfin
+  `http.main.address` is `127.0.0.1`, where no other host finds it. A Jellyfin
   server on the same host holds that port already; go-fs then logs a warning
   and serves on without it.
 - **Clients log in with the accounts of go-fs** that set `http`. A client is
@@ -246,7 +246,7 @@ and an account sees the tracks it may read. Where it differs:
   key** (OpenSubsonic's `apiKeyAuthentication`) can use a bearer token of
   `[[tokens]]` instead, which reads what its `paths` and
   `allowUserFileRetrieve` allow and stops working when it expires. A wrong
-  password or key counts towards `http.loginAttempts`, as on every other
+  password or key counts towards `http.auth.loginAttempts`, as on every other
   login. go-fs logs a client's login once an hour, since it logs in with
   every request.
 - **Covers need an account**, unlike Jellyfin's, because every client of the

@@ -207,7 +207,7 @@ attached and when it last changed. It offers:
 - **New disk image**: a name and a size such as `20G` or `1.5T`. The new image
   is sparse and empty.
 - **Upload disk**: a raw image from your computer, in resumable pieces of
-  `http.maxChunkSize`. Blocks of zeros in it are left as holes.
+  `http.connection.maxChunkSize`. Blocks of zeros in it are left as holes.
 - **Connection details**: QEMU and libvirt lines for the disk.
 - **Resize**: refused while anything has the disk attached. Making a disk
   smaller has to be asked for, since it cuts off whatever the guest wrote at

@@ -35,7 +35,7 @@ import (
 )
 
 // MaxSize is the largest update accepted, trailer included. It is its own
-// limit rather than http.maxUploadSize, which may be kept small on purpose
+// limit rather than http.connection.maxUploadSize, which may be kept small on purpose
 // for the files the server holds.
 const MaxSize = 256 << 20
 

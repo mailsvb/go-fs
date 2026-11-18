@@ -12,10 +12,11 @@ import (
 	"github.com/mailsvb/go-fs/internal/logging"
 )
 
-// generatedSecret is a key of [http] that the file is given at the first start
-// when it does not set one, because a key that changes at every restart breaks
-// whatever was signed with the previous one.
+// generatedSecret is a key of a table of [http] that the file is given at the
+// first start when it does not set one, because a key that changes at every
+// restart breaks whatever was signed with the previous one.
 type generatedSecret struct {
+	section  string
 	key      string
 	get      func(*Config) *string
 	generate func() (string, error)
@@ -26,23 +27,23 @@ type generatedSecret struct {
 // that logged in stays logged in across a restart, an update and a change
 // that rebuilds the HTTP service.
 var generatedSecrets = []generatedSecret{
-	{"shareLinkSecret", func(c *Config) *string { return &c.HTTP.ShareLinkSecret }, GenerateShareSecret},
-	{"httpSessionTokenSecret", func(c *Config) *string { return &c.HTTP.SessionTokenSecret }, GenerateSessionSecret},
+	{"http.main", "shareLinkSecret", func(c *Config) *string { return &c.HTTP.ShareLinkSecret }, GenerateShareSecret},
+	{"http.auth", "httpSessionTokenSecret", func(c *Config) *string { return &c.HTTP.SessionTokenSecret }, GenerateSessionSecret},
 }
 
-// a table or an array of tables: [[general.cleanup]] ends [http] as well
+// a table or an array of tables: [[general.cleanup]] ends [http.main] as well
 var sectionLine = regexp.MustCompile(`^\s*\[\[?\s*([^\[\]]+?)\s*\]\]?\s*(#.*)?$`)
 
 // EnsureSecrets makes sure the file at path sets every secret of [http] that
-// is generated rather than configured: http.shareLinkSecret and
-// http.httpSessionTokenSecret. cfg is what was loaded from the file; each key
+// is generated rather than configured: http.main.shareLinkSecret and
+// http.auth.httpSessionTokenSecret. cfg is what was loaded from the file; each key
 // it already sets is left alone. The others are generated and written into
 // the file in one go, and their names are returned.
 //
 // The file is edited as text rather than written back by the toml marshaller,
-// which would drop every comment in it: an empty line for the key in [http]
-// gets the value, a section without the key gets it as its first line, and a
-// file without the section gets both appended. The result is parsed again
+// which would drop every comment in it: an empty line for the key in its table
+// gets the value, a table without the key gets it as its first line, and a
+// file without the table gets both appended. The result is parsed again
 // before anything is written, so a file whose layout this does not understand
 // is left alone and reported rather than broken.
 func EnsureSecrets(path string, cfg Config, log *slog.Logger) (Config, []string, error) {
@@ -77,8 +78,8 @@ func EnsureSecrets(path string, cfg Config, log *slog.Logger) (Config, []string,
 		if err != nil {
 			return cfg, nil, err
 		}
-		values[i], names[i] = value, "http."+secret.key
-		edited = withHTTPKey(edited, secret.key, value)
+		values[i], names[i] = value, secret.section+"."+secret.key
+		edited = withKey(edited, secret.section, secret.key, value)
 	}
 	check, err := Parse([]byte(edited))
 	if err != nil {
@@ -120,8 +121,9 @@ func replaceFile(log *slog.Logger, target string, data []byte, mode os.FileMode)
 	return logging.Rename(log, temp.Name(), target)
 }
 
-// withHTTPKey is the file with key in [http] set to value.
-func withHTTPKey(data, key, value string) string {
+// withKey is the file with key in the table section, "http.main", set to
+// value.
+func withKey(data, section, key, value string) string {
 	newline := "\n"
 	if strings.Contains(data, "\r\n") {
 		newline = "\r\n"
@@ -130,20 +132,20 @@ func withHTTPKey(data, key, value string) string {
 	keyLine := regexp.MustCompile(`^\s*` + regexp.QuoteMeta(key) + `\s*=`)
 	lines := strings.Split(data, newline)
 
-	section, header := "", -1
+	current, header := "", -1
 	for i, line := range lines {
 		if m := sectionLine.FindStringSubmatch(line); m != nil {
-			if section == "http" {
-				// the section ended without the key
+			if current == section {
+				// the table ended without the key
 				break
 			}
-			section = m[1]
-			if section == "http" {
+			current = m[1]
+			if current == section {
 				header = i
 			}
 			continue
 		}
-		if section == "http" && keyLine.MatchString(line) {
+		if current == section && keyLine.MatchString(line) {
 			lines[i] = entry
 			return strings.Join(lines, newline)
 		}
@@ -155,5 +157,5 @@ func withHTTPKey(data, key, value string) string {
 	if data != "" && !strings.HasSuffix(data, newline) {
 		data += newline
 	}
-	return data + newline + "[http]" + newline + entry + newline
+	return data + newline + "[" + section + "]" + newline + entry + newline
 }

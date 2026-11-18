@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 )
 
-// MinShareSecret is the shortest http.shareLinkSecret accepted. A generated
+// MinShareSecret is the shortest http.main.shareLinkSecret accepted. A generated
 // one is far longer; this only stops a key typed by hand from being trivial.
 const MinShareSecret = 32
 
@@ -13,7 +13,7 @@ const MinShareSecret = 32
 // bits, the size of the HMAC-SHA512 it keys.
 const shareSecretBytes = 64
 
-// GenerateShareSecret produces a new value for http.shareLinkSecret.
+// GenerateShareSecret produces a new value for http.main.shareLinkSecret.
 func GenerateShareSecret() (string, error) {
 	raw := make([]byte, shareSecretBytes)
 	if _, err := rand.Read(raw); err != nil {

@@ -309,7 +309,7 @@ func registryRead(method string) bool {
 // answers it when it may not. A request identifies itself with a registry
 // token (see registry_token.go) or with Basic credentials.
 //
-// A pull is public while http.registryAnonymousRead is on; everything else,
+// A pull is public while http.services.registryAnonymousRead is on; everything else,
 // the status of an upload included, takes an account that sets registry.
 // /v2/ itself challenges every request
 // that carries nothing, public or not: that answer is where a client learns to

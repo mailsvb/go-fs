@@ -10,8 +10,8 @@ import (
 // full speed. The delay on a wrong password slows one request; it does nothing
 // about a hundred sent at once, and each of them holds a connection slot for
 // the whole delay. So the wrong passwords are counted per client address, and
-// an address that has sent http.loginAttempts of them inside
-// http.loginLockout seconds is refused for that long, at once and without
+// an address that has sent http.auth.loginAttempts of them inside
+// http.auth.loginLockout seconds is refused for that long, at once and without
 // looking at what it sent.
 //
 // Only a wrong password counts: a header that cannot be read, a nonce another
@@ -23,7 +23,7 @@ import (
 // The count is a snapshot per request: a burst of requests that arrive
 // together can all pass the check before the first is counted. Each of them
 // still pays the delay and a connection slot, so the burst is bounded by
-// http.maxConnections, and every request after it is refused.
+// http.connection.maxConnections, and every request after it is refused.
 
 const (
 	// evictAbove is the size from which the expired records are swept, at most
@@ -78,7 +78,7 @@ func (t *loginTracker) locked(address string) (time.Duration, bool) {
 }
 
 // failed records a wrong password from an address and reports whether that
-// was the one that locked it. attempts is http.loginAttempts, 0 for a lock
+// was the one that locked it. attempts is http.auth.loginAttempts, 0 for a lock
 // that is off; lockout is the window and the lock length both.
 func (t *loginTracker) failed(address string, attempts int, lockout time.Duration) bool {
 	if attempts <= 0 {

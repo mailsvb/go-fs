@@ -47,7 +47,7 @@ type sessionClaims struct {
 	jwt.RegisteredClaims
 	// AuthTime is when the account logged in with the login form, the
 	// auth_time of OpenID Connect. A renewed token carries it over unchanged,
-	// which is what lets a renewal be capped by http.httpSessionMaxLifetime.
+	// which is what lets a renewal be capped by http.auth.httpSessionMaxLifetime.
 	// A token minted before the claim existed has none; its IssuedAt stands
 	// in, since such a token was never renewed.
 	AuthTime *jwt.NumericDate `json:"auth_time,omitempty"`
@@ -76,7 +76,7 @@ func newSigner(configured string, keys *store.Bucket, logger *slog.Logger) (*sig
 	if configured != "" {
 		decoded, err := config.DecodeSessionSecret(configured)
 		if err != nil {
-			return nil, fmt.Errorf("http.httpSessionTokenSecret: %w", err)
+			return nil, fmt.Errorf("http.auth.httpSessionTokenSecret: %w", err)
 		}
 		key = decoded
 	} else {
@@ -86,10 +86,10 @@ func newSigner(configured string, keys *store.Bucket, logger *slog.Logger) (*sig
 		}
 		key = generated
 		if kept {
-			logger.Warn("no http.httpSessionTokenSecret configured, using a signing key " +
+			logger.Warn("no http.auth.httpSessionTokenSecret configured, using a signing key " +
 				"generated and kept in the persistent data file; two hosts cannot share a login")
 		} else {
-			logger.Warn("no http.httpSessionTokenSecret configured, generated a temporary " +
+			logger.Warn("no http.auth.httpSessionTokenSecret configured, generated a temporary " +
 				"signing key; it changes on every restart, so every browser is logged out " +
 				"by one and two hosts cannot share a login")
 		}

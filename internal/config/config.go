@@ -17,6 +17,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"slices"
@@ -377,7 +378,7 @@ type Token struct {
 	AllowUserFolderCreate  *bool `toml:"allowUserFolderCreate,omitempty"`
 
 	// AllowSelfUpdate lets the token upload a new go-fs binary to
-	// ?go-fs=update, which needs http.enableSelfUpdate as well. It is
+	// ?go-fs=update, which needs http.main.enableSelfUpdate as well. It is
 	// independent of paths.
 	AllowSelfUpdate *bool `toml:"allowSelfUpdate,omitempty"`
 }
@@ -865,33 +866,22 @@ type SFTP struct {
 // answered by one of the [[users]] entries that set http, and that account's
 // own paths and rights then decide what it may do.
 type HTTP struct {
-	// Enabled serves the plain port. The TLS listener has its own switch in
-	// [https]; the rest of this section applies to both.
-	Enabled bool `toml:"enabled"`
-	Port    int  `toml:"port"`
-	// Address is the interface both listeners bind to. Empty binds every one.
-	Address string `toml:"address"`
+	// HTTPMain is [http.main]: the listener, the admin interface, self update,
+	// the share link key and the proxies in front of the server.
+	HTTPMain `toml:"main"`
+	// HTTPConnection is [http.connection]: the limits of a connection and of
+	// an upload, and the paths that need no account.
+	HTTPConnection `toml:"connection"`
+	// HTTPAuth is [http.auth]: the browser login and the lock against
+	// guessing passwords.
+	HTTPAuth `toml:"auth"`
+	// HTTPServices is [http.services]: what the server answers besides files,
+	// S3, the registry, WebDAV, Jellyfin and Sonos.
+	HTTPServices `toml:"services"`
+
 	// Basefolder is general.baseFolderFiles, which Resolved hands the server.
 	// It is no key of the section.
 	Basefolder string `toml:"-"`
-
-	// EnableAdminInterface serves the web interface that edits this file at
-	// ?go-fs=admin on both listeners. It is reachable only by an account that
-	// sets isAdmin and has logged in through the browser; the page carries
-	// every password in the file, so it belongs on the https listener.
-	EnableAdminInterface bool `toml:"enableAdminInterface"`
-	// EnableSelfUpdate accepts a new go-fs binary at ?go-fs=update, which then
-	// replaces the running one and restarts it. Only a file signed with a key
-	// built into this binary is accepted, and only from a token that sets
-	// allowSelfUpdate or from the session of an account that sets isAdmin.
-	// The admin interface then also asks GitHub for the latest release, says
-	// when it is newer, and installs it at the press of a button.
-	EnableSelfUpdate bool `toml:"enableSelfUpdate"`
-	// EnableS3 answers requests signed with AWS Signature Version 4 as the S3
-	// API, on both listeners. Every folder directly in Basefolder is a bucket,
-	// found by its name ignoring case, in the one region, S3Region, and only
-	// the accounts that set s3 may use it.
-	EnableS3 bool `toml:"enableS3"`
 	// RegistryBaseFolder is general.baseFolderRegistry, which Resolved hands
 	// the server. It is no key of the section.
 	RegistryBaseFolder string `toml:"-"`
@@ -901,57 +891,6 @@ type HTTP struct {
 	// the section.
 	DisksFolder string `toml:"-"`
 	NBDPort     int    `toml:"-"`
-	// RegistryAnonymousRead lets anyone pull from the registry without
-	// credentials. With it off, pulling takes an account that sets registry,
-	// as pushing and deleting always do.
-	RegistryAnonymousRead bool `toml:"registryAnonymousRead"`
-	// WebDAV answers WebDAV on the paths of the served folder, on both
-	// listeners, so that Explorer and Finder mount it as a drive. To a WebDAV
-	// client DELETE then removes a folder with everything in it and MOVE moves
-	// across folders and onto a name that is taken; to everyone else they
-	// mean what they always did. The rights are the same for both.
-	WebDAV bool `toml:"webdav" feature:"webdav"`
-	// WebDAVClients are what the User-Agent of a WebDAV client contains,
-	// compared ignoring case: the clients that get the WebDAV meaning of
-	// PUT, DELETE and MOVE. A request with a Depth or an If header gets it
-	// whatever it names.
-	WebDAVClients []string `toml:"webdavClients" feature:"webdav"`
-	// JellyfinDiscovery answers the Jellyfin clients that look for a server
-	// on the local network, by a broadcast to UDP port 7359, with the address
-	// of this one, while there is a jellyfin repository.
-	JellyfinDiscovery bool `toml:"jellyfinDiscovery" feature:"jellyfin"`
-	// Sonos offers Play on Sonos on the audio files of the listing, to a
-	// session of an account that may read them. The server finds the
-	// speakers of the local network by SSDP and tells one to play a file,
-	// which the speaker then fetches from this server by a link that needs no
-	// login and lasts for a few hours: the plain listener, or
-	// general.internalAddress where that is set, has to be reachable from the
-	// speakers.
-	Sonos bool `toml:"sonos" feature:"sonos"`
-	// SonosSpeakers are addresses of speakers, as host or host:port, which
-	// are asked directly besides those a search finds: for speakers on a
-	// network the search does not reach.
-	SonosSpeakers []string `toml:"sonosSpeakers" feature:"sonos"`
-
-	MaxConnections int `toml:"maxConnections"`
-	// ReadTimeout, WriteTimeout and IdleTimeout are seconds, 0 disables one.
-	// WriteTimeout is off by default: it would cap the duration of a download.
-	// ReadTimeout does the equivalent job for an upload, but as an idle
-	// timeout rather than a hard cap: it is how long a PUT may go without any
-	// data arriving, reset on every chunk received, so it does not cut off a
-	// large upload that is merely slow.
-	ReadTimeout  int `toml:"readTimeout"`
-	WriteTimeout int `toml:"writeTimeout"`
-	IdleTimeout  int `toml:"idleTimeout"`
-	// MaxUploadSize is the largest accepted body in bytes, 0 means no limit.
-	MaxUploadSize int64 `toml:"maxUploadSize"`
-	// MaxChunkSize is the largest a single Content-Range chunk of an upload
-	// may be, in bytes. It exists so that a reverse proxy with a hard
-	// per-request duration or body-size cap (Cloudflare's ~100 second rule
-	// was the motivating case) never sees a request large enough to trip it:
-	// a large file is still accepted, just never in one request. 0 disables
-	// chunked upload — a PUT carrying Content-Range is then refused.
-	MaxChunkSize int64 `toml:"maxChunkSize"`
 	// UploadStagingFolder is general.baseFolderTemp, which Resolved hands the
 	// server.
 	UploadStagingFolder string `toml:"-"`
@@ -983,6 +922,77 @@ type HTTP struct {
 	// hands them to the server. Fetch offers video and audio while YtDlp is.
 	YtDlp  Tool `toml:"-"`
 	FFmpeg Tool `toml:"-"`
+}
+
+// HTTPMain is [http.main]: where the server listens, the admin interface,
+// self update, the key share links are signed with and the proxies in front
+// of the server.
+type HTTPMain struct {
+	// Enabled serves the plain port. The TLS listener has its own switch in
+	// [https]; the rest of [http] applies to both.
+	Enabled bool `toml:"enabled"`
+	Port    int  `toml:"port"`
+	// Address is the interface both listeners bind to. Empty binds every one.
+	Address string `toml:"address"`
+	// EnableAdminInterface serves the web interface that edits this file at
+	// ?go-fs=admin on both listeners. It is reachable only by an account that
+	// sets isAdmin and has logged in through the browser; the page carries
+	// every password in the file, so it belongs on the https listener.
+	EnableAdminInterface bool `toml:"enableAdminInterface"`
+	// EnableSelfUpdate accepts a new go-fs binary at ?go-fs=update, which then
+	// replaces the running one and restarts it. Only a file signed with a key
+	// built into this binary is accepted, and only from a token that sets
+	// allowSelfUpdate or from the session of an account that sets isAdmin.
+	// The admin interface then also asks GitHub for the latest release, says
+	// when it is newer, and installs it at the press of a button.
+	EnableSelfUpdate bool `toml:"enableSelfUpdate"`
+	// ShareLinkSecret is the key a file's share link is signed with: a link
+	// carries ?key= with an HMAC-SHA512 over the file's path, modification
+	// time and size, which lets anyone holding it download that one file
+	// without an account until the file changes. It is generated and written
+	// into this file at the first start; changing it revokes every link handed
+	// out so far.
+	ShareLinkSecret string `toml:"shareLinkSecret"`
+	// TrustedProxies are the addresses, or CIDR ranges, of the proxies in front
+	// of this server. A request from one of them is recorded under the client
+	// in X-Forwarded-For, and X-Forwarded-Proto says whether the session cookie
+	// is marked Secure. From anywhere else both headers are ignored.
+	TrustedProxies []string `toml:"trustedProxies"`
+}
+
+// HTTPConnection is [http.connection]: the limits of a connection and of an
+// upload, and the paths a GET needs no account for.
+type HTTPConnection struct {
+	MaxConnections int `toml:"maxConnections"`
+	// ReadTimeout, WriteTimeout and IdleTimeout are seconds, 0 disables one.
+	// WriteTimeout is off by default: it would cap the duration of a download.
+	// ReadTimeout does the equivalent job for an upload, but as an idle
+	// timeout rather than a hard cap: it is how long a PUT may go without any
+	// data arriving, reset on every chunk received, so it does not cut off a
+	// large upload that is merely slow.
+	ReadTimeout  int `toml:"readTimeout"`
+	WriteTimeout int `toml:"writeTimeout"`
+	IdleTimeout  int `toml:"idleTimeout"`
+	// MaxUploadSize is the largest accepted body in bytes, 0 means no limit.
+	MaxUploadSize int64 `toml:"maxUploadSize"`
+	// MaxChunkSize is the largest a single Content-Range chunk of an upload
+	// may be, in bytes. It exists so that a reverse proxy with a hard
+	// per-request duration or body-size cap (Cloudflare's ~100 second rule
+	// was the motivating case) never sees a request large enough to trip it:
+	// a large file is still accepted, just never in one request. 0 disables
+	// chunked upload — a PUT carrying Content-Range is then refused.
+	MaxChunkSize int64 `toml:"maxChunkSize"`
+	// PathsWithoutAuth are regular expressions; a GET or a HEAD whose path
+	// matches one of them needs no account. Every other path needs one
+	// whatever its method, which is the default: an empty list makes the whole
+	// server private and "^/" makes reading everything public. A folder of a
+	// jellyfin repository needs an account even where one of these matches it.
+	PathsWithoutAuth []string `toml:"pathsWithoutAuth"`
+}
+
+// HTTPAuth is [http.auth]: how long a browser login lasts, the key it is
+// signed with, and the lock against guessing passwords.
+type HTTPAuth struct {
 	// SessionTokenLifetime is how long a browser that logged in with the
 	// login form stays logged in without being used, in seconds. Every
 	// request it makes in the second half of that window renews its token,
@@ -1003,13 +1013,6 @@ type HTTP struct {
 	// out. Should the file not be writable, a key is generated for every run
 	// instead.
 	SessionTokenSecret string `toml:"httpSessionTokenSecret"`
-	// ShareLinkSecret is the key a file's share link is signed with: a link
-	// carries ?key= with an HMAC-SHA512 over the file's path, modification
-	// time and size, which lets anyone holding it download that one file
-	// without an account until the file changes. It is generated and written
-	// into this file at the first start; changing it revokes every link handed
-	// out so far.
-	ShareLinkSecret string `toml:"shareLinkSecret"`
 	// LoginFailureDelay is the delay in seconds before a rejected request is
 	// answered, which slows down guessing.
 	LoginFailureDelay int `toml:"loginFailureDelay"`
@@ -1019,18 +1022,47 @@ type HTTP struct {
 	// LoginLockout is how long a locked client is refused, in seconds. It is
 	// also the window the attempts are counted over.
 	LoginLockout int `toml:"loginLockout"`
-	// TrustedProxies are the addresses, or CIDR ranges, of the proxies in front
-	// of this server. A request from one of them is recorded under the client
-	// in X-Forwarded-For, and X-Forwarded-Proto says whether the session cookie
-	// is marked Secure. From anywhere else both headers are ignored.
-	TrustedProxies []string `toml:"trustedProxies"`
+}
 
-	// PathsWithoutAuth are regular expressions; a GET or a HEAD whose path
-	// matches one of them needs no account. Every other path needs one
-	// whatever its method, which is the default: an empty list makes the whole
-	// server private and "^/" makes reading everything public. A folder of a
-	// jellyfin repository needs an account even where one of these matches it.
-	PathsWithoutAuth []string `toml:"pathsWithoutAuth"`
+// HTTPServices is [http.services]: what the server answers besides the files
+// themselves, on both listeners.
+type HTTPServices struct {
+	// EnableS3 answers requests signed with AWS Signature Version 4 as the S3
+	// API, on both listeners. Every folder directly in Basefolder is a bucket,
+	// found by its name ignoring case, in the one region, S3Region, and only
+	// the accounts that set s3 may use it.
+	EnableS3 bool `toml:"enableS3"`
+	// RegistryAnonymousRead lets anyone pull from the registry without
+	// credentials. With it off, pulling takes an account that sets registry,
+	// as pushing and deleting always do.
+	RegistryAnonymousRead bool `toml:"registryAnonymousRead"`
+	// WebDAV answers WebDAV on the paths of the served folder, on both
+	// listeners, so that Explorer and Finder mount it as a drive. To a WebDAV
+	// client DELETE then removes a folder with everything in it and MOVE moves
+	// across folders and onto a name that is taken; to everyone else they
+	// mean what they always did. The rights are the same for both.
+	WebDAV bool `toml:"webdav" feature:"webdav"`
+	// WebDAVClients are what the User-Agent of a WebDAV client contains,
+	// compared ignoring case: the clients that get the WebDAV meaning of
+	// PUT, DELETE and MOVE. A request with a Depth or an If header gets it
+	// whatever it names.
+	WebDAVClients []string `toml:"webdavClients" feature:"webdav"`
+	// JellyfinDiscovery answers the Jellyfin clients that look for a server
+	// on the local network, by a broadcast to UDP port 7359, with the address
+	// of this one, while there is a jellyfin repository.
+	JellyfinDiscovery bool `toml:"jellyfinDiscovery" feature:"jellyfin"`
+	// Sonos offers Play on Sonos on the audio files of the listing, to a
+	// session of an account that may read them. The server finds the
+	// speakers of the local network by SSDP and tells one to play a file,
+	// which the speaker then fetches from this server by a link that needs no
+	// login and lasts for a few hours: the plain listener, or
+	// general.internalAddress where that is set, has to be reachable from the
+	// speakers.
+	Sonos bool `toml:"sonos" feature:"sonos"`
+	// SonosSpeakers are addresses of speakers, as host or host:port, which
+	// are asked directly besides those a search finds: for speakers on a
+	// network the search does not reach.
+	SonosSpeakers []string `toml:"sonosSpeakers" feature:"sonos"`
 }
 
 // S3Region is the one region the S3 API of the HTTP server answers for. It is
@@ -1183,22 +1215,30 @@ func Default() Config {
 			LoginFailureDelay: 1,
 		},
 		HTTP: HTTP{
-			Enabled:               true,
-			Port:                  8080,
-			Address:               "127.0.0.1",
-			EnableAdminInterface:  true,
-			EnableS3:              true,
-			RegistryAnonymousRead: true,
-			WebDAVClients:         DefaultWebDAVClients(),
-			MaxConnections:        100,
-			ReadTimeout:           120,
-			IdleTimeout:           120,
-			MaxChunkSize:          50 << 20,         // 50 MB
-			SessionTokenLifetime:  8 * 60 * 60,      // 8 hours idle
-			SessionMaxLifetime:    7 * 24 * 60 * 60, // 7 days from the login
-			LoginFailureDelay:     1,
-			LoginAttempts:         5,
-			LoginLockout:          60,
+			HTTPMain: HTTPMain{
+				Enabled:              true,
+				Port:                 8080,
+				Address:              "127.0.0.1",
+				EnableAdminInterface: true,
+			},
+			HTTPConnection: HTTPConnection{
+				MaxConnections: 100,
+				ReadTimeout:    120,
+				IdleTimeout:    120,
+				MaxChunkSize:   50 << 20, // 50 MB
+			},
+			HTTPAuth: HTTPAuth{
+				SessionTokenLifetime: 8 * 60 * 60,      // 8 hours idle
+				SessionMaxLifetime:   7 * 24 * 60 * 60, // 7 days from the login
+				LoginFailureDelay:    1,
+				LoginAttempts:        5,
+				LoginLockout:         60,
+			},
+			HTTPServices: HTTPServices{
+				EnableS3:              true,
+				RegistryAnonymousRead: true,
+				WebDAVClients:         DefaultWebDAVClients(),
+			},
 		},
 		HTTPS: HTTPS{
 			Port: 8443,
@@ -1270,7 +1310,7 @@ type legacy struct {
 // key no field claims — so the only thing left to do is say so, which is what
 // RetiredKeys is for.
 var retired = map[string]string{
-	"http.sessionTimeout": "http.httpSessionTokenLifetime",
+	"http.sessionTimeout": "http.auth.httpSessionTokenLifetime",
 	// the accounts of every server are one list now
 	"ftp.users":  "[[users]] with ftp = true",
 	"sftp.users": "[[users]] with sftp = true",
@@ -1280,9 +1320,9 @@ var retired = map[string]string{
 	"log.format": "general.logFormat",
 	// the admin interface is served by the http server and logs in with one
 	// of its accounts, so it has no listener and no account of its own
-	"general.adminInterfaceEnabled":  "http.enableAdminInterface",
-	"general.adminInterfaceAddress":  "http.address",
-	"general.adminInterfacePort":     "http.port or https.port",
+	"general.adminInterfaceEnabled":  "http.main.enableAdminInterface",
+	"general.adminInterfaceAddress":  "http.main.address",
+	"general.adminInterfacePort":     "http.main.port or https.port",
 	"general.adminInterfaceUseHttps": "https.enabled",
 	"general.adminUsername":          "[[users]] with isAdmin = true",
 	"general.adminPassword":          "[[users]] with isAdmin = true",
@@ -1296,15 +1336,36 @@ var retired = map[string]string{
 	"http.cleanup": "[[general.cleanup]], whose paths are relative to general.baseFolderFiles",
 	// every write and every WebDAV listing needs an account, and what an
 	// account may do is decided by its rights
-	"http.methodsRequireAuth": "nothing: every path needs an account unless http.pathsWithoutAuth lists it",
+	"http.methodsRequireAuth": "nothing: every path needs an account unless http.connection.pathsWithoutAuth lists it",
 	// every path needs an account by default, and the paths that do not are
 	// listed instead
-	"http.pathsRequireAuth": "http.pathsWithoutAuth: every path needs an account unless it matches one of those",
+	"http.pathsRequireAuth": "http.connection.pathsWithoutAuth: every path needs an account unless it matches one of those",
 	// every server serves the one folder
 	"ftp.basefolder":  "general.baseFolderFiles",
 	"sftp.basefolder": "general.baseFolderFiles",
 	"http.basefolder": "general.baseFolderFiles",
 	"tftp.basefolder": "general.baseFolderFiles",
+}
+
+// The keys of [http] moved into its tables, [http.main] and the others: a key
+// still set at its old place is not read, and is named here so that the file
+// says where it went rather than its default silently taking over. The list is
+// made from the tables themselves, so it cannot fall behind them.
+func init() {
+	httpType := reflect.TypeOf(HTTP{})
+	for i := range httpType.NumField() {
+		table := httpType.Field(i)
+		if !table.Anonymous {
+			continue
+		}
+		tableName, _, _ := strings.Cut(table.Tag.Get("toml"), ",")
+		for j := range table.Type.NumField() {
+			key, _, _ := strings.Cut(table.Type.Field(j).Tag.Get("toml"), ",")
+			if key != "" && key != "-" {
+				retired["http."+key] = "http." + tableName + "." + key
+			}
+		}
+	}
 }
 
 // RetiredKeys reports the retired keys a file still sets, each as
@@ -1799,7 +1860,7 @@ func (c Config) validateServers() error {
 // [https] the way the FTP ones straddle [ftp] and [ftps].
 func (c Config) validateHTTP() error {
 	if c.HTTP.Enabled {
-		if err := checkPort("http.port", c.HTTP.Port); err != nil {
+		if err := checkPort("http.main.port", c.HTTP.Port); err != nil {
 			return err
 		}
 	}
@@ -1812,60 +1873,60 @@ func (c Config) validateHTTP() error {
 		}
 	}
 	h := c.HTTP
-	if err := checkAddress("http.address", h.Address); err != nil {
+	if err := checkAddress("http.main.address", h.Address); err != nil {
 		return err
 	}
 	if h.MaxConnections < 1 {
-		return errors.New("http.maxConnections has to be at least 1")
+		return errors.New("http.connection.maxConnections has to be at least 1")
 	}
 	// 0 would hand out tokens that have already expired
 	if h.SessionTokenLifetime < 1 {
-		return errors.New("http.httpSessionTokenLifetime has to be at least 1")
+		return errors.New("http.auth.httpSessionTokenLifetime has to be at least 1")
 	}
 	// one shorter than httpSessionTokenLifetime is raised to it rather than
 	// refused, so that a file written before the cap existed, which may set a
 	// lifetime longer than the default cap, still starts
 	if h.SessionMaxLifetime < 1 {
-		return errors.New("http.httpSessionMaxLifetime has to be at least 1")
+		return errors.New("http.auth.httpSessionMaxLifetime has to be at least 1")
 	}
 	// checked here rather than at the first login, so that a key too short to
 	// sign with is reported by -check and not by a user who cannot log in
 	if h.SessionTokenSecret != "" {
 		if _, err := DecodeSessionSecret(h.SessionTokenSecret); err != nil {
-			return fmt.Errorf("http.httpSessionTokenSecret: %w", err)
+			return fmt.Errorf("http.auth.httpSessionTokenSecret: %w", err)
 		}
 	}
 	if h.ShareLinkSecret != "" && len(h.ShareLinkSecret) < MinShareSecret {
-		return fmt.Errorf("http.shareLinkSecret has to be at least %d characters", MinShareSecret)
+		return fmt.Errorf("http.main.shareLinkSecret has to be at least %d characters", MinShareSecret)
 	}
 	if h.LoginAttempts < 0 {
-		return errors.New("http.loginAttempts cannot be negative")
+		return errors.New("http.auth.loginAttempts cannot be negative")
 	}
 	if h.LoginLockout < 1 {
-		return errors.New("http.loginLockout has to be at least 1")
+		return errors.New("http.auth.loginLockout has to be at least 1")
 	}
 	for i, proxy := range h.TrustedProxies {
 		if _, err := ParseProxy(proxy); err != nil {
-			return fmt.Errorf("http.trustedProxies[%d]: %w", i, err)
+			return fmt.Errorf("http.main.trustedProxies[%d]: %w", i, err)
 		}
 	}
 	for i, speaker := range h.SonosSpeakers {
 		if _, err := SonosSpeaker(speaker); err != nil {
-			return fmt.Errorf("http.sonosSpeakers[%d]: %w", i, err)
+			return fmt.Errorf("http.services.sonosSpeakers[%d]: %w", i, err)
 		}
 	}
 	if h.MaxUploadSize < 0 {
-		return errors.New("http.maxUploadSize cannot be negative")
+		return errors.New("http.connection.maxUploadSize cannot be negative")
 	}
 	if h.MaxChunkSize < 0 {
-		return errors.New("http.maxChunkSize cannot be negative")
+		return errors.New("http.connection.maxChunkSize cannot be negative")
 	}
 	if h.MaxUploadSize > 0 && h.MaxChunkSize > 0 && h.MaxChunkSize > h.MaxUploadSize {
-		return errors.New("http.maxChunkSize cannot be larger than http.maxUploadSize")
+		return errors.New("http.connection.maxChunkSize cannot be larger than http.connection.maxUploadSize")
 	}
 	for i, pattern := range h.PathsWithoutAuth {
 		if _, err := regexp.Compile(pattern); err != nil {
-			return fmt.Errorf("http.pathsWithoutAuth[%d]: %w", i, err)
+			return fmt.Errorf("http.connection.pathsWithoutAuth[%d]: %w", i, err)
 		}
 	}
 	if err := c.validateRegistry(); err != nil {
@@ -2011,7 +2072,7 @@ func overlaps(a, b string) bool {
 	return inside(a, b) || inside(b, a)
 }
 
-// SonosSpeaker reads one entry of http.sonosSpeakers: a host name or an
+// SonosSpeaker reads one entry of http.services.sonosSpeakers: a host name or an
 // address, with or without a port, which is 1400 where none is given. It
 // returns host:port.
 func SonosSpeaker(raw string) (string, error) {
@@ -2031,7 +2092,7 @@ func SonosSpeaker(raw string) (string, error) {
 	return net.JoinHostPort(host, port), nil
 }
 
-// ParseProxy reads one entry of http.trustedProxies: an address, or a CIDR
+// ParseProxy reads one entry of http.main.trustedProxies: an address, or a CIDR
 // range. A single address is returned as the range that holds only it, so the
 // caller has one kind of thing to compare against.
 func ParseProxy(entry string) (netip.Prefix, error) {

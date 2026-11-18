@@ -14,7 +14,7 @@ import (
 )
 
 // A share link is a file's own URL with ?key= added: an HMAC-SHA512, keyed by
-// http.shareLinkSecret, over the file's path, modification time and size. It
+// http.main.shareLinkSecret, over the file's path, modification time and size. It
 // lets anyone holding it download that one file without an account. Nothing
 // is stored: the key is computed again from the file as it is now, so a link
 // stops working the moment the file is changed, renamed or replaced, and every

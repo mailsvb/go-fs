@@ -50,7 +50,7 @@ var readerPath = regexp.MustCompile(`/dls_directory_reader\.(php|asp)$`)
 const (
 	methodMkcol = "MKCOL"
 	methodMove  = "MOVE"
-	// the rest are WebDAV's own, answered while http.webdav is on; see
+	// the rest are WebDAV's own, answered while http.services.webdav is on; see
 	// webdav.go
 	methodPropfind  = "PROPFIND"
 	methodProppatch = "PROPPATCH"
@@ -74,7 +74,7 @@ type Server struct {
 	// nonceKey signs the digest nonces this server hands out, so that a nonce
 	// carries its own age and needs nothing to be remembered about it.
 	nonceKey []byte
-	// shareFallback signs the share links while http.shareLinkSecret is
+	// shareFallback signs the share links while http.main.shareLinkSecret is
 	// empty, which it only is when the file could not be given one; see
 	// shareSecret in share.go.
 	shareFallback []byte
@@ -171,14 +171,14 @@ type settings struct {
 	// subsonic repository, while which it answers OpenSubsonic clients.
 	jellyfin bool
 	subsonic bool
-	// publicPaths are http.pathsWithoutAuth compiled: the paths a GET or a
+	// publicPaths are http.connection.pathsWithoutAuth compiled: the paths a GET or a
 	// HEAD may read without an account. Every other path needs one.
 	publicPaths []*regexp.Regexp
 	// musicPaths are the folders of the jellyfin and the subsonic
 	// repositories, which need an account even where one of publicPaths
 	// matches them.
 	musicPaths []*regexp.Regexp
-	// proxies are http.trustedProxies compiled, the addresses whose
+	// proxies are http.main.trustedProxies compiled, the addresses whose
 	// X-Forwarded-For and X-Forwarded-Proto are believed.
 	proxies []netip.Prefix
 	// ssh is [general.ssh], the algorithms a send to another host may use.
@@ -242,7 +242,7 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 	for i, pattern := range cfg.PathsWithoutAuth {
 		compiled, err := compilePattern(pattern, fold)
 		if err != nil {
-			return nil, fmt.Errorf("http.pathsWithoutAuth[%d]: %w", i, err)
+			return nil, fmt.Errorf("http.connection.pathsWithoutAuth[%d]: %w", i, err)
 		}
 		public = append(public, compiled)
 	}
@@ -262,7 +262,7 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 	for i, entry := range cfg.TrustedProxies {
 		prefix, err := config.ParseProxy(entry)
 		if err != nil {
-			return nil, fmt.Errorf("http.trustedProxies[%d]: %w", i, err)
+			return nil, fmt.Errorf("http.main.trustedProxies[%d]: %w", i, err)
 		}
 		proxies = append(proxies, prefix)
 	}
@@ -424,7 +424,7 @@ func (s *Server) connState(conn net.Conn, state http.ConnState) {
 }
 
 // Start binds the listeners and serves until ctx is cancelled. The two
-// listeners are independent: http.enabled serves the plain port, https.enabled
+// listeners are independent: http.main.enabled serves the plain port, https.enabled
 // the TLS one, and either may be on alone.
 func (s *Server) Start(ctx context.Context) error {
 	set := s.settings()
@@ -499,12 +499,12 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // warnAboutNoReader says that the file tree cannot be read by anyone: every
-// path needs an account unless http.pathsWithoutAuth lists it, and there is
+// path needs an account unless http.connection.pathsWithoutAuth lists it, and there is
 // neither an account nor a token. Shares and the pages that decide for
 // themselves still work, which is why it is not refused.
 func (s *Server) warnAboutNoReader(set *settings) {
 	if len(set.accounts) == 0 && len(set.tokens) == 0 && len(set.publicPaths) == 0 {
-		s.log.Warn("no [[users]] entry sets http, there is no bearer token and http.pathsWithoutAuth is empty, " +
+		s.log.Warn("no [[users]] entry sets http, there is no bearer token and http.connection.pathsWithoutAuth is empty, " +
 			"so nobody can read the files over http")
 	}
 }
@@ -527,7 +527,7 @@ func (s *Server) warnAboutTheAdminInterface(set *settings) {
 		}
 	}
 	if admins == 0 {
-		s.log.Warn("http.enableAdminInterface is on but no account sets isAdmin, " +
+		s.log.Warn("http.main.enableAdminInterface is on but no account sets isAdmin, " +
 			"so nobody can reach the admin interface")
 	}
 	if set.cfg.Enabled && !isLoopback(set.cfg.Address) {

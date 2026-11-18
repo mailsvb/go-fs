@@ -170,7 +170,7 @@ func (sp *speaker) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // sonosServer is a server with Play on Sonos, which finds the one speaker
-// http.sonosSpeakers names: its search goes to a socket that never answers.
+// http.services.sonosSpeakers names: its search goes to a socket that never answers.
 func sonosServer(t *testing.T, sp *speaker, tune func(*httpConfig)) *testServer {
 	t.Helper()
 	skipWithout(t, features.Sonos)
@@ -239,7 +239,7 @@ func TestListingOffersSonosToASessionThatMayRead(t *testing.T) {
 	off.write(t, "music/song.mp3", "x")
 	session = login(t, off, "/music/", "john", "doe")
 	if body := bodyOf(t, withSession(t, off, http.MethodGet, "/music/", session)); strings.Contains(body, `data-do="sonos"`) {
-		t.Error("Play on Sonos is offered while http.sonos is off")
+		t.Error("Play on Sonos is offered while http.services.sonos is off")
 	}
 }
 
@@ -832,7 +832,7 @@ func TestSonosLinkStopsWhenSonosIsOff(t *testing.T) {
 	}
 	key := sonosKey(server.shareSecret(server.settings()), "/private/music/song.mp3", info, time.Now().Add(time.Hour).Unix())
 	if res, _ := get(t, server, "/private/music/song.mp3?"+sonosPlayParam+"="+key); res.StatusCode != http.StatusUnauthorized {
-		t.Errorf("a link answered %d while http.sonos is off", res.StatusCode)
+		t.Errorf("a link answered %d while http.services.sonos is off", res.StatusCode)
 	}
 }
 
@@ -887,7 +887,7 @@ func TestSonosRefusals(t *testing.T) {
 	off.write(t, "music/song.mp3", "song")
 	session = login(t, off, "/music/", "john", "doe")
 	if res, _ := sonosAsk(t, off, session, http.MethodGet, "/music/song.mp3?go-fs=sonos&sonos=groups", nil, nil); res.StatusCode != http.StatusNotFound {
-		t.Errorf("groups answered %d while http.sonos is off", res.StatusCode)
+		t.Errorf("groups answered %d while http.services.sonos is off", res.StatusCode)
 	}
 }
 
@@ -902,7 +902,7 @@ func TestSonosLinkNeedsAnAddressTheSpeakerReaches(t *testing.T) {
 	away := sonos.Player{Room: "Kitchen", Host: "192.0.2.10:1400"}
 
 	// the server listens on 127.0.0.1, which a speaker elsewhere does not reach
-	if _, err := server.sonosLink(server.settings(), target, info, away); err == nil || !strings.Contains(err.Error(), "http.address") {
+	if _, err := server.sonosLink(server.settings(), target, info, away); err == nil || !strings.Contains(err.Error(), "http.main.address") {
 		t.Errorf("a link on the loopback address was handed out: %v", err)
 	}
 

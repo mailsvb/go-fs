@@ -240,7 +240,7 @@ func describeBlock(blockType string) string {
 	return "a " + strings.ToLower(blockType) + " block"
 }
 
-// DecodeSessionSecret turns the configured http.httpSessionTokenSecret into the
+// DecodeSessionSecret turns the configured http.auth.httpSessionTokenSecret into the
 // key the login tokens are signed with. Unlike the other kinds the value is not
 // PEM: it is base64 of the key bytes themselves, which is what a key with no
 // structure looks like.

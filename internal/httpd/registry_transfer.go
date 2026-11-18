@@ -352,7 +352,7 @@ func (s *Server) fetchBlob(ctx context.Context, set *settings, client *remoteCli
 		return link()
 	}
 	if limit := set.cfg.MaxUploadSize; limit > 0 && blob.Size > limit {
-		return fmt.Errorf("the blob %s has %d bytes, more than http.maxUploadSize allows", blob.Digest, blob.Size)
+		return fmt.Errorf("the blob %s has %d bytes, more than http.connection.maxUploadSize allows", blob.Digest, blob.Size)
 	}
 
 	blobCtx, cancel := context.WithCancelCause(ctx)

@@ -59,7 +59,7 @@ func davOnly(method string) bool {
 }
 
 // davClient reports whether a request comes from a client that mounts the
-// folder. It is known by its User-Agent, which http.webdavClients lists, or by
+// folder. It is known by its User-Agent, which http.services.webdavClients lists, or by
 // a header that only WebDAV defines: Depth, or If with the lock it holds.
 func davClient(set *settings, r *http.Request) bool {
 	if r.Header.Get("Depth") != "" || r.Header.Get("If") != "" {

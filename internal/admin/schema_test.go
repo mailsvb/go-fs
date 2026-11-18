@@ -113,34 +113,39 @@ func TestFieldKinds(t *testing.T) {
 				kinds[section.Key+"."+table.Key+"."+field.Key] = field.Kind
 			}
 		}
+		for _, sub := range section.Subsections {
+			for _, field := range sub.Fields {
+				kinds[section.Key+"."+sub.Key+"."+field.Key] = field.Kind
+			}
+		}
 	}
 
 	for key, want := range map[string]string{
-		"ftp.enabled":                       kindBool,
-		"ftp.port":                          kindInt,
-		"general.baseFolderFiles":           kindText,
-		"http.maxUploadSize":                kindInt,
-		"http.pathsWithoutAuth":             kindLines,
-		"general.logLevel":                  kindText,
-		"http.enableAdminInterface":         kindBool,
-		"http.enableS3":                     kindBool,
-		"http.s3Region":                     kindText,
-		"users.users.s3":                    kindBool,
-		"users.users.registry":              kindBool,
-		"general.baseFolderRegistry":        kindText,
-		"http.registryAnonymousRead":        kindBool,
-		"users.users.isAdmin":               kindBool,
-		"sftp.hostkey":                      kindSecret,
-		"users.users.password":              kindSecret,
-		"users.users.ftp":                   kindBool,
-		"users.users.allowUserFileCreate":   kindBool,
-		"users.users.authorizedKeys":        kindLines,
-		"users.users.paths":                 kindLines,
-		"general.cleanup.keep":              kindInt,
-		"tokens.tokens.hash":                kindText,
-		"tokens.tokens.expires":             kindText,
-		"tokens.tokens.paths":               kindLines,
-		"tokens.tokens.allowUserFileCreate": kindBool,
+		"ftp.enabled":                         kindBool,
+		"ftp.port":                            kindInt,
+		"general.baseFolderFiles":             kindText,
+		"http.connection.maxUploadSize":       kindInt,
+		"http.connection.pathsWithoutAuth":    kindLines,
+		"general.logLevel":                    kindText,
+		"http.main.enableAdminInterface":      kindBool,
+		"http.services.enableS3":              kindBool,
+		"http.services.s3Region":              kindText,
+		"users.users.s3":                      kindBool,
+		"users.users.registry":                kindBool,
+		"general.baseFolderRegistry":          kindText,
+		"http.services.registryAnonymousRead": kindBool,
+		"users.users.isAdmin":                 kindBool,
+		"sftp.hostkey":                        kindSecret,
+		"users.users.password":                kindSecret,
+		"users.users.ftp":                     kindBool,
+		"users.users.allowUserFileCreate":     kindBool,
+		"users.users.authorizedKeys":          kindLines,
+		"users.users.paths":                   kindLines,
+		"general.cleanup.keep":                kindInt,
+		"tokens.tokens.hash":                  kindText,
+		"tokens.tokens.expires":               kindText,
+		"tokens.tokens.paths":                 kindLines,
+		"tokens.tokens.allowUserFileCreate":   kindBool,
 	} {
 		if kinds[key] != want {
 			t.Errorf("%s is %q, want %q", key, kinds[key], want)
@@ -232,7 +237,7 @@ func TestValuesRoundTrip(t *testing.T) {
 		t.Error("a permission that was never granted came back granted")
 	}
 	if applied.HTTP.MaxUploadSize != 1<<30 {
-		t.Errorf("http.maxUploadSize is %d", applied.HTTP.MaxUploadSize)
+		t.Errorf("http.connection.maxUploadSize is %d", applied.HTTP.MaxUploadSize)
 	}
 	if applied.General.Cleanup[0].Keep != 10 {
 		t.Errorf("general.cleanup did not survive: %+v", applied.General.Cleanup)
@@ -397,7 +402,7 @@ func TestApplyCoercesNumbers(t *testing.T) {
 	schema, _ := build()
 	values := schema.Values(config.Default())
 	values["ftp"].(map[string]any)["port"] = "2121"
-	values["http"].(map[string]any)["maxConnections"] = float64(50)
+	values["http"].(map[string]any)["connection"].(map[string]any)["maxConnections"] = float64(50)
 	values["tftp"].(map[string]any)["port"] = ""
 
 	applied, err := schema.Apply(values)
@@ -405,7 +410,7 @@ func TestApplyCoercesNumbers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if applied.FTP.Port != 2121 || applied.HTTP.MaxConnections != 50 || applied.TFTP.Port != 0 {
-		t.Errorf("ftp.port %d, http.maxConnections %d, tftp.port %d",
+		t.Errorf("ftp.port %d, http.connection.maxConnections %d, tftp.port %d",
 			applied.FTP.Port, applied.HTTP.MaxConnections, applied.TFTP.Port)
 	}
 
@@ -416,18 +421,22 @@ func TestApplyCoercesNumbers(t *testing.T) {
 }
 
 // The S3 region is a constant of the server rather than a key of the file,
-// and there is no bucket to show: every folder is one. The region is shown on the HTTP tab beside the switch they belong to, and
-// what the page posts for it is never written anywhere.
+// and there is no bucket to show: every folder is one. The region is shown in
+// the services table of the HTTP tab beside the switch it belongs to, and what
+// the page posts for it is never written anywhere. The share link secret is
+// shown in the main table, read-only.
 func TestFixedS3Fields(t *testing.T) {
 	schema, _ := build()
-	var http Section
+	var fields []Field
 	for _, section := range schema.Sections {
 		if section.Key == "http" {
-			http = section
+			for _, sub := range section.Subsections {
+				fields = append(fields, sub.Fields...)
+			}
 		}
 	}
 	var order []string
-	for _, field := range http.Fields {
+	for _, field := range fields {
 		order = append(order, field.Key)
 		if field.Key == "s3Bucket" {
 			t.Error("the page still shows a bucket")
@@ -449,7 +458,7 @@ func TestFixedS3Fields(t *testing.T) {
 	}
 
 	values := schema.Values(config.Default())
-	held := values["http"].(map[string]any)
+	held := values["http"].(map[string]any)["services"].(map[string]any)
 	if held["s3Region"] != "us-east-1" {
 		t.Errorf("the page is shown region %v", held["s3Region"])
 	}
@@ -462,7 +471,7 @@ func TestFixedS3Fields(t *testing.T) {
 	if applied.HTTP.EnableS3 {
 		t.Error("the switch next to the constants was not applied")
 	}
-	if again := schema.Values(applied)["http"].(map[string]any); again["s3Region"] != "us-east-1" {
+	if again := schema.Values(applied)["http"].(map[string]any)["services"].(map[string]any); again["s3Region"] != "us-east-1" {
 		t.Errorf("a posted constant stuck: %v", again["s3Region"])
 	}
 }

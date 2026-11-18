@@ -29,7 +29,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
-// With http.sonos on, the listing offers Play on Sonos on an audio file. The
+// With http.services.sonos on, the listing offers Play on Sonos on an audio file. The
 // dialog lists the groups of speakers of the local network and has the one
 // chosen play the file, pause, play on, stop and change its volume.
 //
@@ -37,7 +37,7 @@ import (
 // with no account. So the URL carries a key, ?go-fs-play=, which stands in
 // for one as a share link's does, for the download of the one file until the
 // key runs out or the file changes. Unlike a share link it runs out by
-// itself, and only while http.sonos is on does it open anything.
+// itself, and only while http.services.sonos is on does it open anything.
 //
 // Several groups chosen together play as one: the speakers of all but the
 // first are told to join it, which groups them as the Sonos app does, for as
@@ -45,7 +45,7 @@ import (
 // play on its own again.
 //
 // The server reaches the speakers a search finds, and those
-// http.sonosSpeakers names, and no other host: the dialog names a group by
+// http.services.sonosSpeakers names, and no other host: the dialog names a group by
 // the id of its coordinator, which the server looks up among what it found.
 // Playing a file is offered as sending one is, to a session of an account
 // that may read it.
@@ -113,7 +113,7 @@ type sonosState struct {
 	client   *sonos.Client
 	groups   []sonos.Group
 	found    time.Time
-	speakers []string // the http.sonosSpeakers the groups were found with
+	speakers []string // the http.services.sonosSpeakers the groups were found with
 }
 
 func (st *sonosState) clientOf() *sonos.Client {
@@ -229,7 +229,7 @@ func (s *Server) sonosGroups(ctx context.Context, set *settings, fresh bool) ([]
 		}
 		p, err := client.Probe(ctx, host)
 		if err != nil {
-			s.log.Info("http sonos speaker of http.sonosSpeakers does not answer", "speaker", raw, "error", err)
+			s.log.Info("http sonos speaker of http.services.sonosSpeakers does not answer", "speaker", raw, "error", err)
 			continue
 		}
 		if !slices.ContainsFunc(players, func(q sonos.Player) bool { return q.UUID == p.UUID }) {
@@ -732,7 +732,7 @@ func (s *Server) sonosLink(set *settings, target vfs.Target, info os.FileInfo, s
 		u, err := url.Parse(base)
 		if err == nil {
 			if ip := net.ParseIP(u.Hostname()); ip != nil && ip.IsLoopback() && !addr.IP.IsLoopback() {
-				return "", errors.New("http.address is " + u.Hostname() +
+				return "", errors.New("http.main.address is " + u.Hostname() +
 					", which no speaker reaches; set it to the address of the network or to 0.0.0.0")
 			}
 			if u.Scheme == "https" {

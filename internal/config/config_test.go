@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -59,7 +60,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 [general]
 baseFolderFiles = "{{folder}}"
 
-[http]
+[http.main]
 enabled = false
 
 [ftp]
@@ -143,7 +144,7 @@ func TestUserPermissionDefaults(t *testing.T) {
 [general]
 baseFolderFiles = "{{folder}}"
 
-[http]
+[http.main]
 enabled = false
 
 [ftp]
@@ -247,7 +248,7 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"sftp account with no way in", func(c *Config) {
 			c.Users = []User{{Username: "max", SFTP: true}}
 		}, "never log in"},
-		{"http port", func(c *Config) { c.HTTP.Enabled = true; c.HTTP.Port = 0 }, "http.port"},
+		{"http port", func(c *Config) { c.HTTP.Enabled = true; c.HTTP.Port = 0 }, "http.main.port"},
 		{"https port", func(c *Config) { c.HTTPS.Enabled = true; c.HTTPS.Port = 0 }, "https.port"},
 		{"half an https pair", func(c *Config) {
 			c.HTTP.Enabled = true
@@ -286,7 +287,7 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"broken protected path pattern", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.PathsWithoutAuth = []string{"([bad"}
-		}, "http.pathsWithoutAuth[0]"},
+		}, "http.connection.pathsWithoutAuth[0]"},
 		{"cleanup without a path", func(c *Config) {
 			c.General.BaseFolderFiles = folder
 			c.General.Cleanup = []Cleanup{{Keep: 3}}
@@ -306,19 +307,19 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"http bind address", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.Address = "nope"
-		}, "http.address"},
+		}, "http.main.address"},
 		{"http session token lifetime", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.SessionTokenLifetime = 0
-		}, "http.httpSessionTokenLifetime"},
+		}, "http.auth.httpSessionTokenLifetime"},
 		{"http session cap", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.SessionMaxLifetime = 0
-		}, "http.httpSessionMaxLifetime"},
+		}, "http.auth.httpSessionMaxLifetime"},
 		{"http session token secret that is not base64", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.SessionTokenSecret = "not base64 at all!!"
-		}, "http.httpSessionTokenSecret"},
+		}, "http.auth.httpSessionTokenSecret"},
 		{"http session token secret that is too short", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.SessionTokenSecret = base64.StdEncoding.EncodeToString(make([]byte, 16))
@@ -326,15 +327,15 @@ func TestValidateRejectsBadConfiguration(t *testing.T) {
 		{"http login attempts negative", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.LoginAttempts = -1
-		}, "http.loginAttempts"},
+		}, "http.auth.loginAttempts"},
 		{"http login lockout zero", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.LoginLockout = 0
-		}, "http.loginLockout"},
+		}, "http.auth.loginLockout"},
 		{"http trusted proxy that is not an address", func(c *Config) {
 			c.HTTP.Enabled = true
 			c.HTTP.TrustedProxies = []string{"10.0.0.0/8", "proxy.example"}
-		}, "http.trustedProxies[1]"},
+		}, "http.main.trustedProxies[1]"},
 		{"sftp bind address", func(c *Config) {
 			c.SFTP.Enabled = true
 			c.SFTP.Address = "nope"
@@ -1108,7 +1109,7 @@ func TestTheExampleFileIsTheTemplate(t *testing.T) {
 func TestARetiredKeyIsStillAccepted(t *testing.T) {
 	folder := t.TempDir()
 	file := []byte("[general]\nbaseFolderFiles = " + strconv.Quote(folder) +
-		"\n\n[http]\nenabled = true\nsessionTimeout = 86400\n")
+		"\n\n[http]\nsessionTimeout = 86400\n\n[http.main]\nenabled = true\n")
 
 	cfg, err := Parse(file)
 	if err != nil {
@@ -1158,7 +1159,7 @@ func TestRetiredKeysAreReported(t *testing.T) {
 		t.Fatalf("RetiredKeys = %v, want one entry", found)
 	}
 	if !strings.Contains(found[0], "http.sessionTimeout") ||
-		!strings.Contains(found[0], "http.httpSessionTokenLifetime") {
+		!strings.Contains(found[0], "http.auth.httpSessionTokenLifetime") {
 		t.Errorf("RetiredKeys = %q, want it to name both the old and the new key", found[0])
 	}
 	// the [log] section and the admin listener moved, each key naming where to
@@ -1168,7 +1169,7 @@ func TestRetiredKeysAreReported(t *testing.T) {
 		t.Fatalf("RetiredKeys = %v, want three entries", found)
 	}
 	for _, want := range []string{
-		"general.adminInterfaceEnabled is ignored, use http.enableAdminInterface",
+		"general.adminInterfaceEnabled is ignored, use http.main.enableAdminInterface",
 		"general.adminUsername is ignored, use [[users]] with isAdmin = true",
 		"log.level is ignored, use general.logLevel",
 	} {
@@ -1179,12 +1180,12 @@ func TestRetiredKeysAreReported(t *testing.T) {
 	// the methods that need an account are fixed; reading is protected by path
 	found = RetiredKeys([]byte("[http]\nmethodsRequireAuth = [\"GET\", \"PUT\"]\n"))
 	if len(found) != 1 || !strings.Contains(found[0], "http.methodsRequireAuth is ignored, use nothing") ||
-		!strings.Contains(found[0], "http.pathsWithoutAuth") {
+		!strings.Contains(found[0], "http.connection.pathsWithoutAuth") {
 		t.Errorf("RetiredKeys = %q, want methodsRequireAuth pointed at pathsWithoutAuth", found)
 	}
 	// every path needs an account now, and the public ones are listed instead
 	found = RetiredKeys([]byte("[http]\npathsRequireAuth = [\"^/private/.*\"]\n"))
-	if len(found) != 1 || !strings.Contains(found[0], "http.pathsRequireAuth is ignored, use http.pathsWithoutAuth") {
+	if len(found) != 1 || !strings.Contains(found[0], "http.pathsRequireAuth is ignored, use http.connection.pathsWithoutAuth") {
 		t.Errorf("RetiredKeys = %q, want pathsRequireAuth pointed at pathsWithoutAuth", found)
 	}
 	// and a file that still sets it loads, with every path needing an account
@@ -1240,5 +1241,58 @@ func TestServerAdmits(t *testing.T) {
 	}
 	if !(Server{Name: "empty"}).Admits("root", true) {
 		t.Error("a server that names nobody refused an admin")
+	}
+}
+
+// A file written before [http] had its tables still sets its keys directly
+// in [http]. Nothing moves them: they are not read, so the defaults apply, and
+// each is reported with the table it belongs in now.
+func TestTheFlatHTTPKeysAreRetired(t *testing.T) {
+	file := []byte("[http]\nport = 9000\nmaxConnections = 7\nloginAttempts = 2\nwebdav = true\n" +
+		"registryBaseFolder = \"/srv/registry\"\n")
+	cfg, err := Parse(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := Default().HTTP
+	if cfg.HTTP.Port != def.Port || cfg.HTTP.MaxConnections != def.MaxConnections ||
+		cfg.HTTP.LoginAttempts != def.LoginAttempts || cfg.HTTP.WebDAV != def.WebDAV {
+		t.Errorf("a flat key was read: %+v", cfg.HTTP)
+	}
+	// the folder key is still moved by Migrate, as it was
+	if cfg.General.BaseFolderRegistry != "/srv/registry" {
+		t.Errorf("baseFolderRegistry = %q", cfg.General.BaseFolderRegistry)
+	}
+	want := []string{
+		"http.loginAttempts is ignored, use http.auth.loginAttempts",
+		"http.maxConnections is ignored, use http.connection.maxConnections",
+		"http.port is ignored, use http.main.port",
+		"http.webdav is ignored, use http.services.webdav",
+	}
+	if found := RetiredKeys(file); !slices.Equal(found, want) {
+		t.Errorf("RetiredKeys = %q, want %q", found, want)
+	}
+
+	// and the same keys in their tables are read, and reported by nobody
+	tables := []byte("[http.main]\nport = 9000\n[http.connection]\nmaxConnections = 7\n" +
+		"[http.auth]\nloginAttempts = 2\n[http.services]\nwebdav = true\n")
+	cfg, err = Parse(tables)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HTTP.Port != 9000 || cfg.HTTP.MaxConnections != 7 || cfg.HTTP.LoginAttempts != 2 || !cfg.HTTP.WebDAV {
+		t.Errorf("the tables were not read: %+v", cfg.HTTP)
+	}
+	if found := RetiredKeys(tables); len(found) != 0 {
+		t.Errorf("RetiredKeys = %q", found)
+	}
+	// the toml writer writes them where they are read
+	data, err := toml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := Parse(data); err != nil || again.HTTP.Port != 9000 || !again.HTTP.WebDAV ||
+		again.HTTP.MaxConnections != 7 {
+		t.Errorf("the written file reads back as %+v (%v):\n%s", again.HTTP, err, data)
 	}
 }

@@ -29,7 +29,7 @@ import (
 //
 // A session ends after its last file; when it is stopped, here or in the
 // Sonos app; when the group is told to play something else; when its
-// speakers no longer answer; when http.sonos is switched off or the account
+// speakers no longer answer; when http.services.sonos is switched off or the account
 // may no longer read the folder; and with the server.
 
 const (

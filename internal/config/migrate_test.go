@@ -340,9 +340,11 @@ func TestMigrateKeepsTheConfiguration(t *testing.T) {
 	old := strings.Replace(string(template), `baseFolderFiles = "/var/lib/go-fs/files"`, `basefolder = "/srv/files"`, 1)
 	old = strings.Replace(old, `baseFolderRegistry = "/var/lib/go-fs/registry"`+newline, "", 1)
 	old = strings.Replace(old, `baseFolderTemp = "/var/lib/go-fs/temp"`+newline, "", 1)
-	old = strings.Replace(old, "registryAnonymousRead = true", `registryBaseFolder = "/srv/registry"`+newline+"registryAnonymousRead = true", 1)
-	old = strings.Replace(old, "maxChunkSize = 52428800", "maxChunkSize = 52428800"+newline+`uploadStagingFolder = "/srv/temp"`, 1)
-	old = strings.Replace(old, "enableAdminInterface = true", `basefolder = "/srv/http"`+newline+"enableAdminInterface = true", 1)
+	// the folder keys of the old file were keys of [http] itself
+	old = strings.Replace(old, newline+"[http]"+newline, newline+"[http]"+newline+
+		`registryBaseFolder = "/srv/registry"`+newline+
+		`uploadStagingFolder = "/srv/temp"`+newline+
+		`basefolder = "/srv/http"`+newline, 1)
 	if old == string(template) || !setsOldKeys([]byte(old)) {
 		t.Fatal("the template no longer has the lines this test turns back into the old keys")
 	}

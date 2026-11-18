@@ -235,7 +235,7 @@ type jobJSON struct {
 	Started int64  `json:"started"`
 }
 
-// disksChunk is the largest piece of a disk upload when http.maxChunkSize
+// disksChunk is the largest piece of a disk upload when http.connection.maxChunkSize
 // says nothing.
 const disksChunk = 50 << 20
 

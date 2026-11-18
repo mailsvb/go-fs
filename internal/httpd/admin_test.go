@@ -31,7 +31,7 @@ func withAdmin(t *testing.T, cfg *httpConfig) {
 	folder := t.TempDir()
 	path := filepath.Join(folder, "go-fs.toml")
 	body := "[general]\nbaseFolderFiles = " + strconv.Quote(cfg.Basefolder) + "\n" +
-		"[ftp]\nenabled = false\n[tftp]\nenabled = false\n[http]\nenabled = true\n"
+		"[ftp]\nenabled = false\n[tftp]\nenabled = false\n[http.main]\nenabled = true\n"
 	for _, user := range cfg.Users {
 		body += "[[users]]\nusername = " + strconv.Quote(user.Username) +
 			"\npassword = " + strconv.Quote(user.Password) + "\nhttp = true\n"
@@ -131,7 +131,8 @@ func TestAdminInterfaceNeedsAnAdminSession(t *testing.T) {
 		t.Errorf("the state names %q", state.Path)
 	}
 	httpSection, _ := state.Values["http"].(map[string]any)
-	if enabled := httpSection["enableAdminInterface"]; enabled != true {
+	mainTable, _ := httpSection["main"].(map[string]any)
+	if enabled := mainTable["enableAdminInterface"]; enabled != true {
 		t.Errorf("the state says enableAdminInterface = %v", enabled)
 	}
 	if record := server.logs.find("http admin interface request"); record == nil {
@@ -329,7 +330,7 @@ func TestAdminInterfaceWarnsAtStartup(t *testing.T) {
 		cfg.Address = ""
 		withAdmin(t, cfg)
 	})
-	if server.logs.findLike("http.enableAdminInterface is on but no account sets isAdmin") == nil {
+	if server.logs.findLike("http.main.enableAdminInterface is on but no account sets isAdmin") == nil {
 		t.Error("a server with no admin account did not say so")
 	}
 	if server.logs.findLike("the admin interface is reachable over plain http") == nil {
@@ -337,7 +338,7 @@ func TestAdminInterfaceWarnsAtStartup(t *testing.T) {
 	}
 
 	quiet := adminServer(t, func(cfg *httpConfig) { cfg.Address = "127.0.0.1" })
-	if quiet.logs.findLike("http.enableAdminInterface is on but") != nil ||
+	if quiet.logs.findLike("http.main.enableAdminInterface is on but") != nil ||
 		quiet.logs.findLike("the admin interface is reachable over plain http") != nil {
 		t.Error("a loopback server with an admin account was warned about")
 	}

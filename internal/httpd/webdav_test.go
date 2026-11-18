@@ -51,7 +51,7 @@ func dav(t *testing.T, server *testServer, method, path, name, password string,
 	return do(t, req)
 }
 
-// With http.webdav off nothing changes: WebDAV's own methods are not
+// With http.services.webdav off nothing changes: WebDAV's own methods are not
 // answered, and the methods it shares keep their meaning for every client.
 func TestWebDAVOffAnswersNothing(t *testing.T) {
 	server := newServer(t, nil)

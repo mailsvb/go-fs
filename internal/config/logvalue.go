@@ -52,7 +52,7 @@ func (t Token) LogValue() slog.Value {
 }
 
 // LogValue implements slog.LogValuer: the whole configuration as the file
-// spells its keys, "http.port" and "users[0].username", one attribute each,
+// spells its keys, "http.main.port" and "users[0].username", one attribute each,
 // with the value of every key that holds a credential masked, so that a
 // record of the configuration in effect can be handed over with the log.
 func (c Config) LogValue() slog.Value {

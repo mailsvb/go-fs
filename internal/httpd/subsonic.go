@@ -240,7 +240,7 @@ func matchSaltedToken(accounts []*account, name, token, salt string) *account {
 	return found
 }
 
-// delay waits as long as http.loginFailureDelay says after a refused login.
+// delay waits as long as http.auth.loginFailureDelay says after a refused login.
 func (q *subsonicRequest) delay() {
 	if delay := q.set.cfg.LoginFailureDelay; delay > 0 {
 		time.Sleep(time.Duration(delay) * time.Second)

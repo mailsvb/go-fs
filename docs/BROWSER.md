@@ -425,7 +425,7 @@ wget --content-disposition 'https://example.com/osem/file.extension?key=3f9c…'
 curl -OJ 'https://example.com/osem/file.extension?key=3f9c…'
 ```
 
-The key is an HMAC-SHA512, keyed by `http.shareLinkSecret`, over the file's
+The key is an HMAC-SHA512, keyed by `http.main.shareLinkSecret`, over the file's
 path, its modification time and its size. Nothing is stored on the server: the
 key is computed again from the file at every request, so a link stops working
 as soon as the file is changed, touched, renamed or replaced. A link only reads.
@@ -443,7 +443,7 @@ curl -u john:doe 'https://example.com/osem/file.extension?go-fs=share'
 {"path":"/osem/file.extension?key=3f9c…"}
 ```
 
-`http.shareLinkSecret` is generated and written into the configuration file at
+`http.main.shareLinkSecret` is generated and written into the configuration file at
 the first start, with the rest of the file left as it was. The admin interface
 shows it read-only. Changing it by hand revokes every link handed out so far.
 If the file cannot be written, a key is made for this run only, and the links
@@ -451,7 +451,7 @@ stop working at the next restart.
 
 ## Playing on Sonos
 
-With `http.sonos = true`, **Play on Sonos…** in the row menu of an `.mp3`,
+With `http.services.sonos = true`, **Play on Sonos…** in the row menu of an `.mp3`,
 `.m4a`, `.aac`, `.flac`, `.ogg`, `.oga` or `.wav` file plays it on a Sonos
 speaker of the local network. The dialog lists the rooms the server finds, a
 group of rooms that play together as one entry named after its first room.
@@ -492,7 +492,7 @@ between files. The queue ends:
   another Play on Sonos on one of its speakers,
 - when its speakers do not answer five times in a row, or stay paused for
   six hours,
-- when `http.sonos` is switched off or the account may no longer read the
+- when `http.services.sonos` is switched off or the account may no longer read the
   files,
 - and with go-fs: a restart lets the file that plays play to its end, and
   nothing after it.
@@ -515,24 +515,24 @@ http://192.168.1.5:8080/music/song.mp3?go-fs-play=1767225600.3f9c…
 
 The link goes to `general.internalAddress` where that is set, or else to the
 plain HTTP listener, or the HTTPS one when there is no plain one, at
-`http.address`. Where that is `0.0.0.0`, the address is the one this host
-reaches the speaker from. The speakers have to reach it: with `http.address`
+`http.main.address`. Where that is `0.0.0.0`, the address is the one this host
+reaches the speaker from. The speakers have to reach it: with `http.main.address`
 at `127.0.0.1` the dialog refuses to play. A speaker fetches over HTTPS only
 from a certificate it trusts, which go-fs's own certificate is not, so serve
 the speakers over plain HTTP on the local network or name a trusted address in
 `general.internalAddress`.
 
-The key is an HMAC-SHA256, keyed by `http.shareLinkSecret`, over the file's
+The key is an HMAC-SHA256, keyed by `http.main.shareLinkSecret`, over the file's
 path, the time it runs out, and the file's modification time and size. Like a
 share link it answers only `GET` and `HEAD` of the one file, with ranges, so a
 speaker can seek. Unlike a share link it runs out by itself, twelve hours after
 it was handed out. It stops working as soon as the file changes, and while
-`http.sonos` is off.
+`http.services.sonos` is off.
 
 The server finds the speakers by SSDP: it sends a search to
 `239.255.255.250:1900` on every interface that takes multicast and waits two
 seconds for the answers. It then asks one speaker of each household how the
-rooms are grouped. When neither the search nor `http.sonosSpeakers` finds a
+rooms are grouped. When neither the search nor `http.services.sonosSpeakers` finds a
 speaker, the server tries port 1400 on every address of the private IPv4
 networks it is on, a /22 at most and else the /24 it is in, and keeps the
 addresses that describe themselves as Sonos speakers. That finds them where
@@ -540,11 +540,11 @@ the router does not pass multicast from the wired network to the wireless
 one, or where the server's firewall drops the answers to the search, which
 come from the speakers rather than from the group the search went to. A
 network the server is not on, a VLAN of its own say, is reached by naming its
-speakers in `http.sonosSpeakers`, as `"192.168.20.31"` or
+speakers in `http.services.sonosSpeakers`, as `"192.168.20.31"` or
 `"192.168.20.31:1400"`, which are asked directly; one speaker of a household
 is enough, as it knows every room. What
 was found is kept for 30 seconds. The server only talks to the speakers it
-found or that `http.sonosSpeakers` names, and believes an answer to its search
+found or that `http.services.sonosSpeakers` names, and believes an answer to its search
 only where the speaker's description is on the address the answer came from,
 at port 1400. The dialog names a room by its id and never by an address.
 

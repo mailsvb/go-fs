@@ -140,7 +140,8 @@ of a channel at 2 MB, so one transfer moves at most 2 MB per round trip, about
 uploads, `DELETE` removes, `MKCOL` creates a folder and `MOVE` renames one entry
 in place. `[https]` is the same server on a TLS port, with `cert` and `key`
 holding the material as in `[ftps]`, and the two `enabled` switches are
-independent. With `webdav = true` the same folder also mounts as a drive in
+independent. Its keys are in the tables `[http.main]`, `[http.connection]`,
+`[http.auth]` and `[http.services]`. With `webdav = true` in `[http.services]` the same folder also mounts as a drive in
 Explorer and Finder; see [Mounting as a drive](#mounting-as-a-drive-webdav).
 
 Browsing it in a browser gives a listing that sorts on any column, filters as you
@@ -167,17 +168,21 @@ allowUserFolderCreate = true
 allowUserFileDelete = true
 allowUserFolderDelete = true
 
-[http]
+[http.main]
 enabled = true
 port = 8080
+shareLinkSecret = ""               # generated at the first start, see "Sharing a file"
+trustedProxies = []
+
+[http.connection]
 pathsWithoutAuth = ["^/public/.*"]
+
+[http.auth]
 httpSessionTokenLifetime = 28800   # idle timeout, renewed while in use
 httpSessionMaxLifetime = 604800    # a login lasts a week at most
 httpSessionTokenSecret = ""        # generated at the first start
-shareLinkSecret = ""               # generated at the first start, see "Sharing a file"
 loginAttempts = 5
 loginLockout = 60
-trustedProxies = []
 ```
 
 **Every path needs an account** unless it matches one of `pathsWithoutAuth`,
@@ -258,7 +263,7 @@ go-fs-light is built without WebDAV, and ignores `webdav = true`; so does a
 build with the tag `no_webdav`.
 
 ```toml
-[http]
+[http.services]
 webdav = true
 webdavClients = ["Microsoft-WebDAV-MiniRedir", "WebDAVFS", "WebDAVLib", "Microsoft Office",
   "davfs2", "gvfs", "Cyberduck", "Mountain Duck", "rclone", "WinSCP"]
@@ -383,7 +388,7 @@ Removing a token from the file revokes it within one reload.
 The HTTP server also answers the **S3 API**, on its plain port and its TLS port
 alike, so that S3 clients such as the aws CLI, rclone and the AWS SDKs can use
 the served folder. It is on by default with
-`http.enableS3 = true`; each account that should use it sets `s3 = true`:
+`http.services.enableS3 = true`; each account that should use it sets `s3 = true`:
 
 ```toml
 [[users]]
@@ -531,7 +536,7 @@ other POST needs an account. The pair is public, so it opens no protected folder
 that `pathsWithoutAuth` does not list still needs Basic, Digest or bearer credentials as well.
 
 **WebDAV** — RFC 4918 class 1 and 2 on the HTTP listeners, through
-`golang.org/x/net/webdav`, when `http.webdav` is on: `OPTIONS`, `PROPFIND` of
+`golang.org/x/net/webdav`, when `http.services.webdav` is on: `OPTIONS`, `PROPFIND` of
 depth 0 and 1, `PROPPATCH` (accepted, not stored), `PUT`, recursive `DELETE`,
 `COPY`, `MOVE`, and exclusive and shared write locks with `LOCK` and `UNLOCK`,
 kept in memory. `GET`, `HEAD` and `MKCOL` are the HTTP server's own.
