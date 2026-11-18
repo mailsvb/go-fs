@@ -57,13 +57,11 @@ the same page. A downloaded rpm of a release installs too, with
 | `/var/lib/go-fs/trash` | the trash, what is deleted over HTTP and WebDAV |
 | `/usr/lib/systemd/system/go-fs.service` | the unit, which runs go-fs as the `go-fs` account |
 
-The package creates the `go-fs` account, then enables and starts the service. An
-update restarts it, and a removal stops and disables it. The configuration, the
-served files and the account stay after a removal; the configuration is renamed
-to `go-fs.toml.rpmsave`, since go-fs has written its secrets into it by then. An
-update leaves a changed
-configuration file alone, and puts the one it ships beside it as
-`go-fs.toml.rpmnew`.
+The package creates the `go-fs` account, then enables and starts the service,
+which writes the starter configuration at its first start: the package ships
+none. An update restarts it and leaves the configuration alone, and a removal
+stops and disables it. The configuration, the served files and the account
+stay after a removal; the configuration is renamed to `go-fs.toml.rpmsave`.
 
 The unit allows go-fs to bind ports below 1024 without root, so the servers can
 move to 21, 22, 69, 80 or 443. It keeps `/usr` and `/etc` read-only, except
@@ -108,15 +106,29 @@ passed on to go-fs, such as `-logfile`.
 
 Both `/etc/go-fs` and `/var/lib/go-fs` are volumes. Mount a folder at
 `/etc/go-fs`, never the file alone: go-fs saves the configuration by renaming
-a new file over it, which a file mounted on its own refuses. An empty folder
-is given the starter configuration at the first start.
+a new file over it, which a file mounted on its own refuses. go-fs writes the
+starter configuration of the image into an empty folder at the first start.
 
 go-fs runs as the account `go-fs`, UID and GID 10001, so a folder of the host
 mounted into the container must be writable by that UID, for example with
 `chown -R 10001:10001 /srv/media`. Or run it as the owner of the host's
-folders with `--user 1000:1000`, and mount folders of that owner at both
-`/etc/go-fs` and `/var/lib/go-fs`, since those of the image belong to 10001;
-go-fs makes the folders of `[general]` it is missing itself.
+folders with `--user 1000:1000`. A named volume is filled from the image's
+folder, so it belongs to 10001 as well, also one made with
+`docker volume create`. Either mount folders of that owner at both
+`/etc/go-fs` and `/var/lib/go-fs`, or hand each named volume to it once:
+
+```shell
+docker run --rm --user 0 -v go-fs-config:/etc/go-fs --entrypoint sh \
+  ghcr.io/mailsvb/go-fs:latest -c 'touch /etc/go-fs/.keep && chown -R 1000:1000 /etc/go-fs'
+```
+
+The file `.keep` is what makes the chown last: Docker fills a named volume
+that is still empty from the image again at every start, owner included.
+
+A container that cannot write into `/etc/go-fs` does not start and prints
+this command, with its own UID; one that cannot write into `/var/lib/go-fs`
+or a folder in it starts, and warns. go-fs makes the folders of `[general]`
+it is missing itself.
 
 A server other than HTTP also needs its port published once it is switched
 on: `-p 8443:8443`, `-p 8022:8022`, `-p 8069:8069/udp` and so on. Passive FTP
@@ -154,7 +166,8 @@ msiexec /x go-fs-<version>-x64.msi /qn
 | `C:\ProgramData\go-fs\logs\go-fs.log` | the log, rotated at 10 MiB, five old files kept |
 
 The service `go-fs` runs as LocalSystem. It starts with Windows and is restarted
-if it crashes. `C:\ProgramData\go-fs` is readable by SYSTEM and the
+if it crashes. The msi ships no configuration: the service writes the starter
+configuration, serving the folders above, at its first start. `C:\ProgramData\go-fs` is readable by SYSTEM and the
 Administrators only, because the configuration holds every password and key. An
 uninstall removes the binary and the service, and keeps everything in
 `C:\ProgramData\go-fs`. The firewall stays closed unless `FIREWALL=1` is
@@ -176,16 +189,19 @@ msi when it is downloaded.
 ## Run
 
 ```shell
-go-fs -init /etc/go-fs.toml     # write a documented starter configuration
-$EDITOR /etc/go-fs.toml         # set the folders and the accounts
+go-fs -config /etc/go-fs.toml          # the first start writes the starter configuration
+$EDITOR /etc/go-fs.toml                # set the folders and the accounts
 go-fs -config /etc/go-fs.toml -check   # report configuration problems
-go-fs -config /etc/go-fs.toml
 ```
+
+A start that finds no file at `-config` writes the documented starter
+configuration there, readable by its owner only, makes the folder it is in
+when there is none, and serves from it. A file that is there is never
+overwritten. `-check` only reads, so it fails on a file that is not there.
 
 | Flag | Meaning |
 |---|---|
-| `-config <path>` | configuration file, `go-fs.toml` by default |
-| `-init <path>` | write a documented starter configuration and exit |
+| `-config <path>` | configuration file, `go-fs.toml` by default; written as the starter configuration when there is none |
 | `-check` | load the configuration, report problems and exit |
 | `-logfile <path>` | write the log to this file, rotated at 10 MiB with five old files kept; what the Windows service uses. Started from a command line, go-fs writes to standard output as well |
 | `-persistent-data <path>` | file go-fs keeps what it remembers across a restart in, such as share links and playback progress; by default beside the configuration file and named like it, `go-fs.toml` keeping its data in `go-fs.db` |

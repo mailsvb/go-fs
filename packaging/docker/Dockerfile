@@ -1,8 +1,8 @@
 # The container image of go-fs, for linux/amd64, built by make docker from
 # build/pkg/docker, which make docker-inputs fills: the binary built with
-# -X main.packaging=docker, the configuration the image starts with, the
-# entrypoint and the licence. The release workflow pushes it to
-# ghcr.io/mailsvb/go-fs.
+# -X main.packaging=docker, which writes the image's starter configuration
+# into /etc/go-fs at the first start, the entrypoint and the licence. The
+# release workflow pushes it to ghcr.io/mailsvb/go-fs.
 #
 # Besides go-fs it carries only what Fetch runs: yt-dlp, the ffmpeg and
 # ffprobe it merges and converts with, and deno, which yt-dlp solves the
@@ -40,16 +40,18 @@ RUN set -eu; \
 
 COPY go-fs /usr/bin/go-fs
 COPY entrypoint.sh /usr/bin/go-fs-entrypoint
-COPY go-fs.toml /usr/share/go-fs/go-fs.toml
 COPY LICENSE /usr/share/licenses/go-fs/LICENSE
 
 # The modes are set here rather than by COPY --chmod, which the classic
 # builder lacks. The folders of the configuration and of what is served are
 # owned by the account go-fs runs as. go-fs writes into its configuration
 # file by renaming a new one over it, so the whole folder is a volume, not
-# the file.
+# the file. A named volume is filled from these folders, owner and modes
+# included, so it belongs to 10001 too: a container started with --user as
+# another UID needs the volume handed to that UID once, or folders of the
+# host that UID owns. The entrypoint says so and prints the command.
 RUN chmod 0755 /usr/bin/go-fs /usr/bin/go-fs-entrypoint \
- && chmod 0644 /usr/share/go-fs/go-fs.toml /usr/share/licenses/go-fs/LICENSE \
+ && chmod 0644 /usr/share/licenses/go-fs/LICENSE \
  && install -d -o go-fs -g go-fs -m 0750 /etc/go-fs \
  && install -d -o go-fs -g go-fs -m 0750 /var/lib/go-fs \
  && for dir in files registry disks; do install -d -o go-fs -g go-fs -m 0750 /var/lib/go-fs/$dir; done \

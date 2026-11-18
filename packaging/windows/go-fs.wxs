@@ -6,14 +6,16 @@
 
     wix build packaging/windows/go-fs.wxs -arch x64 -ext WixToolset.Util.wixext
       -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext -d Version=0.10.0
-      -d Bin=build/pkg/go-fs_windows_amd64.exe -d Config=build/pkg/go-fs.windows.toml
+      -d Bin=build/pkg/go-fs_windows_amd64.exe
       -o dist/go-fs-0.10.0-x64.msi
 
-  Bin is the binary built with -X main.packaging=msi, and Config the template
+  Bin is the binary built with -X main.packaging=msi, which make msi-inputs
+  builds. The msi ships no configuration: the service, started by the
+  install, writes the starter configuration of the msi at its first start,
   serving C:\ProgramData\go-fs\files, with its container registry in
   C:\ProgramData\go-fs\registry, its uploads staged in
   C:\ProgramData\go-fs\temp and what is deleted kept in
-  C:\ProgramData\go-fs\trash; make msi-inputs builds both.
+  C:\ProgramData\go-fs\trash.
 
   The same file builds the msi of go-fs-light, given -d Product=go-fs-light
   and the light binary as Bin:
@@ -156,7 +158,6 @@
       <ComponentRef Id="TempFolder" />
       <ComponentRef Id="TrashFolder" />
       <ComponentRef Id="LogFolder" />
-      <ComponentRef Id="Configuration" />
       <ComponentRef Id="Firewall" />
     </Feature>
 
@@ -224,11 +225,9 @@
       <CreateFolder />
     </Component>
 
-    <!-- installed once and then left alone: an update never overwrites it,
-         however it was changed, and an uninstall keeps it -->
-    <Component Id="Configuration" Directory="DATAFOLDER" NeverOverwrite="yes" Permanent="yes">
-      <File Id="ConfigFile" Name="go-fs.toml" Source="$(Config)" KeyPath="yes" />
-    </Component>
+    <!-- The configuration is not installed but written by go-fs at its first
+         start, and so kept by an uninstall. Releases up to 0.19 installed
+         it as a permanent component, which an upgrade leaves in place. -->
 
     <Component Id="Firewall" Directory="INSTALLFOLDER" Guid="03E65786-3A1A-471B-B8B3-43024753353C" Condition="FIREWALL = 1">
       <RegistryValue Root="HKLM" Key="Software\go-fs" Name="Firewall" Type="integer" Value="1" KeyPath="yes" />

@@ -4,7 +4,8 @@
 # SERVES, what the product serves. The files are relative to the repository
 # root, where make runs nfpm, and make puts them in build/pkg/linux for each
 # product and architecture in turn: the binary built with
-# -X main.packaging=rpm, and the template serving /var/lib/go-fs/files.
+# -X main.packaging=rpm, which writes the starter configuration, serving
+# /var/lib/go-fs/files, at its first start.
 #
 # Both products install the same files, the service and the folders, so they
 # conflict: one is swapped for the other by removing it first.
@@ -38,20 +39,24 @@ contents:
     file_info:
       mode: 0644
 
-  # go-fs writes into its configuration file, the generated secrets at the
-  # first start and every change made in the admin interface, by writing a
-  # file beside it and renaming that over it: the folder is the service's
-  # too. noreplace keeps the file as it is on an upgrade, and puts the new
-  # template beside it as go-fs.toml.rpmnew.
+  # go-fs writes its configuration file itself, the starter at the first
+  # start, then the generated secrets and every change made in the admin
+  # interface, by writing a file beside it and renaming that over it: the
+  # folder is the service's too.
   - dst: /etc/go-fs
     type: dir
     file_info:
       mode: 0750
       owner: go-fs
       group: go-fs
-  - src: build/pkg/linux/go-fs.toml
-    dst: /etc/go-fs/go-fs.toml
-    type: config|noreplace
+  # The package ships no configuration, but still owns the file as a ghost:
+  # releases up to 0.19 shipped it as a config file, and rpm moves a changed
+  # config file the new package no longer lists out of the way, as
+  # go-fs.toml.rpmsave, on the upgrade, which would leave go-fs to start
+  # over from the starter. rpm removes a ghost with the package, so
+  # preremove keeps it as go-fs.toml.rpmsave first.
+  - dst: /etc/go-fs/go-fs.toml
+    type: ghost
     file_info:
       mode: 0600
       owner: go-fs

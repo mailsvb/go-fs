@@ -125,7 +125,6 @@ jobs:
           path: |
             build/pkg/go-fs_windows_amd64.exe
             build/pkg/go-fs-light_windows_amd64.exe
-            build/pkg/go-fs.windows.toml
           if-no-files-found: error
 
   # The WiX Toolset builds an msi on Windows alone. Version 5 is the last one
@@ -171,7 +170,6 @@ jobs:
               -d Product=$product `
               -d Version=${{ inputs.version }} `
               -d Bin="$PWD\build\pkg\${product}_windows_amd64.exe" `
-              -d Config="$PWD\build\pkg\go-fs.windows.toml" `
               -o dist/$product-${{ inputs.version }}-x64.msi
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
@@ -306,7 +304,35 @@ jobs:
           curl -fsS -o /dev/null -u admin:admin http://127.0.0.1:8080/
           grep -q 'go-fs starting' <<<"$logs"
           grep -qE 'installer"?[=:]"?docker' <<<"$logs"
+          # the image ships no configuration: go-fs wrote the image's starter
+          grep -q 'wrote the starter configuration' <<<"$logs"
           docker rm -f go-fs-test
+          # with --user as another UID, a named volume, which belongs to 10001
+          # as the image's folder does, is refused with the command that
+          # hands it over; once handed over, go-fs starts as that UID
+          docker volume create go-fs-test-config
+          docker volume create go-fs-test-data
+          if out=$(docker run --rm --user 1000:1000 -v go-fs-test-config:/etc/go-fs go-fs:test 2>&1); then
+            echo "$out"; echo "started on a volume it cannot write"; exit 1
+          fi
+          echo "$out"
+          grep -qF "touch /etc/go-fs/.keep && chown -R 1000:1000 /etc/go-fs" <<<"$out"
+          # the command the message gives, which also has to last over an
+          # empty volume, as the configuration's still is
+          docker run --rm --user 0 -v go-fs-test-config:/etc/go-fs --entrypoint sh \
+            go-fs:test -c 'touch /etc/go-fs/.keep && chown -R 1000:1000 /etc/go-fs'
+          docker run --rm --user 0 -v go-fs-test-data:/var/lib/go-fs --entrypoint sh \
+            go-fs:test -c 'touch /var/lib/go-fs/.keep && chown -R 1000:1000 /var/lib/go-fs'
+          docker run -d --name go-fs-test --user 1000:1000 -p 127.0.0.1:8080:8080 \
+            -v go-fs-test-config:/etc/go-fs -v go-fs-test-data:/var/lib/go-fs go-fs:test
+          for _ in $(seq 30); do
+            curl -sS -o /dev/null http://127.0.0.1:8080/ && break
+            sleep 1
+          done
+          docker logs go-fs-test 2>&1
+          test "$(curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/)" = 401
+          docker rm -f go-fs-test
+          docker volume rm go-fs-test-config go-fs-test-data
           docker run --rm --entrypoint ffmpeg go-fs:test -version | sed -n 1p
           docker run --rm --entrypoint ffprobe go-fs:test -version | sed -n 1p
           docker run --rm --entrypoint deno go-fs:test --version | sed -n 1p

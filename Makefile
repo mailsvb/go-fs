@@ -8,10 +8,6 @@ DIST    := dist
 LIGHT      := $(BINARY)-light
 LIGHT_TAGS := light
 
-# The documented starter configuration, the same file the binary embeds and
-# -init writes; the installers ship it adjusted to their platform.
-TEMPLATE := internal/config/template.toml
-
 # VERSION is the released version and lives in ./VERSION so it is bumped in one
 # place. Override it on the command line for a one off build, e.g. from CI:
 #   make release VERSION=1.0
@@ -53,38 +49,12 @@ define crosscompile
 endef
 
 # The installers ship binaries of their own, stamped with the installer that
-# owns them so that they leave updating to it, and a configuration that serves
-# from a folder of the platform. They are built into PKG; the packages
-# themselves land in DIST beside the release binaries.
+# owns them so that they leave updating to it and, at the first start, write
+# the starter configuration of that installer, which serves from a folder of
+# the platform. They are built into PKG; the packages themselves land in DIST
+# beside the release binaries.
 PKG  := build/pkg
 NFPM := go run github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
-# the baseFolderFiles line of the template, and what it says for each
-# installer. The template already names the folders the rpm makes, so the
-# Linux lines say what it says; they are rewritten all the same so that the
-# rpm does not depend on the template keeping them.
-TEMPLATE_BASEFOLDER := baseFolderFiles = "/var/lib/go-fs/files"
-LINUX_BASEFOLDER    := baseFolderFiles = "/var/lib/go-fs/files"
-WINDOWS_BASEFOLDER  := baseFolderFiles = "C:/ProgramData/go-fs/files"
-# the baseFolderRegistry line of the template, and what it says for each
-# installer: the folder registry beside the served folder
-TEMPLATE_REGISTRY := baseFolderRegistry = "/var/lib/go-fs/registry"
-LINUX_REGISTRY    := baseFolderRegistry = "/var/lib/go-fs/registry"
-WINDOWS_REGISTRY  := baseFolderRegistry = "C:/ProgramData/go-fs/registry"
-# the baseFolderTemp line of the template, and what it says for each
-# installer: the folder temp beside the served folder
-TEMPLATE_TEMP := baseFolderTemp = "/var/lib/go-fs/temp"
-LINUX_TEMP    := baseFolderTemp = "/var/lib/go-fs/temp"
-WINDOWS_TEMP  := baseFolderTemp = "C:/ProgramData/go-fs/temp"
-# the baseFolderTrash line of the template, and what it says for each
-# installer: the folder trash beside the served folder
-TEMPLATE_TRASH := baseFolderTrash = "/var/lib/go-fs/trash"
-LINUX_TRASH    := baseFolderTrash = "/var/lib/go-fs/trash"
-WINDOWS_TRASH  := baseFolderTrash = "C:/ProgramData/go-fs/trash"
-# the baseFolderDisks line of the template, and what it says for each
-# installer: the folder disks beside the served folder
-TEMPLATE_DISKS := baseFolderDisks = "/var/lib/go-fs/disks"
-LINUX_DISKS    := baseFolderDisks = "/var/lib/go-fs/disks"
-WINDOWS_DISKS  := baseFolderDisks = "C:/ProgramData/go-fs/disks"
 
 .PHONY: all build test race cover fuzz vet fmt lint clean release sign checksums version \
 	packages rpm msi-inputs docker-inputs docker viewer-deps viewer-update
@@ -192,31 +162,6 @@ checksums:
 packages: rpm msi-inputs
 	@$(MAKE) --no-print-directory checksums
 
-# installerconfig writes the template with its baseFolderFiles line replaced
-# by the first argument, its baseFolderRegistry line by the third, its
-# baseFolderTemp line by the fourth, its baseFolderTrash line by the fifth and
-# its baseFolderDisks line by the sixth, and fails when the template no longer
-# has those lines to replace.
-define installerconfig
-	@mkdir -p $(dir $(2))
-	@grep -qxF '$(TEMPLATE_BASEFOLDER)' $(TEMPLATE) || \
-		(echo "$(TEMPLATE) has no line $(TEMPLATE_BASEFOLDER)"; exit 1)
-	@grep -qxF '$(TEMPLATE_REGISTRY)' $(TEMPLATE) || \
-		(echo "$(TEMPLATE) has no line $(TEMPLATE_REGISTRY)"; exit 1)
-	@grep -qxF '$(TEMPLATE_TEMP)' $(TEMPLATE) || \
-		(echo "$(TEMPLATE) has no line $(TEMPLATE_TEMP)"; exit 1)
-	@grep -qxF '$(TEMPLATE_TRASH)' $(TEMPLATE) || \
-		(echo "$(TEMPLATE) has no line $(TEMPLATE_TRASH)"; exit 1)
-	@grep -qxF '$(TEMPLATE_DISKS)' $(TEMPLATE) || \
-		(echo "$(TEMPLATE) has no line $(TEMPLATE_DISKS)"; exit 1)
-	@sed -e 's|^$(TEMPLATE_BASEFOLDER)$$|$(1)|' \
-		-e 's|^$(TEMPLATE_REGISTRY)$$|$(3)|' \
-		-e 's|^$(TEMPLATE_TEMP)$$|$(4)|' \
-		-e 's|^$(TEMPLATE_TRASH)$$|$(5)|' \
-		-e 's|^$(TEMPLATE_DISKS)$$|$(6)|' $(TEMPLATE) > $(2)
-	@echo "wrote $(2)"
-endef
-
 # what the rpm of each product serves, the first line of its description and
 # so its summary
 RPM_SERVES       := FTP, FTPS, SFTP, HTTP, HTTPS, an S3 compatible API, TFTP and NBD
@@ -229,8 +174,7 @@ RPM_LIGHT_SERVES := HTTP, HTTPS, an S3 compatible API and an OCI registry
 # SIGNING_KEY_FILE naming an armored PGP private key, and NFPM_RPM_PASSPHRASE
 # unlocking it, the rpms are signed, as the package repository needs them to be.
 rpm: viewer-deps
-	$(call installerconfig,$(LINUX_BASEFOLDER),$(PKG)/linux/go-fs.toml,$(LINUX_REGISTRY),$(LINUX_TEMP),$(LINUX_TRASH),$(LINUX_DISKS))
-	@mkdir -p $(DIST)
+	@mkdir -p $(PKG)/linux $(DIST)
 	@for product in $(BINARY) $(LIGHT); do \
 		if [ "$$product" = "$(LIGHT)" ]; then \
 			conflicts=$(BINARY); serves="$(RPM_LIGHT_SERVES)"; \
@@ -248,9 +192,9 @@ rpm: viewer-deps
 		done; \
 	done
 
-# both msi install the same configuration, each its own product's binary
+# both msi install the same folders, each its own product's binary
 msi-inputs: viewer-deps
-	$(call installerconfig,$(WINDOWS_BASEFOLDER),$(PKG)/go-fs.windows.toml,$(WINDOWS_REGISTRY),$(WINDOWS_TEMP),$(WINDOWS_TRASH),$(WINDOWS_DISKS))
+	@mkdir -p $(PKG)
 	@for product in $(BINARY) $(LIGHT); do \
 		for arch in amd64; do \
 			bin=$(PKG)/$${product}_windows_$$arch.exe; \
@@ -262,18 +206,12 @@ msi-inputs: viewer-deps
 
 # What packaging/docker/Dockerfile builds the container image from, and all it
 # sees: the linux/amd64 binary stamped as the image's, so that it leaves
-# updating to a newer image, the configuration of the rpm with every server
-# listening on all interfaces, since a published port does not reach
-# 127.0.0.1 inside the container, the entrypoint and the licence.
-DOCKER     := $(PKG)/docker
-LOOPBACK   := address = "127.0.0.1"
-ALL_IFACES := address = ""
+# updating to a newer image and writes the image's starter configuration, with
+# every server listening on all interfaces, the entrypoint and the licence.
+DOCKER := $(PKG)/docker
 
 docker-inputs: viewer-deps
-	$(call installerconfig,$(LINUX_BASEFOLDER),$(DOCKER)/go-fs.toml,$(LINUX_REGISTRY),$(LINUX_TEMP),$(LINUX_TRASH),$(LINUX_DISKS))
-	@grep -qxF '$(LOOPBACK)' $(DOCKER)/go-fs.toml || \
-		(echo "$(TEMPLATE) has no line $(LOOPBACK)"; exit 1)
-	@sed -i.bak 's|^$(LOOPBACK)$$|$(ALL_IFACES)|' $(DOCKER)/go-fs.toml && rm -f $(DOCKER)/go-fs.toml.bak
+	@mkdir -p $(DOCKER)
 	@echo "building $(DOCKER)/$(BINARY)"
 	@GOOS=linux GOARCH=amd64 $(BUILDENV) go build $(GOFLAGS) \
 		-ldflags "-s -w -X main.version=$(VERSION) -X main.packaging=docker" \

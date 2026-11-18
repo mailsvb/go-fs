@@ -175,8 +175,10 @@ An account is checked again on every request, so a browser session or a live
 connection never outlives the rights it was granted by more than the request it
 is in.
 
-`go-fs.example.toml` is the fully commented version, and the same file
-`-init` writes.
+`go-fs.example.toml` is the fully commented version, and the same file go-fs
+writes when it starts without one. An installer's build adjusts it to its
+platform: the msi serves from `C:/ProgramData/go-fs`, and the container image
+listens on all interfaces.
 
 ## Accounts
 
@@ -306,7 +308,8 @@ Three things to know about it:
 
 * **Apply rewrites the file through the TOML writer.** Every key is written out
   explicitly and the comments are lost. The previous file is kept beside it as
-  `go-fs.toml.bak`, and the fully commented original is always `-init` away.
+  `go-fs.toml.bak`, and the fully commented original is `go-fs.example.toml`,
+or what go-fs writes when it starts without a configuration file.
 * **It is as exposed as the HTTP server is.** The page shows and edits every
   password in the file, so serve it over `[https]`: with `http.enabled = true`
   on an address other than the loopback one, the admin session and every

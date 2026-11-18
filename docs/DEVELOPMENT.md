@@ -26,8 +26,8 @@ platform Go supports builds with a plain `GOOS=… GOARCH=… go build .`.
 `make docker` builds the container image from `packaging/docker/Dockerfile`.
 `make docker-inputs` first puts all the build sees into `build/pkg/docker`: the
 linux/amd64 binary stamped `-X main.packaging=docker`, which refuses to update
-itself over HTTP, the starter configuration listening on all interfaces, the
-entrypoint and the licence. The Dockerfile adds Alpine's ffmpeg, ffprobe and
+itself over HTTP and writes the starter configuration of the image, every
+server listening on all interfaces, the entrypoint and the licence. The Dockerfile adds Alpine's ffmpeg, ffprobe and
 deno and the standalone yt-dlp, checked against the checksums of its release;
 `--build-arg YTDLP_VERSION=` picks another one. The release workflow builds the
 image after publishing the release, with the latest yt-dlp, starts it once to
@@ -87,7 +87,8 @@ it. The two build targets stamp it differently:
 Both cross compile the same binaries, go-fs and go-fs-light for each platform, into `dist/`, with checksums, after
 emptying it. `make build` appends `-dev-<YYYYmmdd-HHMMSS>`, so a locally built
 binary always says when it was built and can never be mistaken for a release.
-`go-fs -init` writes the documented starter configuration next to one.
+Started without a configuration file, one writes the documented starter
+configuration and serves from it.
 
 With the signing keys in `GOFS_SIGNING_KEY` and `GOFS_LIGHT_SIGNING_KEY`,
 `make release` writes a signed `dist/go-fs_1.0.0_linux_amd64.update` for each

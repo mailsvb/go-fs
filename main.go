@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -88,8 +89,8 @@ func main() {
 // Windows service manager when it stops the service, and nil otherwise.
 func run(stop <-chan struct{}) error {
 	var (
-		configPath  = flag.String("config", "go-fs.toml", "path of the configuration file")
-		initPath    = flag.String("init", "", "write a documented starter configuration to this path and exit")
+		configPath = flag.String("config", "go-fs.toml", "path of the configuration file; "+
+			"written as the documented starter configuration when there is none")
 		checkOnly   = flag.Bool("check", false, "load the configuration, report problems and exit")
 		showVersion = flag.Bool("version", false, "print the version and exit")
 		logFile     = flag.String("logfile", "", "write the log to this file, rotated by size; from a command line to standard output as well")
@@ -102,17 +103,6 @@ func run(stop <-chan struct{}) error {
 	if *showVersion {
 		fmt.Println(selfupdate.Product, currentVersion())
 		fmt.Println("features:", featureList())
-		return nil
-	}
-
-	if *initPath != "" {
-		if _, err := os.Stat(*initPath); err == nil {
-			return fmt.Errorf("%s already exists", *initPath)
-		}
-		if err := os.WriteFile(*initPath, config.Template(), 0o600); err != nil {
-			return err
-		}
-		fmt.Println("wrote", *initPath)
 		return nil
 	}
 
@@ -130,6 +120,19 @@ func run(stop <-chan struct{}) error {
 			// manager: the log goes to the terminal as well, which is
 			// where whoever started it looks
 			output, errorOutput = io.MultiWriter(file, os.Stdout), io.MultiWriter(file, os.Stderr)
+		}
+	}
+
+	// a first start finds no configuration file, and is given the documented
+	// starter of the installer this build is made for, which it then serves
+	// from; a check only reads, so it never writes one
+	var wroteStarter bool
+	if _, err := os.Stat(*configPath); errors.Is(err, fs.ErrNotExist) {
+		if *checkOnly {
+			return fmt.Errorf("%s does not exist; go-fs writes the starter configuration there when it starts", *configPath)
+		}
+		if wroteStarter, err = config.WriteStarter(*configPath, packaging); err != nil {
+			return fmt.Errorf("cannot write the starter configuration to %s: %w", *configPath, err)
 		}
 	}
 
@@ -173,6 +176,9 @@ func run(stop <-chan struct{}) error {
 	logger.Debug("configuration in effect", "config", cfg)
 	// the file was read before there was a logger to trace it, and so were
 	// the programs of general.tools probed; later probes are traced
+	if wroteStarter {
+		logger.Info("wrote the starter configuration", "path", *configPath, "installer", packaging)
+	}
 	logging.Summary(logger.Logger, "read", *configPath)
 	config.TraceProbes(logger.Logger)
 	traceService(logger.Logger)

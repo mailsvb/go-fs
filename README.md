@@ -59,13 +59,14 @@ docker run -d -p 127.0.0.1:8080:8080 -v go-fs-config:/etc/go-fs ghcr.io/mailsvb/
 ## Run it
 
 ```sh
-go-fs -init go-fs.toml     # write the documented starter configuration
+go-fs                      # writes go-fs.toml at the first start → http://127.0.0.1:8080/?go-fs=admin
 $EDITOR go-fs.toml         # set the folders and the accounts
 go-fs -check               # report problems in it
-go-fs                      # → http://127.0.0.1:8080/?go-fs=admin
 ```
 
-The starter configuration serves HTTP alone, on `127.0.0.1:8080`, from
+A first start that finds no configuration file writes the documented starter
+configuration there, `go-fs.toml` beside it unless `-config` names another,
+and serves from it. The starter configuration serves HTTP alone, on `127.0.0.1:8080`, from
 folders under `/var/lib/go-fs`. Point them at a folder the account running
 go-fs may write to, then switch on more servers and add accounts in the file
 or on the admin page. Every key is explained in
