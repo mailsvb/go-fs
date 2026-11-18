@@ -12,6 +12,8 @@ import (
 
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/mailsvb/go-fs/internal/config"
 )
 
 // pageRequest asks for a path the way the page's browser does: as a browser,
@@ -283,16 +285,25 @@ func TestRegistryPageTakesARegistrySessionWithoutAnonymousRead(t *testing.T) {
 		t.Error("the logout does not return to the registry")
 	}
 
-	// that session is still nobody to the files, and not dropped by them
-	res, _ = pageRequest(t, server, http.MethodGet, "/private/secret.txt", session)
-	if res.StatusCode == http.StatusOK {
-		t.Error("a registry-only session read a protected file")
+	// that session is still nobody to the files, and not dropped by them: a
+	// browser is sent to the registry page from a protected file and a
+	// public folder alike
+	for _, path := range []string{"/private/secret.txt", "/"} {
+		res, _ = pageRequest(t, server, http.MethodGet, path, session)
+		if res.StatusCode != http.StatusSeeOther {
+			t.Errorf("a registry-only session asking for %s got %d", path, res.StatusCode)
+		}
+		if to, _ := url.Parse(res.Header.Get("Location")); to == nil ||
+			to.Query().Get(sessionParam) != actionRegistry || to.Path != path {
+			t.Errorf("%s sent the registry-only session to %s", path, res.Header.Get("Location"))
+		}
+		if cookie := cookieNamed(res, sessionCookie); res.Header.Get("Set-Cookie") != "" && cookie == nil {
+			t.Error("the files signed the registry account out")
+		}
 	}
-	if cookie := cookieNamed(res, sessionCookie); res.Header.Get("Set-Cookie") != "" && cookie == nil {
-		t.Error("the files signed the registry account out")
-	}
-	if _, listing := pageRequest(t, server, http.MethodGet, "/", session); !strings.Contains(listing, "Log out ci<") {
-		t.Error("the listing does not say the registry account is signed in")
+	// a program carrying the cookie is not redirected, and reads nothing
+	if res := withSession(t, server, http.MethodGet, "/private/secret.txt", session); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a registry-only session read a protected file without a browser: %d", res.StatusCode)
 	}
 
 	// an http account without registry is asked to log in as someone else
@@ -489,5 +500,77 @@ func TestCleanURLReturnsToTheRegistry(t *testing.T) {
 	plain, _ := url.Parse("/team/?go-fs=login&sort=name")
 	if got := cleanURL(plain); got != "/team/?sort=name" {
 		t.Errorf("cleanURL = %s", got)
+	}
+}
+
+func TestRegistryOnlyAccountLandsOnTheRegistryPage(t *testing.T) {
+	server := importServer(t, func(cfg *httpConfig) { cfg.RegistryAnonymousRead = false })
+	server.write(t, "docs/readme.txt", "files")
+
+	// logging in from a folder, as the form a protected folder sends the
+	// browser to does, lands on the registry page of that folder
+	res := postLogin(t, server, "/docs/", pusher, pusherPassword)
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("login answered %d", res.StatusCode)
+	}
+	to, _ := url.Parse(res.Header.Get("Location"))
+	if to.Path != "/docs/" || to.Query().Get(sessionParam) != actionRegistry {
+		t.Fatalf("after the login the browser is sent to %s", to)
+	}
+	session := cookieNamed(res, sessionCookie)
+	if session == nil {
+		t.Fatal("no session")
+	}
+
+	// the menu there holds the logout and nothing else
+	res, body := pageRequest(t, server, http.MethodGet, to.String(), session)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("the registry page answered %d", res.StatusCode)
+	}
+	if !strings.Contains(body, "Log out ci<") {
+		t.Error("the menu has no logout")
+	}
+	for _, unwanted := range []string{"</svg>Files</a>", "</svg>Log in", "</svg>Registry</a>"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("the menu of a registry-only account offers %s", unwanted)
+		}
+	}
+
+	// the login page, which the admin interface and the Trash send a
+	// browser to, sends this session on to the registry page as well
+	res, _ = pageRequest(t, server, http.MethodGet, "/docs/?go-fs=login", session)
+	if to, _ := url.Parse(res.Header.Get("Location")); res.StatusCode != http.StatusSeeOther ||
+		to.Query().Get(sessionParam) != actionRegistry {
+		t.Errorf("the login page answered a registry-only session %d, to %s", res.StatusCode, res.Header.Get("Location"))
+	}
+
+	// an account that sets http as well keeps the files and its Files link
+	both := login(t, server, "/docs/", "both", "pw")
+	if res, _ := pageRequest(t, server, http.MethodGet, "/docs/", both); res.StatusCode != http.StatusOK {
+		t.Errorf("an account that sets http and registry got %d for a folder", res.StatusCode)
+	}
+	if _, body := pageRequest(t, server, http.MethodGet, "/docs/?go-fs=registry", both); !strings.Contains(body, "</svg>Files</a>") {
+		t.Error("an account that sets http has no Files link on the registry page")
+	}
+}
+
+func TestRegistryOnlyServerSendsBrowsersToTheLogin(t *testing.T) {
+	server := newRegistryServer(t, func(cfg *httpConfig) {
+		cfg.Users = []config.User{registryUser(pusher, pusherPassword)}
+		cfg.PathsWithoutAuth = nil
+		cfg.RegistryAnonymousRead = false
+	})
+	res, _ := pageRequest(t, server, http.MethodGet, "/", nil)
+	if to, _ := url.Parse(res.Header.Get("Location")); res.StatusCode != http.StatusSeeOther ||
+		to.Query().Get(sessionParam) != actionLogin {
+		t.Fatalf("a browser got %d, to %s, want the login form", res.StatusCode, res.Header.Get("Location"))
+	}
+	if res.Header.Get("WWW-Authenticate") != "" {
+		t.Error("a browser was challenged")
+	}
+	res = postLogin(t, server, "/", pusher, pusherPassword)
+	if to, _ := url.Parse(res.Header.Get("Location")); res.StatusCode != http.StatusSeeOther ||
+		to.Query().Get(sessionParam) != actionRegistry {
+		t.Errorf("the login answered %d, to %s", res.StatusCode, res.Header.Get("Location"))
 	}
 }

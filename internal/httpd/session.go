@@ -126,9 +126,15 @@ func (s *Server) handleSession(set *settings, w http.ResponseWriter, r *http.Req
 	// logging out is never a GET: browsers prefetch links, and a prefetched
 	// logout signs people out for reading a page
 	if action == actionLogin && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
-		if cred := s.identify(set, w, r); cred.token ||
-			(returnsToRegistry(r.URL) && s.registrySession(set, r) != nil) {
+		cred := s.identify(set, w, r)
+		if cred.token || (returnsToRegistry(r.URL) && s.registrySession(set, r) != nil) {
 			http.Redirect(w, r, cleanURL(r.URL), http.StatusSeeOther)
+			return
+		}
+		// a registry-only session sent here from a page it may not see, the
+		// admin interface or the Trash, say, goes to the one it may
+		if s.registryOnly(set, r, cred) != nil {
+			http.Redirect(w, r, registryURL(r.URL), http.StatusSeeOther)
 			return
 		}
 		// a locked address is sent here by refuseLocked, so the page says why
@@ -186,6 +192,12 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 	if err := s.setSession(set, w, r, user); err != nil {
 		s.logFor(r).Error("http cannot create a session token", "error", err)
 		http.Error(w, "Server Error", http.StatusInternalServerError)
+		return
+	}
+	// a registry-only account has nothing in the files to come back to, so
+	// a login from anywhere but the registry page lands on it
+	if !returnsToRegistry(r.URL) && accountNamed(set.accounts, user.name) == nil {
+		http.Redirect(w, r, registryURL(r.URL), http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, cleanURL(r.URL), http.StatusSeeOther)

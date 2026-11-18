@@ -153,6 +153,11 @@ func (s *Server) authenticate(set *settings, w http.ResponseWriter, r *http.Requ
 		s.refuseBearer(set, w)
 		return credential{}, false
 	}
+	// a registry-only account sees nothing of the files, public ones
+	// included: its browser is sent to the registry page
+	if s.toRegistryPage(set, w, r, cred) {
+		return credential{}, false
+	}
 	if !s.needsAuth(set, method, virtual) {
 		s.logFor(r).Debug("http request needs no account", "path", virtual,
 			"credentials", cred.method, "address", clientAddress(set, r))
@@ -354,7 +359,9 @@ func (s *Server) checkToken(set *settings, w http.ResponseWriter, r *http.Reques
 // makes that header mandatory on a 401, which is why the answer is a redirect
 // to a page that comes back 200 rather than a 401 carrying HTML.
 func (s *Server) refuse(set *settings, w http.ResponseWriter, r *http.Request, stale bool) {
-	if !browserRequest(r) || !canLogIn(set) {
+	// an account of the registry may use the form too, and lands on the
+	// registry page once it has
+	if !browserRequest(r) || (!canLogIn(set) && !canLogInToRegistry(set)) {
 		s.challenge(set, w, r, stale)
 		return
 	}

@@ -119,6 +119,36 @@ func (s *Server) registrySession(set *settings, r *http.Request) *account {
 	return s.registryClaims(set, claims)
 }
 
+// registryOnly is the account of the registry a browser is signed in as when
+// that account does not set http: a session the file tree does not know, of
+// someone for whom the registry page is the only page there is. A request
+// that identified itself with a header, or as an http account, is nobody's
+// here.
+func (s *Server) registryOnly(set *settings, r *http.Request, cred credential) *account {
+	if cred.user != nil || cred.method != "token" {
+		return nil
+	}
+	return s.registrySession(set, r)
+}
+
+// toRegistryPage sends a browser that is signed in as a registry-only account
+// and asks for a page of the files to the registry page instead, which is the
+// one it can use. It reports whether it did.
+func (s *Server) toRegistryPage(set *settings, w http.ResponseWriter, r *http.Request, cred credential) bool {
+	if !browserRequest(r) || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return false
+	}
+	user := s.registryOnly(set, r, cred)
+	if user == nil {
+		return false
+	}
+	s.logFor(r).Debug("http registry-only session sent to the registry page", "user", user.name,
+		"path", r.URL.Path, "address", clientAddress(set, r))
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, registryURL(r.URL), http.StatusSeeOther)
+	return true
+}
+
 // offersRegistry decides whether a page carries the Registry button. It is
 // left off only where pressing it could not help: the registry is off, or
 // someone is signed in whom the registry refuses.
@@ -621,8 +651,14 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Server Error", http.StatusInternalServerError)
 		return
 	}
-	who := s.sessionViewFor(set, r, s.identify(set, w, r))
-	who.Page, who.Files, who.Registry = "Registry", base, ""
+	cred := s.identify(set, w, r)
+	who := s.sessionViewFor(set, r, cred)
+	who.Page, who.Registry = "Registry", ""
+	// a registry-only account has no files to go back to: its menu holds
+	// nothing but the logout
+	if s.registryOnly(set, r, cred) == nil {
+		who.Files = base
+	}
 	listView, treeView := view, view
 	listView.tree, listView.path = false, ""
 	treeView.tree, treeView.path = true, ""

@@ -177,8 +177,12 @@ removed when it ends.
 
 Who may see the page follows who may pull. With
 `http.registryAnonymousRead = false` a visitor is sent to the login page
-first. The form then also accepts accounts that set only `registry`; their
-session reaches the registry page and nothing in the file tree.
+first. The form accepts accounts that set only `registry` wherever it is
+reached, also on a server where no account sets `http`. Such an account lands
+on the registry page after logging in, and its session reaches nothing in the
+file tree: a browser that asks for a file or a folder, public ones included,
+is sent to the registry page instead, and its menu holds nothing but **Log
+out**.
 
 What is served:
 
