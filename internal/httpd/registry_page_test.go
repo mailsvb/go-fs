@@ -560,7 +560,13 @@ func TestRegistryOnlyServerSendsBrowsersToTheLogin(t *testing.T) {
 		cfg.PathsWithoutAuth = nil
 		cfg.RegistryAnonymousRead = false
 	})
+	// the main URL has only the registry to offer, so it goes there, and
+	// the registry page goes on to the login
 	res, _ := pageRequest(t, server, http.MethodGet, "/", nil)
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/?go-fs=registry" {
+		t.Fatalf("a browser got %d, to %s, want the registry page", res.StatusCode, res.Header.Get("Location"))
+	}
+	res, _ = pageRequest(t, server, http.MethodGet, res.Header.Get("Location"), nil)
 	if to, _ := url.Parse(res.Header.Get("Location")); res.StatusCode != http.StatusSeeOther ||
 		to.Query().Get(sessionParam) != actionLogin {
 		t.Fatalf("a browser got %d, to %s, want the login form", res.StatusCode, res.Header.Get("Location"))

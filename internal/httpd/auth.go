@@ -366,6 +366,11 @@ func (s *Server) refuse(set *settings, w http.ResponseWriter, r *http.Request, s
 		return
 	}
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		// the main URL asks which of the files and the registry to log in to
+		if homeRequest(r) {
+			s.home(set, w, r)
+			return
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, loginURL(r.URL), http.StatusSeeOther)
 		return

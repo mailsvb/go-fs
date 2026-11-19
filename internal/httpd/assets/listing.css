@@ -709,14 +709,31 @@ dl.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .layers li { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.1rem 0; }
 .layers li .meta { flex: none; }
 
-/* The login page: one card, centred, with nothing else on it. */
-.signin main { display: flex; justify-content: center; padding: 3rem 1rem; }
+/* The login page: one card, centred both ways, with nothing else on it. The
+   page at / that asks what to log in to has tiles of the card's size, side by
+   side, so the two pages are one after the other the same shape. */
+.signin {
+  --signin-w: 22rem;
+  /* just above what the login card needs without a message, so that the two
+     are the same height rather than the tiles a pixel short */
+  --signin-h: 19.1rem;
+  padding: 0;
+}
+.signin main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 1rem;
+}
 .card {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   width: 100%;
-  max-width: 22rem;
+  max-width: var(--signin-w);
+  min-height: var(--signin-h);
   padding: 1.25rem 1.4rem 1.4rem;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -770,6 +787,27 @@ dl.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+}
+.tiles { display: flex; justify-content: center; gap: 8px; width: 100%; }
+.card.tile {
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  width: var(--signin-w);
+  height: var(--signin-h);
+  color: var(--ink);
+  font-size: 1.25rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.tile .ic { font-size: 4rem; color: var(--accent); stroke-width: 1.2; }
+.tile:hover, .tile:focus-visible { border-color: var(--accent); color: var(--accent); }
+.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* a phone has no room for two cards side by side, so they stack, shorter */
+@media (max-width: 40rem) {
+  .tiles { flex-direction: column; align-items: center; }
+  .card.tile { width: 100%; height: auto; min-height: 10rem; }
 }
 
 @media (max-width: 40rem) {

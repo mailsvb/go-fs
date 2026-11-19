@@ -21,6 +21,16 @@ browser too old for it. A client that sends `X-Disable-Session` is treated as a
 program. Where the configuration has no HTTP account at all there is nobody to
 log in as, so there is no login page and a browser is challenged as a program is.
 
+The main URL `/` is where someone arrives who has not said what they came for.
+Where `/` needs an account and the browser is not signed in, it is not sent
+straight to the login for the files: it gets a page that offers **Files** and,
+while the [registry](REGISTRY.md) is on and someone may look at it,
+**Registry**, as two large tiles. Each leads to its own login, and the login
+returns to it. Where only one of them applies, the browser goes straight there.
+A browser that is signed in gets what it always did — the listing, or the
+registry page for an account that sets `registry` and not `http` — and so
+does a root that `pathsWithoutAuth` makes public, a query on `/`, and a program.
+
 The login and logout endpoints have no paths of their own: they are
 `?go-fs=login` and `?go-fs=logout` on the path being asked for. Every URL this
 server answers is a path in the served folder — which is also why the page's
