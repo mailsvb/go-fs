@@ -1245,32 +1245,34 @@ func TestServerAdmits(t *testing.T) {
 }
 
 // A file written before [http] had its tables still sets its keys directly
-// in [http]. Nothing moves them: they are not read, so the defaults apply, and
-// each is reported with the table it belongs in now.
-func TestTheFlatHTTPKeysAreRetired(t *testing.T) {
-	file := []byte("[http]\nport = 9000\nmaxConnections = 7\nloginAttempts = 2\nwebdav = true\n" +
-		"registryBaseFolder = \"/srv/registry\"\n")
+// in [http]. Until Migrate has moved them into their tables they are read from
+// there, in any case, so that the file loads as it did; a key its table sets
+// as well is read from the table. None of them is reported as retired.
+func TestTheFlatHTTPKeysAreRead(t *testing.T) {
+	file := []byte("[http]\nport = 9000\nmaxConnections = 7\nLoginAttempts = 2\nwebdav = true\n" +
+		"pathsWithoutAuth = [\n  \"^/public/\",\n]\nenableS3 = false\n" +
+		"registryBaseFolder = \"/srv/registry\"\n\n[http.services]\nenableS3 = true\n")
 	cfg, err := Parse(file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	def := Default().HTTP
-	if cfg.HTTP.Port != def.Port || cfg.HTTP.MaxConnections != def.MaxConnections ||
-		cfg.HTTP.LoginAttempts != def.LoginAttempts || cfg.HTTP.WebDAV != def.WebDAV {
-		t.Errorf("a flat key was read: %+v", cfg.HTTP)
+	if cfg.HTTP.Port != 9000 || cfg.HTTP.MaxConnections != 7 || cfg.HTTP.LoginAttempts != 2 || !cfg.HTTP.WebDAV ||
+		!slices.Equal(cfg.HTTP.PathsWithoutAuth, []string{"^/public/"}) {
+		t.Errorf("a flat key was not read: %+v", cfg.HTTP)
+	}
+	if !cfg.HTTP.EnableS3 {
+		t.Error("the flat enableS3 won over the one of [http.services]")
+	}
+	// the keys it does not set keep their defaults
+	if def := Default().HTTP; cfg.HTTP.Address != def.Address || cfg.HTTP.LoginLockout != def.LoginLockout {
+		t.Errorf("a key the file does not set lost its default: %+v", cfg.HTTP)
 	}
 	// the folder key is still moved by Migrate, as it was
 	if cfg.General.BaseFolderRegistry != "/srv/registry" {
 		t.Errorf("baseFolderRegistry = %q", cfg.General.BaseFolderRegistry)
 	}
-	want := []string{
-		"http.loginAttempts is ignored, use http.auth.loginAttempts",
-		"http.maxConnections is ignored, use http.connection.maxConnections",
-		"http.port is ignored, use http.main.port",
-		"http.webdav is ignored, use http.services.webdav",
-	}
-	if found := RetiredKeys(file); !slices.Equal(found, want) {
-		t.Errorf("RetiredKeys = %q, want %q", found, want)
+	if found := RetiredKeys(file); len(found) != 0 {
+		t.Errorf("RetiredKeys = %q", found)
 	}
 
 	// and the same keys in their tables are read, and reported by nobody

@@ -1288,7 +1288,129 @@ func Parse(data []byte) (Config, error) {
 	if cfg.General.BaseFolderTemp == "" {
 		cfg.General.BaseFolderTemp = old.HTTP.UploadStagingFolder
 	}
+	if err := readFlatHTTP(data, &cfg); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
+}
+
+// httpKey is a key of one of the tables of [http], which a file written before
+// [http] had its tables sets directly in [http].
+type httpKey struct {
+	// table is the name of its table, "main", and key its name in it, "port"
+	table, key string
+	// field is the name of its field, which HTTP and flatHTTP both promote
+	field string
+}
+
+// httpKeys are the keys of the tables of [http], table by table in the order
+// they are declared, made from the tables themselves so that they cannot fall
+// behind them.
+var httpKeys = func() []httpKey {
+	var keys []httpKey
+	httpType := reflect.TypeOf(HTTP{})
+	for i := range httpType.NumField() {
+		table := httpType.Field(i)
+		if !table.Anonymous {
+			continue
+		}
+		tableName, _, _ := strings.Cut(table.Tag.Get("toml"), ",")
+		for j := range table.Type.NumField() {
+			field := table.Type.Field(j)
+			key, _, _ := strings.Cut(field.Tag.Get("toml"), ",")
+			if key != "" && key != "-" {
+				keys = append(keys, httpKey{tableName, key, field.Name})
+			}
+		}
+	}
+	return keys
+}()
+
+// flatHTTP is [http] as a file written before its tables has it: the keys of
+// every table directly in it.
+type flatHTTP struct {
+	HTTP struct {
+		HTTPMain
+		HTTPConnection
+		HTTPAuth
+		HTTPServices
+	} `toml:"http"`
+}
+
+// readFlatHTTP gives cfg the keys of the tables of [http] that data sets
+// directly in [http], where a version before the tables read them, unless
+// their table sets them as well, which wins. Such a file loads as it did until
+// Migrate has moved them into their tables.
+func readFlatHTTP(data []byte, cfg *Config) error {
+	flat := flatHTTPKeys(data)
+	if len(flat) == 0 {
+		return nil
+	}
+	var old flatHTTP
+	if err := toml.Unmarshal(data, &old); err != nil {
+		return err
+	}
+	from := reflect.ValueOf(old.HTTP)
+	into := reflect.ValueOf(&cfg.HTTP).Elem()
+	for _, key := range flat {
+		if !key.shadowed {
+			into.FieldByName(key.field).Set(from.FieldByName(key.field))
+		}
+	}
+	return nil
+}
+
+// flatKey is a key of a table of [http] a file sets directly in [http]: as
+// the file spells it, and whether its table sets it as well.
+type flatKey struct {
+	httpKey
+	spelled  string
+	shadowed bool
+}
+
+// flatHTTPKeys are the keys of the tables of [http] that data sets directly in
+// [http], in the order of httpKeys. go-toml reads a key and a table in any
+// case, so they are matched in any case here as well.
+func flatHTTPKeys(data []byte) []flatKey {
+	var tree map[string]any
+	if err := toml.Unmarshal(data, &tree); err != nil {
+		return nil
+	}
+	section, _ := foldGet(tree, "http")
+	httpTable, _ := section.(map[string]any)
+	if len(httpTable) == 0 {
+		return nil
+	}
+	var found []flatKey
+	for _, key := range httpKeys {
+		spelled := ""
+		for name, value := range httpTable {
+			if _, isTable := value.(map[string]any); !isTable && strings.EqualFold(name, key.key) {
+				spelled = name
+			}
+		}
+		if spelled == "" {
+			continue
+		}
+		table, _ := foldGet(httpTable, key.table)
+		tableMap, _ := table.(map[string]any)
+		_, shadowed := foldGet(tableMap, key.key)
+		found = append(found, flatKey{key, spelled, shadowed})
+	}
+	return found
+}
+
+// foldGet is the value of name in table, matched in any case.
+func foldGet(table map[string]any, name string) (any, bool) {
+	if value, ok := table[name]; ok {
+		return value, true
+	}
+	for key, value := range table {
+		if strings.EqualFold(key, name) {
+			return value, true
+		}
+	}
+	return nil, false
 }
 
 // legacy are the keys a file written before baseFolderFiles,
@@ -1345,27 +1467,6 @@ var retired = map[string]string{
 	"sftp.basefolder": "general.baseFolderFiles",
 	"http.basefolder": "general.baseFolderFiles",
 	"tftp.basefolder": "general.baseFolderFiles",
-}
-
-// The keys of [http] moved into its tables, [http.main] and the others: a key
-// still set at its old place is not read, and is named here so that the file
-// says where it went rather than its default silently taking over. The list is
-// made from the tables themselves, so it cannot fall behind them.
-func init() {
-	httpType := reflect.TypeOf(HTTP{})
-	for i := range httpType.NumField() {
-		table := httpType.Field(i)
-		if !table.Anonymous {
-			continue
-		}
-		tableName, _, _ := strings.Cut(table.Tag.Get("toml"), ",")
-		for j := range table.Type.NumField() {
-			key, _, _ := strings.Cut(table.Type.Field(j).Tag.Get("toml"), ",")
-			if key != "" && key != "-" {
-				retired["http."+key] = "http." + tableName + "." + key
-			}
-		}
-	}
 }
 
 // RetiredKeys reports the retired keys a file still sets, each as

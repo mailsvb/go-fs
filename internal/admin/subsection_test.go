@@ -160,7 +160,8 @@ func TestHTTPIsMadeOfItsTables(t *testing.T) {
 	}
 }
 
-// A file that still sets the keys of [http] directly is written with the
+// A file that still sets the keys of [http] directly, which the server moves
+// into the tables when it starts, shows their values, and is written with the
 // tables and without the old keys at the first apply.
 func TestApplyWritesTheHTTPTables(t *testing.T) {
 	path := testConfig(t)
@@ -178,8 +179,8 @@ func TestApplyWritesTheHTTPTables(t *testing.T) {
 
 	body := get(t, front)
 	connection := section(t, body.Values, "http")["connection"].(map[string]any)
-	if connection["maxConnections"] != float64(100) {
-		t.Errorf("the flat key was read: maxConnections = %v", connection["maxConnections"])
+	if connection["maxConnections"] != float64(7) {
+		t.Errorf("the flat key was not read: maxConnections = %v", connection["maxConnections"])
 	}
 	connection["maxConnections"] = 42
 	if status, answer := post(t, front, body.Values, nil); status != http.StatusOK {

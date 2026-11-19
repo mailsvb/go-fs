@@ -191,11 +191,12 @@ func run(stop <-chan struct{}) error {
 	}
 
 	// a file written for an older version names the folders by keys that
-	// have since been renamed; it was read through them, and is given the
+	// have since been renamed, and sets the keys of [http] directly in it
+	// rather than in its tables; it was read through them, and is given the
 	// new ones
 	if changes, err := config.Migrate(*configPath, logger.Logger); err != nil {
-		logger.Warn("cannot rename the folder keys of the configuration file, so it is "+
-			"read through the old ones as before", "path", *configPath, "error", err)
+		logger.Warn("cannot move the old keys of the configuration file to where this "+
+			"version keeps them, so they are read where they are", "path", *configPath, "error", err)
 	} else {
 		for _, change := range changes {
 			logger.Info("migrated the configuration file", "change", change, "path", *configPath)
@@ -205,7 +206,7 @@ func run(stop <-chan struct{}) error {
 	// the share links of files and the login tokens of browsers are signed
 	// with keys the file keeps, so a link handed out and a browser logged in
 	// survive a restart and an update; a file without them is given them
-	if ensured, generated, moved, err := config.EnsureSecrets(*configPath, cfg, logger.Logger); err != nil {
+	if ensured, generated, err := config.EnsureSecrets(*configPath, cfg, logger.Logger); err != nil {
 		logger.Warn("cannot store generated secrets in the configuration file, so share "+
 			"links stop working and browsers are logged out at every restart",
 			"path", *configPath, "error", err)
@@ -215,14 +216,9 @@ func run(stop <-chan struct{}) error {
 			logger.Info("generated a secret and stored it in the configuration file",
 				"key", key, "path", *configPath)
 		}
-		// a file from before [http] had its tables keeps them in [http]
-		for _, key := range moved {
-			logger.Info("moved a secret into its table of the configuration file",
-				"key", key, "path", *configPath)
-		}
 	}
-	// after the secrets, so that the retired keys it names are those still
-	// in the file rather than the ones just moved out of [http]
+	// after the migration, so that the retired keys it names are those
+	// still in the file
 	warnAboutSecrets(logger.Logger, *configPath, cfg)
 
 	keys, err := selfupdate.TrustedKeys()

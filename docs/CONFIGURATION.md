@@ -109,14 +109,14 @@ The keys of `[http]` live in four tables: `[http.main]` (`enabled`, `port`,
 `maxUploadSize`, `maxChunkSize`, `pathsWithoutAuth`), `[http.auth]` (the
 `httpSession…` keys and the `login…` keys) and `[http.services]` (`enableS3`,
 `registryAnonymousRead`, `webdav`, `webdavClients`, `jellyfinDiscovery`,
-`sonos`, `sonosSpeakers`). A file written for an older version that still sets
-one of them directly in `[http]` is not moved: that key is reported at startup
-and not read, so its default applies until it is set in its table. Applying a
-change in the admin interface writes the tables and drops the old keys. The
-two generated secrets, `shareLinkSecret` and `httpSessionTokenSecret`, are the
-exception: go-fs moves them into `[http.main]` and `[http.auth]` at the first
-start, so that the share links handed out keep working and the browsers logged
-in stay logged in across the upgrade.
+`sonos`, `sonosSpeakers`). A file written for an older version sets them
+directly in `[http]`. go-fs reads them from there, and at its first start moves
+each into its table with its value and the comments around it, writes
+`[http.main]` and the others where `[http]` was, and keeps the file as it was
+beside it as `go-fs.toml.bak`. A key its table already sets keeps the value of
+the table, and the old line is dropped. The share links handed out and the
+browsers logged in survive the upgrade, since `shareLinkSecret` and
+`httpSessionTokenSecret` are moved like every other key.
 
 `[[general.cleanup]]` keeps a folder from growing without bound: once an hour
 everything but the newest `keep` files in it is removed. Paths are relative to

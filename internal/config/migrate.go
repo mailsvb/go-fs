@@ -27,12 +27,15 @@ var movedKeys = []struct{ section, key string }{
 // retired rather than moved: what it said is not used.
 var droppedSections = []string{"ftp", "sftp", "http", "tftp"}
 
-// Migrate brings the file at path to the keys this version names the folders
-// by: general.basefolder becomes general.baseFolderFiles,
+// Migrate brings the file at path to the keys this version reads. The folders:
+// general.basefolder becomes general.baseFolderFiles,
 // http.registryBaseFolder becomes general.baseFolderRegistry,
 // http.uploadStagingFolder becomes general.baseFolderTemp, and the basefolder
-// of ftp, sftp, http and tftp is removed. It returns what it
-// changed, nothing for a file that has nothing to change.
+// of ftp, sftp, http and tftp is removed. And [http]: a key a file written
+// before its tables sets directly in [http] is moved into its table,
+// http.port into [http.main] and so on, unless that table sets it as well,
+// which wins. It returns what it changed, nothing for a file that has nothing
+// to change.
 //
 // The file is edited as text, as EnsureSecrets does, so that its comments
 // survive. The result has to parse to the very configuration the file did, and
@@ -62,12 +65,14 @@ func Migrate(path string, log *slog.Logger) ([]string, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	edited, changes := migrated(string(data))
+	edited, moved := migratedHTTP(edited)
+	changes = append(changes, moved...)
 	after, err := Parse([]byte(edited))
 	if err != nil {
 		return nil, fmt.Errorf("%s: migrating: %w", path, err)
 	}
 	if setsOldKeys([]byte(edited)) || !reflect.DeepEqual(before, after) {
-		return nil, fmt.Errorf("%s: cannot tell how to rename the folder keys", path)
+		return nil, fmt.Errorf("%s: cannot tell how to move the old keys", path)
 	}
 
 	mode := info.Mode().Perm()
@@ -80,9 +85,12 @@ func Migrate(path string, log *slog.Logger) ([]string, error) {
 	return changes, nil
 }
 
-// setsOldKeys reports whether a file sets any key Migrate renames or removes,
-// ignoring case as go-toml does when it reads one.
+// setsOldKeys reports whether a file sets any key Migrate renames, moves or
+// removes, ignoring case as go-toml does when it reads one.
 func setsOldKeys(data []byte) bool {
+	if len(flatHTTPKeys(data)) > 0 {
+		return true
+	}
 	var tree map[string]any
 	if err := toml.Unmarshal(data, &tree); err != nil {
 		return false
@@ -251,4 +259,228 @@ func holdsEmptyString(line string) bool {
 		return v == ""
 	}
 	return false
+}
+
+// a line that sets a bare key, with what is in front of it and the key
+var bareKeyLine = regexp.MustCompile(`^(\s*)([A-Za-z0-9_-]+)(\s*=)`)
+
+// httpBlock is a key of a table of [http] that the file sets directly in
+// [http]: its lines, the comment above it and the one that follows it
+// included, the key spelled as its table has it.
+type httpBlock struct {
+	flatKey
+	lines []string
+	// blankBefore is whether an empty line stood before it
+	blankBefore bool
+}
+
+// migratedHTTP is the file with the keys of the tables of [http] that it sets
+// directly in [http] moved into their tables, and what was done, one entry
+// each. A key goes with the comment directly above it and with one that
+// follows it up to an empty line, so that the file keeps documenting it. A
+// table the file has already gets the key at its end; the others are written
+// where [http] was, in the order of the tables, and [http] itself goes once
+// nothing but comments is left in it. A key its table sets as well is dropped,
+// since the table wins. A file whose layout this does not understand comes
+// back as it was, which Migrate reports.
+func migratedHTTP(data string) (string, []string) {
+	flat := flatHTTPKeys([]byte(data))
+	if len(flat) == 0 {
+		return data, nil
+	}
+	byName := map[string]flatKey{}
+	for _, key := range flat {
+		byName[key.spelled] = key
+	}
+	newline := "\n"
+	if strings.Contains(data, "\r\n") {
+		newline = "\r\n"
+	}
+	lines := strings.Split(data, newline)
+
+	// where [http] is, and where the tables of [http] the file has already end
+	header, end := -1, len(lines)
+	tableEnds := map[string]int{}
+	inHTTP, table := false, ""
+	for i, line := range lines {
+		m := sectionLine.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		if inHTTP {
+			end = i
+		}
+		if table != "" {
+			tableEnds[table] = i
+		}
+		inHTTP, table = false, ""
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(line), "[["):
+		case strings.EqualFold(m[1], "http"):
+			inHTTP, header = true, i
+		default:
+			for _, key := range httpKeys {
+				if strings.EqualFold(m[1], "http."+key.table) {
+					table = key.table
+					tableEnds[table] = len(lines)
+				}
+			}
+		}
+	}
+	if header < 0 {
+		return data, nil
+	}
+
+	blank := func(line string) bool { return strings.TrimSpace(line) == "" }
+	comment := func(line string) bool { return strings.HasPrefix(strings.TrimSpace(line), "#") }
+
+	// the blocks of the keys that move, and the lines of [http] they take
+	var blocks []httpBlock
+	taken := map[int]bool{}
+	for i := header + 1; i < end; i++ {
+		m := bareKeyLine.FindStringSubmatch(lines[i])
+		if m == nil || taken[i] {
+			continue
+		}
+		key, ok := byName[m[2]]
+		if !ok {
+			continue
+		}
+		// the value ends at the first line that completes it
+		last := -1
+		for j := i; j < end; j++ {
+			var value map[string]any
+			if toml.Unmarshal([]byte(strings.Join(lines[i:j+1], "\n")), &value) == nil {
+				last = j
+				break
+			}
+		}
+		if last < 0 {
+			return data, nil
+		}
+		first := i
+		for first-1 > header && !taken[first-1] && comment(lines[first-1]) {
+			first--
+		}
+		// a comment that follows the value up to an empty line is about it
+		after := last + 1
+		for after < end && comment(lines[after]) {
+			after++
+		}
+		if after > last+1 && after < end && blank(lines[after]) {
+			last = after - 1
+		}
+		block := httpBlock{flatKey: key, blankBefore: first-1 == header || blank(lines[first-1])}
+		for j := first; j <= last; j++ {
+			taken[j] = true
+			block.lines = append(block.lines, lines[j])
+		}
+		block.lines[i-first] = bareKeyLine.ReplaceAllString(lines[i], "${1}"+key.key+"${3}")
+		blocks = append(blocks, block)
+		i = last
+	}
+	if len(blocks) != len(flat) {
+		return data, nil
+	}
+
+	// the blocks for the tables the file has, and those written where [http]
+	// was, table by table
+	var changes []string
+	insert := map[int][]string{}
+	tables := map[string][]httpBlock{}
+	var order []string
+	for _, key := range httpKeys {
+		for _, block := range blocks {
+			if block.key != key.key {
+				continue
+			}
+			from, to := "http."+block.spelled, "http."+block.table+"."+block.key
+			if block.shadowed {
+				changes = append(changes, from+" removed, "+to+" is set")
+				continue
+			}
+			changes = append(changes, from+" moved to "+to)
+			if tableEnd, ok := tableEnds[block.table]; ok {
+				at := tableEnd
+				for at-1 >= 0 && blank(lines[at-1]) {
+					at--
+				}
+				if block.blankBefore {
+					insert[at] = append(insert[at], "")
+				}
+				insert[at] = append(insert[at], block.lines...)
+				continue
+			}
+			if _, ok := tables[block.table]; !ok {
+				order = append(order, block.table)
+			}
+			tables[block.table] = append(tables[block.table], block)
+		}
+	}
+	var written []string
+	for _, table := range order {
+		if len(written) > 0 {
+			written = append(written, "")
+		}
+		written = append(written, "[http."+table+"]")
+		for i, block := range tables[table] {
+			if i > 0 && block.blankBefore {
+				written = append(written, "")
+			}
+			written = append(written, block.lines...)
+		}
+	}
+
+	// what is left of [http]: its header while a key is left in it, the rest
+	// without the runs of empty lines the blocks leave behind, and the
+	// comments after its last key, which are about what follows it and stay
+	// in front of that
+	tail := end
+	for tail-1 > header && !taken[tail-1] && (blank(lines[tail-1]) || comment(lines[tail-1])) {
+		tail--
+	}
+	var rest []string
+	keyLeft := false
+	for i := header + 1; i < tail; i++ {
+		if taken[i] {
+			continue
+		}
+		if blank(lines[i]) && (len(rest) == 0 || blank(rest[len(rest)-1])) {
+			continue
+		}
+		if !blank(lines[i]) && !comment(lines[i]) {
+			keyLeft = true
+		}
+		rest = append(rest, lines[i])
+	}
+	for len(rest) > 0 && blank(rest[len(rest)-1]) {
+		rest = rest[:len(rest)-1]
+	}
+	var region []string
+	if keyLeft || len(written) == 0 {
+		region = append(region, lines[header])
+	}
+	region = append(region, rest...)
+	if len(region) > 0 && len(written) > 0 {
+		region = append(region, "")
+	}
+	region = append(region, written...)
+	if tail < end && !blank(lines[tail]) || tail == end && end < len(lines) {
+		region = append(region, "")
+	}
+	region = append(region, lines[tail:end]...)
+
+	var out []string
+	for i := 0; i <= len(lines); i++ {
+		out = append(out, insert[i]...)
+		if i == header {
+			out = append(out, region...)
+			i = end - 1
+			continue
+		}
+		if i < len(lines) {
+			out = append(out, lines[i])
+		}
+	}
+	return strings.Join(out, newline), changes
 }

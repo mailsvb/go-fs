@@ -235,6 +235,9 @@ jobs:
               dnf install -y "$1"
               serve
               secret=$(grep "^httpSessionTokenSecret = " /etc/go-fs/go-fs.toml)
+              # a value of [http] of its own, which a release before its
+              # tables keeps directly in [http]
+              sed -i "s/^maxConnections = .*/maxConnections = 77/" /etc/go-fs/go-fs.toml
               # the released rpm may be newer than this checkout, so the
               # upgrade to it is forced the way rpm -U --oldpackage does one
               rpm -U --oldpackage "$update"
@@ -249,6 +252,16 @@ jobs:
               # release upgraded from, though the old one is still in the file
               if grep -q "generated a secret" /tmp/go-fs.log; then
                 echo "go-fs replaced a secret of the upgraded configuration"; exit 1
+              fi
+              # the keys of [http] are moved into its tables with their values,
+              # and none is left where this version no longer reads it
+              grep -qx "maxConnections = 77" /etc/go-fs/go-fs.toml
+              grep -qx "\[http.connection\]" /etc/go-fs/go-fs.toml
+              if grep -q "no longer reads" /tmp/go-fs.log; then
+                echo "go-fs left a key of the upgraded configuration unread"; exit 1
+              fi
+              if awk "/^\[http\]/{f=1;next} /^\[/{f=0} f && /^[A-Za-z]/" /etc/go-fs/go-fs.toml | grep -q .; then
+                echo "go-fs left keys directly in [http]"; exit 1
               fi
               dnf remove -y go-fs
               rm -f /etc/go-fs/go-fs.toml.rpmsave
