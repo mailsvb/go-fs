@@ -109,7 +109,8 @@ The keys of `[http]` live in four tables: `[http.main]` (`enabled`, `port`,
 `maxUploadSize`, `maxChunkSize`, `pathsWithoutAuth`), `[http.auth]` (the
 `httpSession…` keys and the `login…` keys) and `[http.services]` (`enableS3`,
 `registryAnonymousRead`, `webdav`, `webdavClients`, `jellyfinDiscovery`,
-`sonos`, `sonosSpeakers`). A file written for an older version sets them
+`sonos`, `sonosSpeakers`, and the lists `[[http.services.registryTrust]]` and
+`[[http.services.imagesign]]`). A file written for an older version sets them
 directly in `[http]`. go-fs reads them from there, and at its first start moves
 each into its table with its value and the comments around it, writes
 `[http.main]` and the others where `[http]` was, and keeps the file as it was

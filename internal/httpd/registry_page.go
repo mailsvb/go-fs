@@ -477,6 +477,9 @@ type registryTag struct {
 	// artifacts are the signatures, attestations and SBOMs of the image
 	// and of each of its platforms
 	artifacts []registryArtifact
+	// signs are what checking the label signatures of the image, or of
+	// each of its platforms, against [[http.services.imagesign]] came to
+	signs []imageSignCheck
 }
 
 // registryTags reads the tags of a repository. A tag whose manifest cannot be
@@ -505,6 +508,7 @@ func (s *Server) registryTags(set *settings, name string) ([]registryTag, error)
 			entry.pushed = pushed
 		}
 		entry.artifacts = artifactsOf(set, name, entry.subjects(), tags)
+		entry.signs = imageSignsOf(set, name, entry.summary)
 		found = append(found, entry)
 	}
 	return found, nil
@@ -759,6 +763,9 @@ type registryRow struct {
 	Platforms  []registryBadge
 	// Artifacts sums up the signatures and attestations, if there are any.
 	Artifacts *registryBadge
+	// ImageSign says whether the image is signed in its labels, where an
+	// imagesign entry is for the repository.
+	ImageSign *registryBadge
 	Pushed    string
 	Unix      int64
 	Size      string
@@ -1009,6 +1016,7 @@ func tagRow(entry registryTag, tree bool, host string) registryRow {
 			registryBadge{Label: "…more", Title: strings.Join(rest, ", "), More: true})
 	}
 	row.Artifacts = artifactsBadge(entry)
+	row.ImageSign = imageSignBadge(entry.signs)
 	return row
 }
 
@@ -1188,6 +1196,13 @@ type registryArtifactJSON struct {
 	TrustedBy string `json:"trustedBy,omitempty"`
 	Signer    string `json:"signer,omitempty"`
 	Problem   string `json:"problem,omitempty"`
+	// InConfig is a signature in the labels of the image's configuration,
+	// which Digest names, rather than a manifest of its own; Mode is the
+	// imagesign mode it is checked under, and Refused says that the mode
+	// refuses the image.
+	InConfig bool   `json:"inConfig,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	Refused  bool   `json:"refused,omitempty"`
 }
 
 // registryTagQuery reads the repository and the tag a request names, and the
@@ -1271,7 +1286,7 @@ func (s *Server) registryImage(set *settings, w http.ResponseWriter, r *http.Req
 		}
 		answer.Platforms = append(answer.Platforms, entry)
 	}
-	answer.Artifacts = artifactsJSON(set, name, d, summary, tags)
+	answer.Artifacts = append(artifactsJSON(set, name, d, summary, tags), imageSignJSON(set, name, d, summary)...)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, answer)
 }

@@ -64,7 +64,7 @@
     {{else}}
     <tr data-name="{{.Name}}" data-repository="{{.Repository}}" data-tag="{{.Tag}}" data-pull="{{.Pull}}">
       <td><span class="name"><svg class="ic"><use href="#i-tag"/></svg><span class="label" title="{{.Repository}}:{{.Tag}}">{{range $i, $part := .Parts}}{{if $i}}<wbr>{{end}}{{$part}}{{end}}</span></span></td>
-      <td class="c-plat"><span class="badges">{{range .Platforms}}<span class="badge{{if .More}} more{{end}}" title="{{.Title}}">{{.Label}}</span>{{else}}<span class="meta">&#8212;</span>{{end}}{{with .Artifacts}}<span class="badge artifacts{{with .Class}} {{.}}{{end}}" title="{{.Title}}">{{.Label}}</span>{{end}}</span></td>
+      <td class="c-plat"><span class="badges">{{range .Platforms}}<span class="badge{{if .More}} more{{end}}" title="{{.Title}}">{{.Label}}</span>{{else}}<span class="meta">&#8212;</span>{{end}}{{with .Artifacts}}<span class="badge artifacts{{with .Class}} {{.}}{{end}}" title="{{.Title}}">{{.Label}}</span>{{end}}{{with .ImageSign}}<span class="badge {{.Class}}" title="{{.Title}}">{{.Label}}</span>{{end}}</span></td>
       <td class="meta c-mod">{{.Pushed}}</td>
       <td class="meta num c-size">{{.Size}}</td>
       <td class="c-acts needs-js"><button type="button" data-do="menu" title="Options" aria-haspopup="menu" aria-expanded="false" aria-label="Options for {{.Repository}}:{{.Tag}}"><svg class="ic"><use href="#i-more"/></svg></button></td>

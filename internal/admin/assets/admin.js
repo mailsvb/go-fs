@@ -28,6 +28,10 @@ const openRecords = new WeakSet();
 // shown only here and only until the file is read again: the record, and so
 // the file, holds nothing but its hash
 const newTokens = new WeakMap();
+// what the key material in a record of a list is, by the record object: the
+// server keys it by the record's place in the list, which a Remove changes, so
+// it is read from there once, when the record is first drawn
+const recordSummaries = new WeakMap();
 // newRecoveryKeys are the recovery keys of the vaults made for servers since
 // the page was read, by record, shown until it is read again.
 const newRecoveryKeys = new WeakMap();
@@ -591,6 +595,13 @@ function tableBlock(holder, key, table, heading) {
       list.append(paragraph("No entries.", "empty"));
     }
     records.forEach((record, i) => {
+      if (!recordSummaries.has(record)) {
+        const own = {};
+        table.fields.forEach((field) => {
+          if (field.upload) own[field.key] = summaries[heading + "." + i + "." + field.key] || "";
+        });
+        recordSummaries.set(record, own);
+      }
       const card = document.createElement("details");
       card.className = "record";
       card.open = openRecords.has(record);
@@ -1902,6 +1913,26 @@ function editor(field, holder, path) {
     return { element: input, id };
   }
 
+  if (field.choices && field.choices.length > 0) {
+    const input = document.createElement("select");
+    input.id = id;
+    const current = holder[field.key] ?? "";
+    // a value the file has that is none of the choices stays what it is
+    // until another is picked, and the server says what is wrong with it
+    const options = field.choices.includes(current) || current === "" ? field.choices : [current, ...field.choices];
+    options.forEach((choice) => {
+      const option = document.createElement("option");
+      option.value = choice;
+      option.textContent = choice;
+      input.append(option);
+    });
+    input.value = current === "" ? field.choices[0] : current;
+    if (current === "") set(input.value);
+    input.addEventListener("change", () => set(input.value));
+    input.disabled = field.readOnly === true;
+    return { element: input, id };
+  }
+
   if (field.kind === "lines") {
     const input = document.createElement("textarea");
     input.id = id;
@@ -1979,12 +2010,19 @@ function materialEditor(field, holder, section) {
   const input = document.createElement("textarea");
   input.id = id;
   input.className = "blob";
-  input.rows = 3;
+  // PEM is pasted as it is, a block of lines per certificate
+  input.rows = field.upload === "imagesigntrust" ? 8 : 3;
   input.spellcheck = false;
   input.placeholder = field.placeholder || "empty: generated at every start";
   input.value = holder[field.key] ?? "";
 
-  const summary = paragraph(summaries[path] || "", "summary");
+  const own = recordSummaries.get(holder);
+  const summaryOf = (key, fallback) => (own ? own[key] || "" : summaries[fallback] || "");
+  const setSummary = (key, fallback, text) => {
+    if (own) own[key] = text;
+    else summaries[fallback] = text;
+  };
+  const summary = paragraph(summaryOf(field.key, path), "summary");
   const problem = paragraph("", "problem");
   const report = (text) => {
     problem.textContent = text;
@@ -2018,7 +2056,7 @@ function materialEditor(field, holder, section) {
         content: await base64Of(file),
       });
       holder[field.key] = result.value;
-      summaries[path] = result.summary;
+      setSummary(field.key, path, result.summary);
       render();
     } catch (error) {
       report(String(error.message || error));
@@ -2040,10 +2078,10 @@ function materialEditor(field, holder, section) {
       try {
         const result = await post("?go-fs=admin-generate", { kind: field.upload });
         holder[field.key] = result.value;
-        summaries[path] = result.summary;
+        setSummary(field.key, path, result.summary);
         if (field.pair) {
           holder[field.pair] = result.pairValue;
-          summaries[section + "." + field.pair] = result.pairSummary;
+          setSummary(field.pair, section + "." + field.pair, result.pairSummary);
         }
         render();
       } catch (error) {
@@ -2054,7 +2092,7 @@ function materialEditor(field, holder, section) {
 
   buttons.append(plainButton("Clear", () => {
     holder[field.key] = "";
-    summaries[path] = "";
+    setSummary(field.key, path, "");
     render();
   }));
 
@@ -2085,6 +2123,7 @@ function plainButton(text, onClick) {
 // the server, which parses it.
 function accepts(kind) {
   if (kind === "certificate" || kind === "cacertificate") return ".pem,.crt,.cer,.cert";
+  if (kind === "imagesigntrust") return ".pem,.crt,.cer,.cert,.pub";
   if (kind === "crl") return ".pem,.crl";
   if (kind === "sessionsecret") return ".txt,.key";
   return ".pem,.key,.p8";

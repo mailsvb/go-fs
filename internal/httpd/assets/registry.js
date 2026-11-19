@@ -379,7 +379,16 @@
       if (artifact.platform) {
         title.appendChild(el("span", "meta", " for " + artifact.platform));
       }
-      if (!artifact.signed) {
+      if (artifact.inConfig) {
+        // a signature in the labels of the image itself, as imagesign
+        // checks them
+        if (artifact.verified === "yes") {
+          title.appendChild(el("span", "badge imagesign signed", "signed by " + artifact.trustedBy));
+        } else {
+          title.appendChild(el("span", "badge imagesign warning",
+            artifact.signed ? "\u26a0 does not verify" : "\u26a0 not signed"));
+        }
+      } else if (!artifact.signed) {
         title.appendChild(el("span", "meta", " not signed"));
       } else if (artifact.verified === "yes") {
         title.appendChild(el("span", "badge artifacts verified", "verified by " + artifact.trustedBy));
@@ -389,8 +398,9 @@
       item.appendChild(title);
       item.appendChild(facts([
         ["Signer", artifact.signer, true],
-        ["Why not verified", artifact.problem],
-        ["Manifest", artifact.digest, true],
+        [artifact.inConfig ? "Why not" : "Why not verified", artifact.problem],
+        ["Mode", artifact.mode ? artifact.mode + (artifact.refused ? ", so pushes and pulls of it are refused" : "") : ""],
+        [artifact.inConfig ? "Configuration" : "Manifest", artifact.digest, true],
         ["Artifact type", artifact.artifactType, true],
         ["Tag", artifact.tag, true],
         ["Pushed", artifact.pushed ? when(artifact.pushed) : ""]

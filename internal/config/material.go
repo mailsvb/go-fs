@@ -59,6 +59,8 @@ func Decode(kind, value string) ([]byte, error) {
 		return DecodeCertificateAuthority(value)
 	case KindCRL:
 		return DecodeCRL(value)
+	case KindImageSignTrust:
+		return DecodeImageSignTrust(value)
 	default:
 		if k, ok := keyKinds[kind]; ok {
 			return k.decode(value)
@@ -308,6 +310,8 @@ func Describe(kind, value string) string {
 		return describeCertificateAuthority(value)
 	case KindCRL:
 		return describeCRL(value)
+	case KindImageSignTrust:
+		return describeImageSignTrust(value)
 	default:
 		if k, ok := keyKinds[kind]; ok {
 			return k.describe(value)

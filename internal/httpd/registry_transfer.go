@@ -454,6 +454,15 @@ func (s *Server) storePulled(store *registryStore, name, tag string, top pulledM
 // lock and the repository's already: an import, which commits the blobs under
 // the same hold, so the garbage collection never sees them unreferenced.
 func (s *Server) storePulledLocked(store *registryStore, name, tag string, top pulledManifest, children []pulledManifest, attached []attachedManifest) error {
+	// what imagesign refuses to take is refused before any of it is
+	// stored; the blobs are there already and left to the cleanup
+	candidates := make([]imageSignCandidate, 0, len(children)+1)
+	for _, manifest := range append(slices.Clone(children), top) {
+		candidates = append(candidates, imageSignCandidate{digest: manifest.digest, mediaType: manifest.mediaType, doc: manifest.doc})
+	}
+	if err := s.settings().refuseImageSigns(name, candidates); err != nil {
+		return err
+	}
 	for _, manifest := range append(children, top) {
 		if _, err := store.putBlob(manifest.body, manifest.digest.Algorithm()); err != nil {
 			return err
@@ -525,6 +534,8 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 	var blobs []v1.Descriptor
 	var platforms []string
 	subjects := []digest.Digest{top.digest}
+	// what imagesign refuses to hand out is not sent anywhere either
+	candidates := []imageSignCandidate{{digest: top.digest, mediaType: top.mediaType, doc: doc}}
 	if isIndexType(top.mediaType) {
 		kept, err := keptEntries(doc, filter)
 		if err != nil {
@@ -536,6 +547,7 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 				return "", err
 			}
 			children = append(children, child)
+			candidates = append(candidates, imageSignCandidate{digest: child.digest, mediaType: child.mediaType, doc: childDoc})
 			blobs = addBlobs(blobs, imageBlobs(childDoc)...)
 			if !isAttestation(entry) {
 				subjects = append(subjects, child.digest)
@@ -565,6 +577,9 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 			return "", fmt.Errorf("%s:%s is only for %s, not for %s", name, tag, key, strings.Join(filter, ", "))
 		}
 		blobs = imageBlobs(doc)
+	}
+	if err := set.refuseImageSigns(name, candidates); err != nil {
+		return "", err
 	}
 	attached, err := s.localAttached(ctx, store, name, subjects)
 	if err != nil {
