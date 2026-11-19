@@ -91,6 +91,10 @@ type Field struct {
 	// anyone type into, because it is made by the server, a token's hash, or
 	// changed in a dialog of its own, the login of a remote server.
 	ReadOnly bool `json:"readOnly,omitempty"`
+	// Choices are the values a text key may take, from the choices tag of
+	// its field, which the page offers as a list to pick from rather than a
+	// box to type into.
+	Choices []string `json:"choices,omitempty"`
 
 	// index locates the field in its struct, so that reading and writing a
 	// value walks the same path the schema was built from.
@@ -225,12 +229,8 @@ func buildSection(structure reflect.Type, path string, nested bool) (Section, []
 		}
 		switch kind, ok := kindOf(inner.Type); {
 		case ok:
-			made := newField(name, kind, k, path+"."+name, structure.Name()+"."+inner.Name)
+			made := newField(inner, name, kind, k, path+"."+name, structure.Name()+"."+inner.Name)
 			made.ReadOnly = serverMade[path+"."+name]
-			if placeholder, ok := uploadOnly[path+"."+name]; ok {
-				made.NoGenerate = true
-				made.Placeholder = placeholder
-			}
 			section.Fields = append(section.Fields, made)
 
 		case inner.Type.Kind() == reflect.Slice && inner.Type.Elem().Kind() == reflect.Struct:
@@ -301,7 +301,7 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 			skipped = append(skipped, element.Name()+"."+inner.Name)
 			continue
 		}
-		field := newField(name, kind, i, path+"."+name, element.Name()+"."+inner.Name)
+		field := newField(inner, name, kind, i, path+"."+name, element.Name()+"."+inner.Name)
 		// what names a folded record: its first text (the username, the path)
 		// and the switches, which are the plain bools; the pointers are the
 		// rights, and a record is not summed up by its rights
@@ -349,14 +349,25 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 	return table, skipped
 }
 
-func newField(name, kind string, index int, path, source string) Field {
+func newField(inner reflect.StructField, name, kind string, index int, path, source string) Field {
 	if kind == kindText && secret(name) {
 		kind = kindSecret
 	}
-	return Field{
+	made := Field{
 		Key: name, Label: name, Help: help(path, source), Kind: kind,
 		Upload: material(name), index: index,
 	}
+	if upload, ok := materialAt[path]; ok {
+		made.Upload = upload
+	}
+	if placeholder, ok := uploadOnly[path]; ok {
+		made.NoGenerate = true
+		made.Placeholder = placeholder
+	}
+	if choices := inner.Tag.Get("choices"); choices != "" && kind == kindText {
+		made.Choices = strings.Split(choices, ",")
+	}
+	return made
 }
 
 // kindOf reports how a field is edited, and whether it is one this can edit at
@@ -420,6 +431,13 @@ func material(name string) string {
 	return ""
 }
 
+// materialAt is key material that its name alone does not give away, by its
+// path in the file: the certificates of an imagesign signer, where the
+// certificates of a registryTrust are a path to a file.
+var materialAt = map[string]string{
+	"http.services.imagesign.certificates": config.KindImageSignTrust,
+}
+
 // uploadOnly is the key material go-fs must not make up, by its path in the
 // file, with what its empty box says. The NBD server's certificate has to come
 // from the CA its clients are given, which one generated here never does, and
@@ -429,6 +447,8 @@ var uploadOnly = map[string]string{
 	"nbd.key":       "required: the private key of that certificate",
 	"nbd.clientCA":  "required: the certificate of the CA client certificates are issued by",
 	"nbd.clientCRL": "empty: no client certificate is revoked",
+	"http.services.imagesign.certificates": "required: paste the PEM of the CA certificates and Ed25519 " +
+		"public keys signatures are checked against, or upload a file",
 }
 
 // pairUp gives every certificate in a section the name of its private key, so
@@ -517,6 +537,30 @@ func (s Section) summaries(path string, held map[string]any, into map[string]str
 	for _, sub := range s.Subsections {
 		if inner, ok := held[sub.Key].(map[string]any); ok {
 			sub.summaries(path+"."+sub.Key, inner, into)
+		}
+	}
+	for _, table := range s.Tables {
+		records, _ := held[table.Key].([]any)
+		table.summaries(path+"."+table.Key, records, into)
+	}
+}
+
+// summaries adds the descriptions of the key material in the records of a
+// list, keyed by the record's place in it: "http.services.imagesign.0.certificates".
+func (t Table) summaries(path string, records []any, into map[string]string) {
+	for i, raw := range records {
+		record, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, field := range t.Fields {
+			if field.Upload == "" || field.ReadOnly {
+				continue
+			}
+			value, _ := record[field.Key].(string)
+			if text := config.Describe(field.Upload, value); text != "" {
+				into[fmt.Sprintf("%s.%d.%s", path, i, field.Key)] = text
+			}
 		}
 	}
 }

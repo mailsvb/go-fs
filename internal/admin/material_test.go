@@ -104,11 +104,19 @@ func TestSchemaMarksTheKeyMaterial(t *testing.T) {
 				t.Errorf("%s.%s has kind %q", sec.Key, field.Key, field.Kind)
 			}
 		}
+		// the one list whose records hold key material is the imagesign
+		// signers', which go-fs cannot make up
 		for _, table := range sec.Tables {
 			for _, field := range table.Fields {
+				path := sec.Key + "." + table.Key + "." + field.Key
+				if path == "http.services.imagesign.certificates" {
+					if field.Upload != config.KindImageSignTrust || !field.NoGenerate || field.Kind != kindText {
+						t.Errorf("%s is %+v", path, field)
+					}
+					continue
+				}
 				if field.Upload != "" {
-					t.Errorf("%s.%s.%s should not take an upload",
-						sec.Key, table.Key, field.Key)
+					t.Errorf("%s should not take an upload", path)
 				}
 			}
 		}

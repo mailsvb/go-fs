@@ -1039,6 +1039,10 @@ type HTTPServices struct {
 	// RegistryTrust is [[http.services.registryTrust]]: the signers whose
 	// signatures the container registry verifies.
 	RegistryTrust []RegistryTrust `toml:"registryTrust"`
+	// ImageSign is [[http.services.imagesign]]: the signers whose
+	// signatures in the labels of an image the container registry checks,
+	// and what it refuses for them.
+	ImageSign []ImageSign `toml:"imagesign"`
 	// WebDAV answers WebDAV on the paths of the served folder, on both
 	// listeners, so that Explorer and Finder mount it as a drive. To a WebDAV
 	// client DELETE then removes a folder with everything in it and MOVE moves
@@ -2039,7 +2043,10 @@ func (c Config) validateHTTP() error {
 	if err := c.validateRegistry(); err != nil {
 		return err
 	}
-	return c.validateRegistryTrust()
+	if err := c.validateRegistryTrust(); err != nil {
+		return err
+	}
+	return c.validateImageSign()
 }
 
 // validateRegistry checks general.baseFolderRegistry. The registry is the only

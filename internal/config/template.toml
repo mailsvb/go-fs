@@ -777,8 +777,8 @@ sonosSpeakers = []
 # signer. Every signature and attestation pushed next to an image, by cosign,
 # notation or GitHub's actions/attest-build-provenance, is checked against
 # them, and the registry page says which signer verified an image, or that
-# none did. Nothing is refused: a client that relies on a signature still
-# verifies it itself.
+# none did. Nothing is refused for these: a client that relies on a
+# signature still verifies it itself.
 # [[http.services.registryTrust]]
 # Names the signer on the registry page: letters, digits, dots, dashes and
 # underscores. Unique, whatever its case.
@@ -803,6 +803,36 @@ sonosSpeakers = []
 # The repositories the signer is trusted for, a * standing for anything.
 # Empty is every repository.
 # repositories = ["acme/*"]
+
+# The signers of images that carry their signature in their own labels, one
+# table per signer, as image-sign.sh of container-image-validation writes
+# them: an Ed25519 signature over the layers under <prefix>.signature and the
+# certificate it was made with under <prefix>.certchain. The signature covers
+# the layers only, not the entrypoint, the environment or the name of the
+# image. Each image is checked as it is pushed and as it is pulled, and the
+# registry page says whether it is signed. Unlike registryTrust, these can
+# refuse an image: see mode.
+# [[http.services.imagesign]]
+# Names the signer on the registry page and in the log: letters, digits, dots,
+# dashes and underscores. Unique, whatever its case.
+# name = "mitel"
+# The label prefixes the signature may be under, one or several.
+# labelPrefix = ["org.mitel.imagesign"]
+# What signatures are checked against: the PEM pasted as it is, several blocks
+# one after the other, in a multi-line string between three quotes in this
+# file. CA certificates are what the signing certificate has to chain to;
+# Ed25519 public keys, PUBLIC KEY blocks, are trusted as they are, whoever
+# issued the certificate that carries them.
+# certificates = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n"
+# optional shows whether an image is signed and refuses nothing. mandatory
+# also refuses to take or hand out an image whose signature does not verify,
+# and lets an unsigned one through. enforced refuses every image without a
+# signature that verifies. Pushes, pulls, and the page's pull, import and push
+# jobs are checked alike, each platform of an image on its own.
+# mode = "optional"
+# The repositories the signer is for, a * standing for anything. Empty is
+# every repository.
+# repositories = ["prod/*"]
 
 # The TLS interface of the same HTTP server: it serves the folder, accounts and
 # limits of [http] above.

@@ -323,11 +323,89 @@ The results are kept until the configuration is reloaded, and a change of the
 trusts takes effect with the reload. A key or root the registry cannot read
 is refused with the rest of the file.
 
-Nothing is refused for its signature: an unsigned or unverified image is
+Nothing is refused for these signatures: an unsigned or unverified image is
 pushed and pulled as any other. Whoever relies on a signature checks it
 where the image is pulled, with `cosign verify`, `notation verify`, `gh
 attestation verify` or a policy of the cluster. What the registry checks is
-for its admin to see.
+for its admin to see. The signatures in an image's labels are the exception,
+below.
+
+**Signatures in the labels of an image.** Some images carry their signature
+inside themselves rather than next to them: `image-sign.sh` of
+container-image-validation signs the layers of an image with an Ed25519 key
+from a PKCS #12 file and writes the signature into the image's configuration
+with `umoci config`, which adds no layer:
+
+| label | holds |
+|---|---|
+| `<prefix>.signature` | base64 of the Ed25519 signature over `LAYER_HASH` |
+| `<prefix>.certchain` | base64 of the PEM of the signing certificate and its intermediates |
+| `<prefix>.alg` | `ed25519` |
+
+`LAYER_HASH` is the SHA-256 of the image's `rootfs.diff_ids`, one per line
+with a newline after the last, as 64 hex digits, and that string is what is
+signed. Each `[[http.services.imagesign]]` table names a signer of such
+images:
+
+```toml
+[[http.services.imagesign]]
+name = "mitel"
+labelPrefix = ["org.mitel.imagesign"]
+certificates = """
+-----BEGIN CERTIFICATE-----
+MIIBizCCAT2gAwIBAgIEJvSEJzAFBgMrZXAw...
+-----END CERTIFICATE-----
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA...
+-----END PUBLIC KEY-----
+"""
+mode = "enforced"
+repositories = ["prod/*"]
+```
+
+- **`labelPrefix`** lists the prefixes the labels may be under, one or
+  several.
+- **`certificates`** is the PEM itself, pasted in, as many blocks as there
+  are. A `CERTIFICATE` has to be a CA's, root or intermediate, and the
+  signing certificate has to chain to one of them and be valid now. A
+  `PUBLIC KEY` is an Ed25519 key that is trusted as it is: a signing
+  certificate that carries it is taken whoever issued it and whenever it
+  expires. Base64 of the PEM works too, and the admin page has a box to paste
+  it into, or a file to upload, and says what it holds.
+- **`repositories`** limits the signer to the repositories it names, as for
+  `registryTrust`.
+- **`mode`** says what the registry refuses:
+
+| mode | signature verifies | no signature | signature does not verify |
+|---|---|---|---|
+| `optional` (or empty) | **signed** | **⚠ unsigned**, taken and handed out | **⚠ bad signature**, taken and handed out |
+| `mandatory` | **signed** | **⚠ unsigned**, taken and handed out | refused |
+| `enforced` | **signed** | refused | refused |
+
+A refused image is answered `403 DENIED` with the signer, the mode and the
+reason, which `docker push` and `docker pull` print, and logged as `registry
+push refused for the image's signature` or `registry pull refused …`. A pull,
+an import or a push to another registry from the page is refused alike, and
+stores or sends nothing. A push that is taken logs `registry image signature
+verified` with the signer, or warns `registry image is not signed` or
+`registry image signature does not verify`. Images stored before an entry
+was made stricter are refused from the reload on, and their badge says so.
+
+Each platform of an image is checked on its own, which matters because
+`image-sign.sh` signs one platform: an index is always handed out, and a
+client is refused the platform that is not signed. The page shows **partly
+signed** for such an index, and a pull or a push from the page is told to
+choose the platforms that are signed. Signatures, attestations, SBOMs and
+other artifacts are no images and are never refused; neither is a blob,
+which a client only finds by the manifest that is refused. Where several
+entries are for a repository, a signature one of them verifies is enough and
+the strictest mode applies.
+
+What the signature does not cover: it is made over the layers alone, so the
+entrypoint, the environment, the user an image runs as and its name are not
+signed, and the same layers relabelled with another entrypoint still verify.
+The registry takes the `diff_ids` from the configuration as they are, and
+the container runtime checks them against the layers when it unpacks them.
 
 - **Plain HTTP.** Docker only talks to a registry over plain HTTP when it is
   `localhost` or listed in `insecure-registries` of the daemon's

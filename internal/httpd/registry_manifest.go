@@ -136,6 +136,10 @@ func (q *registryRequest) getManifest() {
 		q.internal("cannot read a manifest", err)
 		return
 	}
+	// an index passes, and each of its images is checked as it is pulled
+	if check, applies := q.set.checkImageSign(q.route.name, d, rev.MediaType, nil); q.refuseImageSign(check, applies, d, "pull") {
+		return
+	}
 	file, err := logging.Open(q.s.logFor(q.r), q.store.blobPath(d))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -212,6 +216,11 @@ func (q *registryRequest) putManifest() {
 		q.fail(failure)
 		return
 	}
+	// the configuration is there now, and with it the labels
+	signCheck, signApplies := q.set.checkImageSign(name, d, mediaType, &doc)
+	if q.refuseImageSign(signCheck, signApplies, d, "push") {
+		return
+	}
 	if _, err := q.store.putBlob(body, d.Algorithm()); err != nil {
 		q.internal("cannot store a manifest", err)
 		return
@@ -237,6 +246,7 @@ func (q *registryRequest) putManifest() {
 		"digest", d.String(), "mediaType", mediaType, "user", nameOf(q.user),
 		"address", clientAddress(q.set, q.r))
 	q.logVerification(d, doc, tag)
+	q.logImageSign(signCheck, signApplies, d)
 	header := q.w.Header()
 	header.Set("Location", "/v2/"+name+"/manifests/"+d.String())
 	header.Set("Docker-Content-Digest", d.String())

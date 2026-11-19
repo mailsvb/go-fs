@@ -11,6 +11,8 @@
   --bad: #a3352b;
   /* a video or audio being converted, once its download is complete */
   --convert: #a86a12;
+  /* an image whose imagesign signature is missing or does not verify */
+  --warn: #9a5b00;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -22,6 +24,7 @@
     --accent: #6fbf8f;
     --bad: #e08b82;
     --convert: #e0a54f;
+    --warn: #e8b04d;
   }
 }
 
@@ -632,6 +635,9 @@ td.c-plat { white-space: normal; }
 .badge.artifacts { border-color: var(--accent); color: var(--accent); cursor: help; }
 .badge.verified { border-style: solid; font-weight: 600; }
 .badge.unverified { border-color: var(--line); border-style: dashed; color: var(--faint); }
+.badge.imagesign { cursor: help; }
+.badge.imagesign.signed { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.badge.imagesign.warning { border-color: var(--warn); color: var(--warn); font-weight: 600; }
 td.c-acts button[aria-expanded="true"] { opacity: 1; background: var(--ground); color: var(--ink); }
 
 .menu {
