@@ -608,18 +608,21 @@ func uploadLocation(res *http.Response) (*url.URL, error) {
 	return location, nil
 }
 
-// putManifest stores a manifest under a tag or its digest.
-func (c *remoteClient) putManifest(ctx context.Context, ref, mediaType string, body []byte) error {
+// putManifest stores a manifest under a tag or its digest, and gives the
+// header of the answer, whose OCI-Subject says whether the registry took a
+// subject the manifest names.
+func (c *remoteClient) putManifest(ctx context.Context, ref, mediaType string, body []byte) (http.Header, error) {
 	res, err := c.send(ctx, http.MethodPut, c.repoURL("manifests/"+ref),
 		http.Header{"Content-Type": {mediaType}}, body, true)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		defer drain(res)
+		return nil, c.failure(res, c.repository+":"+ref)
 	}
 	drain(res)
-	if res.StatusCode < 200 || res.StatusCode > 299 {
-		return c.failure(res, c.repository+":"+ref)
-	}
-	return nil
+	return res.Header, nil
 }
 
 // failure says what went wrong with a request about what, in the words of
