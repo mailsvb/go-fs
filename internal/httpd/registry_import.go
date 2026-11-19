@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -465,6 +466,9 @@ func (s *Server) importArchive(ctx context.Context, set *settings, job *registry
 			if len(plan.platforms) > 0 {
 				entry += " (" + strings.Join(plan.platforms, ", ") + ")"
 			}
+			if text := describeAttached(plan.attached); text != "" {
+				entry += " " + text
+			}
 			stored = append(stored, entry)
 		}
 	}
@@ -504,6 +508,9 @@ type importPlan struct {
 	blobs     []v1.Descriptor
 	platforms []string
 	targets   []importTarget
+	// attached is what is stored with the image: its signatures,
+	// attestations and SBOMs, of the manifests that are kept.
+	attached []attachedManifest
 }
 
 // planImport is what storing a choice takes.
@@ -523,9 +530,28 @@ func planImport(archive *imageArchive, choice importChoice) ([]importPlan, error
 	return plans, nil
 }
 
-// planImage is an image as a platform filter leaves it: an index cut to the
-// platforms kept, as a pull cuts it.
+// planImage is an image as a platform filter leaves it, with what is
+// attached to what is kept of it.
 func planImage(image archiveImage, filter platformFilter) (importPlan, error) {
+	plan, err := planManifests(image, filter)
+	if err != nil {
+		return importPlan{}, err
+	}
+	keep := map[digest.Digest]bool{}
+	if plan.top.digest == image.top.digest {
+		keep[plan.top.digest] = true
+	}
+	for _, child := range plan.children {
+		keep[child.digest] = true
+	}
+	plan.attached = keepAttached(image.attached, keep)
+	plan.blobs = addBlobs(slices.Clone(plan.blobs), attachedBlobs(plan.attached)...)
+	return plan, nil
+}
+
+// planManifests is an image as a platform filter leaves it: an index cut to
+// the platforms kept, as a pull cuts it.
+func planManifests(image archiveImage, filter platformFilter) (importPlan, error) {
 	plan := importPlan{top: image.top, children: image.children, blobs: image.blobs, platforms: image.platforms}
 	if len(filter) == 0 {
 		return plan, nil
@@ -612,7 +638,7 @@ func (s *Server) storeImportTarget(store *registryStore, plan importPlan, target
 			return err
 		}
 	}
-	return s.storePulledLocked(store, target.repository, target.tag, plan.top, plan.children)
+	return s.storePulledLocked(store, target.repository, target.tag, plan.top, plan.children, plan.attached)
 }
 
 // --- confirming -------------------------------------------------------------

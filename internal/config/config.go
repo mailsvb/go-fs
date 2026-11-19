@@ -1036,6 +1036,9 @@ type HTTPServices struct {
 	// credentials. With it off, pulling takes an account that sets registry,
 	// as pushing and deleting always do.
 	RegistryAnonymousRead bool `toml:"registryAnonymousRead"`
+	// RegistryTrust is [[http.services.registryTrust]]: the signers whose
+	// signatures the container registry verifies.
+	RegistryTrust []RegistryTrust `toml:"registryTrust"`
 	// WebDAV answers WebDAV on the paths of the served folder, on both
 	// listeners, so that Explorer and Finder mount it as a drive. To a WebDAV
 	// client DELETE then removes a folder with everything in it and MOVE moves
@@ -1318,7 +1321,10 @@ var httpKeys = func() []httpKey {
 		for j := range table.Type.NumField() {
 			field := table.Type.Field(j)
 			key, _, _ := strings.Cut(field.Tag.Get("toml"), ",")
-			if key != "" && key != "-" {
+			// a list of tables, [[http.services.registryTrust]], came
+			// after the tables and was never a key of [http]
+			repeated := field.Type.Kind() == reflect.Slice && field.Type.Elem().Kind() == reflect.Struct
+			if key != "" && key != "-" && !repeated {
 				keys = append(keys, httpKey{tableName, key, field.Name})
 			}
 		}
@@ -2033,7 +2039,7 @@ func (c Config) validateHTTP() error {
 	if err := c.validateRegistry(); err != nil {
 		return err
 	}
-	return nil
+	return c.validateRegistryTrust()
 }
 
 // validateRegistry checks general.baseFolderRegistry. The registry is the only

@@ -152,6 +152,9 @@ func (s *Server) pullImage(ctx context.Context, set *settings, job *registryJob,
 	var children []pulledManifest
 	var blobs []v1.Descriptor
 	var platforms []string
+	// subjects are what the signatures and attestations that travel with the
+	// image are attached to: the manifests stored as they are
+	subjects := []digest.Digest{top.digest}
 	if isIndexType(top.mediaType) {
 		kept, err := keptEntries(top.doc, filter)
 		if err != nil {
@@ -172,6 +175,9 @@ func (s *Server) pullImage(ctx context.Context, set *settings, job *registryJob,
 			}
 			children = append(children, child)
 			blobs = addBlobs(blobs, imageBlobs(child.doc)...)
+			if !isAttestation(entry) {
+				subjects = append(subjects, child.digest)
+			}
 			if entry.Platform != nil && !isAttestation(entry) {
 				platforms = append(platforms, platformKey(entry.Platform))
 			}
@@ -182,10 +188,17 @@ func (s *Server) pullImage(ctx context.Context, set *settings, job *registryJob,
 				return "", err
 			}
 			top = pulledManifest{body: body, mediaType: top.mediaType, digest: d, doc: rebuilt}
+			// what was signed is the index as it was, which is not stored
+			subjects = subjects[1:]
 		}
 	} else {
 		blobs = imageBlobs(top.doc)
 	}
+	attached, err := findAttached(ctx, remoteSource{client: client}, subjects, s.log)
+	if err != nil {
+		return "", err
+	}
+	blobs = addBlobs(blobs, attachedBlobs(attached)...)
 	job.plan(len(blobs), blobsSize(blobs))
 
 	for i, blob := range blobs {
@@ -211,18 +224,18 @@ func (s *Server) pullImage(ctx context.Context, set *settings, job *registryJob,
 		}
 	}
 
-	if err := s.storePulled(store, name, tag, top, children, user); err != nil {
+	if err := s.storePulled(store, name, tag, top, children, attached, user); err != nil {
 		return "", err
 	}
 	s.log.Info("registry image pulled", "repository", name, "tag", tag, "source", ref.String(),
 		"digest", top.digest.String(), "platforms", strings.Join(platforms, ","),
-		"blobs", len(blobs), "bytes", job.bytesTotal.Load(), "user", nameOf(user),
+		"blobs", len(blobs), "attached", len(attached), "bytes", job.bytesTotal.Load(), "user", nameOf(user),
 		"took", time.Since(job.started).Round(time.Millisecond))
 	message := "Pulled " + name + ":" + tag
 	if len(platforms) > 0 {
 		message += " for " + strings.Join(platforms, ", ")
 	}
-	return message + ".", nil
+	return withAttached(message, attached) + ".", nil
 }
 
 // keptEntries are the entries of an index a filter keeps: the images for the
@@ -420,15 +433,16 @@ func (s *Server) fetchBlob(ctx context.Context, set *settings, client *remoteCli
 }
 
 // storePulled stores the manifests of a pull, the ones an index names before
-// the index, and points the tag at the last. The tag is replaced, not merged
-// into: what was pulled is what the tag is to hold.
-func (s *Server) storePulled(store *registryStore, name, tag string, top pulledManifest, children []pulledManifest, user *account) error {
+// the index, and points the tag at the last, then stores what is attached to
+// them. The tag is replaced, not merged into: what was pulled is what the tag
+// is to hold.
+func (s *Server) storePulled(store *registryStore, name, tag string, top pulledManifest, children []pulledManifest, attached []attachedManifest, user *account) error {
 	s.registryMu.RLock()
 	defer s.registryMu.RUnlock()
 	lock := registryLock(&s.registryRepositoryLocks, name)
 	lock.Lock()
 	defer lock.Unlock()
-	if err := s.storePulledLocked(store, name, tag, top, children); err != nil {
+	if err := s.storePulledLocked(store, name, tag, top, children, attached); err != nil {
 		return err
 	}
 	s.log.Debug("registry tag set by a pull", "repository", name, "tag", tag,
@@ -439,7 +453,7 @@ func (s *Server) storePulled(store *registryStore, name, tag string, top pulledM
 // storePulledLocked is storePulled for a caller that holds the registry's
 // lock and the repository's already: an import, which commits the blobs under
 // the same hold, so the garbage collection never sees them unreferenced.
-func (s *Server) storePulledLocked(store *registryStore, name, tag string, top pulledManifest, children []pulledManifest) error {
+func (s *Server) storePulledLocked(store *registryStore, name, tag string, top pulledManifest, children []pulledManifest, attached []attachedManifest) error {
 	for _, manifest := range append(children, top) {
 		if _, err := store.putBlob(manifest.body, manifest.digest.Algorithm()); err != nil {
 			return err
@@ -460,6 +474,9 @@ func (s *Server) storePulledLocked(store *registryStore, name, tag string, top p
 	}
 	previous, had := tags[tag]
 	tags[tag] = top.digest
+	if err := storeAttachedLocked(store, name, attached, tags); err != nil {
+		return err
+	}
 	if err := store.writeTags(name, tags); err != nil {
 		return err
 	}
@@ -507,6 +524,7 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 	var children []localManifest
 	var blobs []v1.Descriptor
 	var platforms []string
+	subjects := []digest.Digest{top.digest}
 	if isIndexType(top.mediaType) {
 		kept, err := keptEntries(doc, filter)
 		if err != nil {
@@ -519,6 +537,9 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 			}
 			children = append(children, child)
 			blobs = addBlobs(blobs, imageBlobs(childDoc)...)
+			if !isAttestation(entry) {
+				subjects = append(subjects, child.digest)
+			}
 			if entry.Platform != nil && !isAttestation(entry) {
 				platforms = append(platforms, platformKey(entry.Platform))
 			}
@@ -529,6 +550,7 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 				return "", err
 			}
 			top = localManifest{body: body, mediaType: top.mediaType, digest: rebuilt}
+			subjects = subjects[1:]
 		}
 	} else {
 		key := ""
@@ -544,6 +566,11 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 		}
 		blobs = imageBlobs(doc)
 	}
+	attached, err := s.localAttached(ctx, store, name, subjects)
+	if err != nil {
+		return "", err
+	}
+	blobs = addBlobs(blobs, attachedBlobs(attached)...)
 	// the sizes are the store's, which is what is sent
 	for i := range blobs {
 		info, err := store.blobInfo(blobs[i].Digest)
@@ -574,22 +601,62 @@ func (s *Server) pushImage(ctx context.Context, set *settings, job *registryJob,
 		sent++
 	}
 	for _, child := range children {
-		if err := client.putManifest(ctx, child.digest.String(), child.mediaType, child.body); err != nil {
+		if _, err := client.putManifest(ctx, child.digest.String(), child.mediaType, child.body); err != nil {
 			return "", err
 		}
 	}
-	if err := client.putManifest(ctx, target.tag, top.mediaType, top.body); err != nil {
+	if _, err := client.putManifest(ctx, target.tag, top.mediaType, top.body); err != nil {
 		return "", err
+	}
+	// the referrers go once their subjects are there, which a registry may
+	// insist on
+	if err := pushAttached(ctx, client, attached); err != nil {
+		return "", fmt.Errorf("%s:%s is pushed, but not all of its signatures and attestations: %w",
+			name, tag, err)
 	}
 	s.log.Info("registry image pushed", "repository", name, "tag", tag, "target", target.String(),
 		"digest", top.digest.String(), "platforms", strings.Join(platforms, ","), "blobs", len(blobs),
-		"sent", sent, "bytes", job.bytesTotal.Load(), "user", nameOf(user),
+		"attached", len(attached), "sent", sent, "bytes", job.bytesTotal.Load(), "user", nameOf(user),
 		"took", time.Since(job.started).Round(time.Millisecond))
 	message := "Pushed " + name + ":" + tag + " to " + target.String()
 	if len(filter) > 0 && len(platforms) > 0 {
 		message += " for " + strings.Join(platforms, ", ")
 	}
-	return message + ".", nil
+	return withAttached(message, attached) + ".", nil
+}
+
+// localAttached finds what is attached to the subjects in a repository of the
+// store, leaving out what the store does not have all of the blobs of.
+func (s *Server) localAttached(ctx context.Context, store *registryStore, name string, subjects []digest.Digest) ([]attachedManifest, error) {
+	src, err := newLocalSource(store, name)
+	if err != nil {
+		return nil, err
+	}
+	found, err := findAttached(ctx, src, subjects, s.log)
+	if err != nil {
+		return nil, err
+	}
+	var complete []attachedManifest
+	for _, attached := range found {
+		missing := ""
+		for _, blob := range attached.blobs() {
+			if _, err := store.blobInfo(blob.Digest); err != nil {
+				missing = blob.Digest.String()
+				break
+			}
+		}
+		if missing != "" {
+			s.log.Warn("registry leaves out a referrer whose blob is gone", "repository", name,
+				"digest", attached.manifest.digest.String(), "blob", missing)
+			continue
+		}
+		complete = append(complete, attached)
+	}
+	keep := map[digest.Digest]bool{}
+	for _, d := range subjects {
+		keep[d] = true
+	}
+	return keepAttached(complete, keep), nil
 }
 
 // sendBlob uploads a blob of the store.

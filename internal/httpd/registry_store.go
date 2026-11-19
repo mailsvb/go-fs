@@ -324,8 +324,13 @@ func (st *registryStore) addReferrer(name string, subject, d digest.Digest) erro
 	return touchFile(st.log, filepath.Join(st.referrersPath(name, subject), referrerFile(d)))
 }
 
+// removeReferrer forgets that a manifest names subject, and the subject's
+// folder of referrers with its last one.
 func (st *registryStore) removeReferrer(name string, subject, d digest.Digest) {
-	_ = logging.Remove(st.log, filepath.Join(st.referrersPath(name, subject), referrerFile(d)))
+	folder := st.referrersPath(name, subject)
+	_ = logging.Remove(st.log, filepath.Join(folder, referrerFile(d)))
+	// a folder that still lists a referrer is not removed
+	_ = logging.Remove(st.log, folder)
 }
 
 // referrers lists the manifests whose subject is the given digest, in the

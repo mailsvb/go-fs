@@ -1,0 +1,1 @@
+{"critical":{"identity":{"docker-reference":"ghcr.io/ublue-os/base-main"},"image":{"docker-manifest-digest":"sha256:0da9aa01d22a97fbc474d1eec650144bb0f3015ed07b057c2303f37164a4e08b"},"type":"cosign container image signature"},"optional":null}

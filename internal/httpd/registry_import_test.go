@@ -509,3 +509,43 @@ func TestTheListingOffersTheImportToTheRegistry(t *testing.T) {
 		t.Error("an account of the registry is not offered the import")
 	}
 }
+
+func TestRegistryImportsTheReferrersOfAnImage(t *testing.T) {
+	server := importServer(t, nil)
+	a := newSignedArchive(t)
+	ci := login(t, server, "/", pusher, pusherPassword)
+	upload := uploadArchive(t, server, ci, "signed.tar", a.data, len(a.data))
+	job := startImport(t, server, "/?go-fs=registry-import", ci, map[string]string{"upload": upload})
+	if len(job.Images) != 2 {
+		t.Fatalf("the import offers %+v", job.Images)
+	}
+	if res, body := confirmImport(t, server, ci, job.ID,
+		map[string]any{"index": 0, "targets": []string{"team/app:1"}},
+		map[string]any{"index": 1, "targets": []string{"team/odd:sbom"}}); res.StatusCode != http.StatusAccepted {
+		t.Fatalf("confirming answered %d: %s", res.StatusCode, body)
+	}
+	if job = waitForImportEnd(t, server, job.ID, ci); job.State != jobDone {
+		t.Fatalf("the import ended %s: %s", job.State, job.Message)
+	}
+	if !strings.Contains(job.Message, "team/app:1 (linux/amd64) with its 3 signatures and attestations") {
+		t.Errorf("the import says %q", job.Message)
+	}
+	img := a.img.desc.Digest
+	if got := referrersIn(t, server, "team/app", img); len(got) != 1 || got[0] != a.sbom.desc.Digest {
+		t.Errorf("the referrers of the image are %v", got)
+	}
+	if got := referrersIn(t, server, "team/app", a.sbom.desc.Digest); len(got) != 1 || got[0] != a.sbomSig.desc.Digest {
+		t.Errorf("the referrers of the sbom are %v", got)
+	}
+	if got := tagDigest(t, server, "team/app", "sha256-"+img.Encoded()+".sig"); got != a.sig.desc.Digest {
+		t.Errorf("cosign's tag names %q", got)
+	}
+	// stored on its own, the artifact of an image elsewhere is a referrer all
+	// the same
+	odd := a.odd.desc.Digest
+	if got := referrersIn(t, server, "team/odd", digest.FromString("elsewhere")); len(got) != 1 || got[0] != odd {
+		t.Errorf("the referrers of the image elsewhere are %v", got)
+	}
+	res, body := server.reg(t, http.MethodGet, "/v2/team/app/blobs/"+digest.FromBytes([]byte("artifact sbom signature")).String(), nil)
+	expectStatus(t, res, body, http.StatusOK)
+}
