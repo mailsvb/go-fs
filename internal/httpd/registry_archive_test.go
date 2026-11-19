@@ -618,3 +618,82 @@ func TestArchiveRepository(t *testing.T) {
 		t.Error("isArchiveName")
 	}
 }
+
+// ociArtifact is an artifact of an OCI layout, of one blob, attached to
+// subject where there is one.
+func ociArtifact(subject *v1.Descriptor, artifactType, salt string) ociImage {
+	empty := []byte("{}")
+	content := []byte("artifact " + salt)
+	manifest, _ := json.Marshal(manifestDoc{SchemaVersion: 2, MediaType: v1.MediaTypeImageManifest,
+		ArtifactType: artifactType, Config: ptr(describe(v1.MediaTypeEmptyJSON, empty)),
+		Layers: []v1.Descriptor{describe(artifactType, content)}, Subject: subject})
+	desc := describe(v1.MediaTypeImageManifest, manifest)
+	desc.ArtifactType = artifactType
+	return ociImage{manifest: manifest, desc: desc, blobs: map[string][]byte{
+		blobName(digest.FromBytes(empty)):    empty,
+		blobName(digest.FromBytes(content)):  content,
+		blobName(digest.FromBytes(manifest)): manifest,
+	}}
+}
+
+// signedArchive is an OCI layout as oras copy -r and cosign save write one:
+// an image, its referrers and cosign's tags beside it in index.json, the
+// signature of a referrer among them, and an artifact of an image the
+// archive does not hold.
+type signedArchive struct {
+	data                         []byte
+	img, sbom, sbomSig, sig, odd ociImage
+}
+
+func newSignedArchive(t *testing.T) signedArchive {
+	t.Helper()
+	var a signedArchive
+	a.img = newOCIImage(t, "linux/amd64", "signed")
+	subject := a.img.desc
+	subject.Platform = nil
+	a.sbom = ociArtifact(&subject, "application/spdx+json", "sbom")
+	a.sbomSig = ociArtifact(ptr(a.sbom.desc), "application/vnd.dev.cosign.artifact.sig.v1+json", "sbom signature")
+	// cosign's signature, by its tag and with no subject
+	a.sig = ociArtifact(nil, "application/vnd.dev.cosign.artifact.sig.v1+json", "signature")
+	elsewhere := v1.Descriptor{MediaType: v1.MediaTypeImageManifest, Digest: digest.FromString("elsewhere"), Size: 10}
+	a.odd = ociArtifact(&elsewhere, "application/spdx+json", "of an image elsewhere")
+	a.data = tarOf(t, layoutEntries([]v1.Descriptor{
+		// the signature of the referrer before the referrer, as a layout may
+		// list them
+		a.sbomSig.desc,
+		named(a.img.desc, v1.AnnotationRefName, "app:1"),
+		a.sbom.desc,
+		named(a.sig.desc, v1.AnnotationRefName, "sha256-"+a.img.desc.Digest.Encoded()+".sig"),
+		a.odd.desc,
+	}, a.img.blobs, a.sbom.blobs, a.sbomSig.blobs, a.sig.blobs, a.odd.blobs)...)
+	return a
+}
+
+func TestImportArchiveReferrersGoWithTheirImage(t *testing.T) {
+	a := newSignedArchive(t)
+	archive := mustReadArchive(t, a.data, "signed.tar")
+	if len(archive.images) != 2 {
+		t.Fatalf("the archive offers %d images, want the image and the artifact of another", len(archive.images))
+	}
+	image := archive.images[0]
+	if image.top.digest != a.img.desc.Digest || archive.images[1].top.digest != a.odd.desc.Digest {
+		t.Fatalf("the archive offers %s and %s", image.top.digest, archive.images[1].top.digest)
+	}
+	var got []string
+	for _, attached := range image.attached {
+		got = append(got, fmt.Sprintf("%s>%s%v", attached.manifest.digest.Encoded()[:6],
+			attached.subject.Encoded()[:6], attached.tags))
+	}
+	want := []string{
+		fmt.Sprintf("%s>%s[]", a.sbom.desc.Digest.Encoded()[:6], a.img.desc.Digest.Encoded()[:6]),
+		fmt.Sprintf("%s>%s[sha256-%s.sig]", a.sig.desc.Digest.Encoded()[:6], a.img.desc.Digest.Encoded()[:6],
+			a.img.desc.Digest.Encoded()),
+		fmt.Sprintf("%s>%s[]", a.sbomSig.desc.Digest.Encoded()[:6], a.sbom.desc.Digest.Encoded()[:6]),
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("attached:\n got %v\nwant %v", got, want)
+	}
+	if image.note != "Its 3 signatures and attestations come along." {
+		t.Errorf("the note is %q", image.note)
+	}
+}

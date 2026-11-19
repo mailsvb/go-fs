@@ -144,6 +144,21 @@ against their digests, and `maxUploadSize` applies to each as it does to a
 push. Note that the server connects to whatever host is typed in, from its own
 network: give `registry` only to accounts that may do that.
 
+Signatures, attestations and SBOMs go along with the image, so they can still
+be checked once it has moved. A pull asks the other registry for the
+referrers of the image and of each of its architectures; where it has no
+referrers API, it reads the index a client keeps under the tag
+`sha256-<hex>` instead. Either way it also looks for cosign's tags
+`sha256-<hex>.sig`, `.att` and `.sbom`, and keeps those tags. The same is done
+for what it finds, for a signature on an SBOM, and no further. A push sends
+them after the image: as referrers, plus cosign's tags only where they are the
+one link to a manifest or the other registry has no referrers API (its answer
+to a manifest with a `subject` lacks `OCI-Subject`); there it also adds what
+has no such tag to the index under `sha256-<hex>`. When only some
+architectures are copied, the signatures of the original index stay behind,
+as they do not hold for the index of its own. The dialog counts their blobs
+with the image's, and the banner says how many went along.
+
 **Importing image archives.** **Import** (top right) stores the images of an
 archive that a tool wrote to a file instead of pushing them, so no docker
 daemon is needed in between. Pick the file there and it is uploaded in chunks
@@ -167,6 +182,11 @@ as `skopeo` writes it, goes with the archive's file name. Change the targets,
 add tags, untick images or architectures, then press Import. An index whose
 architectures the archive holds only some of, as `ctr images export` leaves
 it without `--all-platforms`, is stored with those, in an index of its own.
+A manifest of an OCI layout whose `subject` is one of the images in it,
+or that is named only by a cosign tag beside one, as `oras copy -r` and
+`cosign save` write a layout, is not offered on its own but stored with that
+image, as a referrer and under its tag; one whose image is not in the archive
+is offered on its own, and is a referrer once stored all the same.
 Up to 30 minutes are given for that choice before what was read is let go.
 Nothing is stored until it is made, and the blobs and manifests then go in
 together, so a cleanup in between never takes half an image. What is not an

@@ -129,6 +129,9 @@ type archiveImage struct {
 	// from: an index cut to the platforms the archive has, or a manifest
 	// built for a docker save.
 	note string
+	// attached are the signatures, attestations and SBOMs of the image the
+	// archive holds, which are stored with it.
+	attached []attachedManifest
 }
 
 // layerCheck is a compressed layer of a docker save, whose content has to be
@@ -733,7 +736,99 @@ func (a *imageArchive) resolveLayout() error {
 		image.targets = a.targetsOf(image.names)
 		a.images = append(a.images, *image)
 	}
+	a.attachReferrers()
 	return nil
+}
+
+// attachReferrers moves what the layout holds of an image's signatures,
+// attestations and SBOMs from the images it offers to the image they belong
+// to: a manifest whose subject is one of the image's, or one named only by
+// cosign's tags beside it, as oras and cosign write a layout. What belongs to
+// none of the images stays on offer, to be stored on its own.
+func (a *imageArchive) attachReferrers() {
+	// candidates are the images that are attached to something, by what
+	candidates := map[int]attachedManifest{}
+	for i, image := range a.images {
+		if attached, ok := attachable(image); ok {
+			candidates[i] = attached
+		}
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	// owner is the image each manifest that is attached to is with
+	owner := map[digest.Digest]int{}
+	for i, image := range a.images {
+		if _, ok := candidates[i]; ok {
+			continue
+		}
+		owner[image.top.digest] = i
+		for _, child := range image.children {
+			owner[child.digest] = i
+		}
+	}
+	moved := map[int]bool{}
+	for depth := 0; depth < referrerDepth; depth++ {
+		var found []int
+		for i := range a.images {
+			attached, ok := candidates[i]
+			if !ok || moved[i] {
+				continue
+			}
+			if _, ok := owner[attached.subject]; ok {
+				found = append(found, i)
+			}
+		}
+		for _, i := range found {
+			attached := candidates[i]
+			at := owner[attached.subject]
+			a.images[at].attached = append(a.images[at].attached, attached)
+			owner[attached.manifest.digest] = at
+			moved[i] = true
+		}
+	}
+	var kept []archiveImage
+	for i, image := range a.images {
+		if moved[i] {
+			continue
+		}
+		if n := len(image.attached); n > 0 {
+			note := "Its " + strings.TrimPrefix(describeAttached(image.attached), "with its ") + " come along."
+			if n == 1 {
+				note = "Its signature or attestation comes along."
+			}
+			image.note = strings.TrimSpace(image.note + " " + note)
+		}
+		kept = append(kept, image)
+	}
+	a.images = kept
+}
+
+// attachable reports whether an image of a layout is attached to another: a
+// manifest that names a subject, under no name or only under cosign's tags,
+// or one under nothing but cosign's tags of a single digest.
+func attachable(image archiveImage) (attachedManifest, bool) {
+	attached := attachedManifest{manifest: image.top, children: image.children}
+	if subject := image.top.doc.Subject; subject != nil {
+		attached.subject = subject.Digest
+	}
+	for _, name := range image.names {
+		tag := name
+		if at := strings.LastIndex(name, ":"); at > strings.LastIndex(name, "/") {
+			tag = name[at+1:]
+		} else if strings.ContainsAny(name, "/:") {
+			return attachedManifest{}, false
+		}
+		d, ok := parseFallbackTag(tag)
+		if !ok || (attached.subject != "" && d != attached.subject) {
+			return attachedManifest{}, false
+		}
+		attached.subject = d
+		if !slices.Contains(attached.tags, tag) {
+			attached.tags = append(attached.tags, tag)
+		}
+	}
+	return attached, attached.subject != ""
 }
 
 // layoutName is the reference an entry of an index.json names its image by:
