@@ -363,6 +363,44 @@
     return section;
   }
 
+  // The signatures, attestations and SBOMs are one fold: they are what an
+  // admin checks now and then, not every time.
+  function artifactsSection(artifacts) {
+    var section = el("details", "platform artifacts");
+    var heading = el("summary");
+    heading.appendChild(el("span", "badge artifacts",
+      artifacts.length === 1 ? "1 signature or attestation" : artifacts.length + " signatures and attestations"));
+    section.appendChild(heading);
+    var list = el("ol");
+    artifacts.forEach(function (artifact) {
+      var item = el("li");
+      var title = el("div");
+      title.appendChild(el("span", "badge", artifact.kind));
+      if (artifact.platform) {
+        title.appendChild(el("span", "meta", " for " + artifact.platform));
+      }
+      if (!artifact.signed) {
+        title.appendChild(el("span", "meta", " not signed"));
+      } else if (artifact.verified === "yes") {
+        title.appendChild(el("span", "badge artifacts verified", "verified by " + artifact.trustedBy));
+      } else if (artifact.verified === "no") {
+        title.appendChild(el("span", "badge artifacts unverified", "not verified"));
+      }
+      item.appendChild(title);
+      item.appendChild(facts([
+        ["Signer", artifact.signer, true],
+        ["Why not verified", artifact.problem],
+        ["Manifest", artifact.digest, true],
+        ["Artifact type", artifact.artifactType, true],
+        ["Tag", artifact.tag, true],
+        ["Pushed", artifact.pushed ? when(artifact.pushed) : ""]
+      ]));
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+    return section;
+  }
+
   function showDetails(row) {
     request("GET", tagURL("registry-image", row)).then(function (res) {
       return res.json();
@@ -394,6 +432,9 @@
       image.platforms.forEach(function (platform) {
         holder.appendChild(platformSection(platform));
       });
+      if (image.artifacts.length > 0) {
+        holder.appendChild(artifactsSection(image.artifacts));
+      }
       details.showModal();
     }).catch(failed);
   }

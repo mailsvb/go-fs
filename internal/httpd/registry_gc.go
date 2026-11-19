@@ -110,6 +110,7 @@ func (s *Server) collectRegistryGarbage(store *registryStore, cutoff time.Time) 
 		s.log.Error("registry cleanup cannot list the repositories", "error", err)
 		return 0, 0
 	}
+	s.dropDanglingArtifacts(store, repositories, cutoff)
 	marked := map[digest.Digest]bool{}
 	for _, name := range repositories {
 		referenced := map[digest.Digest]bool{}
@@ -179,6 +180,180 @@ func (s *Server) collectRegistryGarbage(store *registryStore, cutoff time.Time) 
 		s.log.Info("registry cleanup done", "blobs", removed, "bytes", freed)
 	}
 	return removed, freed
+}
+
+// dropDanglingArtifacts forgets the signatures, attestations, SBOMs and other
+// artifacts whose image is gone, so the collection can take their blobs. Every
+// manifest a repository holds is otherwise kept, tagged or not, since someone
+// may pull it by its digest; an artifact that belongs to an image nobody can
+// pull any more is of no use to anyone.
+//
+// An artifact belongs to an image in one of two ways: by its subject, or by a
+// fallback tag named after the image's digest, sha256-<hex>.sig and the like.
+// Such a tag is removed once no repository holds the manifest it names, and
+// with it the manifest it pointed to unless another tag still does. A manifest
+// with a subject no repository holds is removed when no tag points to it.
+// Either way, only what is older than cutoff: a copy may bring the signature
+// before the image it is for. Whatever an index of the registry still names is
+// kept. Removing one artifact can leave another dangling, a signature of an
+// SBOM say, so it repeats until nothing more is found.
+//
+// The subject counts as held when any repository holds it: cosign stores
+// signatures in another repository than their image when COSIGN_REPOSITORY is
+// set. The caller holds registryMu exclusively, so nothing is pushed
+// meanwhile.
+func (s *Server) dropDanglingArtifacts(store *registryStore, repositories []string, cutoff time.Time) {
+	type repository struct {
+		revisions []digest.Digest
+		tags      map[string]digest.Digest
+		// the fallback tags given up and what they pointed to, and the
+		// manifests given up
+		droppedTags map[string]digest.Digest
+		dropped     map[digest.Digest]bool
+	}
+	held := map[digest.Digest]int{}
+	docs := map[digest.Digest]*manifestDoc{}
+	named := map[digest.Digest]bool{}
+	repos := map[string]*repository{}
+	for _, name := range repositories {
+		revisions, err := store.revisions(name)
+		if err != nil {
+			// the collection that follows says so, and keeps everything
+			return
+		}
+		tags, err := store.readTags(name)
+		if err != nil {
+			s.log.Error("registry cleanup cannot read the tags, no artifact is dropped",
+				"repository", name, "error", err)
+			return
+		}
+		repos[name] = &repository{revisions: revisions, tags: tags,
+			droppedTags: map[string]digest.Digest{}, dropped: map[digest.Digest]bool{}}
+		for _, d := range revisions {
+			held[d]++
+			if _, read := docs[d]; read {
+				continue
+			}
+			docs[d] = nil
+			data, err := store.readBlob(d, maxManifestSize)
+			var doc manifestDoc
+			if err != nil || json.Unmarshal(data, &doc) != nil {
+				continue
+			}
+			docs[d] = &doc
+			for _, entry := range doc.Manifests {
+				named[entry.Digest] = true
+			}
+		}
+	}
+
+	old := func(name string, d digest.Digest) bool {
+		changed, err := store.revisionTime(name, d)
+		return err == nil && !changed.After(cutoff)
+	}
+	for found := true; found; {
+		found = false
+		for _, name := range repositories {
+			repo := repos[name]
+			for tag, target := range repo.tags {
+				subject, _, ok := fallbackTagSubject(tag)
+				if !ok || held[subject] > 0 || !old(name, target) {
+					continue
+				}
+				delete(repo.tags, tag)
+				repo.droppedTags[tag] = target
+				found = true
+			}
+			tagged := map[digest.Digest]bool{}
+			for _, target := range repo.tags {
+				tagged[target] = true
+			}
+			fellBack := map[digest.Digest]bool{}
+			for _, target := range repo.droppedTags {
+				fellBack[target] = true
+			}
+			for _, d := range repo.revisions {
+				if repo.dropped[d] || tagged[d] || named[d] || !old(name, d) {
+					continue
+				}
+				doc := docs[d]
+				orphan := doc != nil && doc.Subject != nil && held[doc.Subject.Digest] == 0
+				if !orphan && !fellBack[d] {
+					continue
+				}
+				repo.dropped[d] = true
+				held[d]--
+				found = true
+			}
+		}
+	}
+
+	for _, name := range repositories {
+		repo := repos[name]
+		if len(repo.droppedTags) == 0 && len(repo.dropped) == 0 {
+			continue
+		}
+		lock := registryLock(&s.registryRepositoryLocks, name)
+		lock.Lock()
+		s.dropArtifacts(store, name, repo.droppedTags, repo.dropped, docs)
+		lock.Unlock()
+	}
+}
+
+// dropArtifacts removes what dropDanglingArtifacts found in one repository.
+// The tags are read again, under the repository's lock: a tag deleted
+// meanwhile is not written back.
+func (s *Server) dropArtifacts(store *registryStore, name string, droppedTags map[string]digest.Digest,
+	dropped map[digest.Digest]bool, docs map[digest.Digest]*manifestDoc) {
+	tags, err := store.readTags(name)
+	if err != nil {
+		s.log.Error("registry cleanup cannot read the tags, no artifact is dropped",
+			"repository", name, "error", err)
+		return
+	}
+	untagged := false
+	for tag, target := range droppedTags {
+		if tags[tag] == target {
+			delete(tags, tag)
+			untagged = true
+		}
+	}
+	if untagged {
+		if err := store.writeTags(name, tags); err != nil {
+			s.log.Error("registry cleanup cannot remove the tags of an image that is gone",
+				"repository", name, "error", err)
+			return
+		}
+	}
+	for tag, target := range droppedTags {
+		s.log.Info("registry cleanup removed a tag whose image is gone", "repository", name,
+			"tag", tag, "digest", target.String())
+	}
+	tagged := map[digest.Digest]bool{}
+	for _, target := range tags {
+		tagged[target] = true
+	}
+	for d := range dropped {
+		if tagged[d] {
+			continue
+		}
+		attrs := []any{"repository", name, "digest", d.String()}
+		if doc := docs[d]; doc != nil {
+			if doc.Subject != nil {
+				store.removeReferrer(name, doc.Subject.Digest, d)
+				attrs = append(attrs, "subject", doc.Subject.Digest.String())
+			}
+			if kind := artifactKindOf(*doc); kind != "" {
+				attrs = append(attrs, "artifact", kind)
+			}
+		}
+		if err := store.removeRevision(name, d); err != nil && !errors.Is(err, errRegistryNotFound) {
+			s.log.Error("registry cleanup cannot remove an artifact whose image is gone",
+				append(attrs, "error", err)...)
+			continue
+		}
+		s.log.Info("registry cleanup removed an artifact whose image is gone", attrs...)
+	}
 }
 
 // markManifest marks a manifest and everything it refers to. depth keeps an

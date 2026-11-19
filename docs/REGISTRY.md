@@ -212,6 +212,103 @@ blobs older than 10 minutes rather than 24 hours, so what a deleted tag left
 behind goes right away while a push under way keeps its layers; uploads are
 swept as the hourly cleanup sweeps them.
 
+**Signatures and attestations.** The registry stores the signatures,
+attestations and SBOMs that tools push next to an image, and gives them back,
+so `cosign verify`, `notation verify`, `gh attestation verify` and admission
+controllers such as Kyverno or the Sigstore policy-controller can check images
+pulled from it. They are ordinary manifests, attached to their image in one of
+two ways:
+
+| Tool | Attached by | What the registry page calls it |
+|---|---|---|
+| cosign 2 `sign` | the tag `sha256-<hex>.sig` | cosign signature |
+| cosign 2 `attest` | the tag `sha256-<hex>.att` | SLSA provenance, SPDX SBOM, … by its predicate |
+| cosign 2 `attach sbom` | the tag `sha256-<hex>.sbom` | SPDX SBOM or CycloneDX SBOM, not signed |
+| cosign 3 `sign` | its subject, as a Sigstore bundle | Sigstore signature |
+| GitHub `actions/attest-build-provenance`, `gh attestation` | its subject, as a Sigstore bundle | SLSA provenance |
+| notation `sign` | its subject | Notation signature |
+| oras `attach` and any other OCI 1.1 artifact | its subject | by its artifact type |
+
+The referrers API, `GET /v2/<name>/referrers/<digest>`, lists what names a
+manifest as its subject, with the `artifactType` filter; a `+` in the filter
+that was not escaped is read as one. The `sha256-<hex>.sig` tags are stored as
+the tags they are.
+
+The registry page lists a tag's artifacts with it: the fallback tags of an
+image the repository holds are not rows of their own, and the row of the
+image shows a **signed** badge when one of them is a signature, **attested**
+when one is a signed statement, whose title names each kind. **Details** lists
+each artifact with its manifest, artifact type, fallback tag and push time,
+and the platform it is for when it is for one image of an index rather than
+the index itself.
+
+The cleanup removes what belongs to an image that is gone: a manifest whose
+subject no repository holds, and a fallback tag named after a digest no
+repository holds, with the manifest it pointed to. Both only once they are
+older than the cleanup's cutoff, as a copy may bring the signature before its
+image, and never what another tag still points to or an index names. A
+subject held by another repository counts, since cosign stores signatures
+elsewhere with `COSIGN_REPOSITORY`. Removing one artifact can leave another
+dangling, a signature of an SBOM say, which goes in the same run. An
+untagged image that is still there keeps its artifacts, as it keeps its blobs.
+
+**Verifying signatures.** Each `[[http.services.registryTrust]]` table names a
+signer the registry checks signatures against, for every repository or for
+those its `repositories` patterns name (`*` stands for anything, slashes
+included):
+
+```toml
+[[http.services.registryTrust]]
+name = "release"
+publicKey = "/etc/go-fs/cosign.pub"           # cosign sign --key, cosign attest --key
+
+[[http.services.registryTrust]]
+name = "notary"
+certificates = "/etc/go-fs/notation-ca.pem"   # notation sign
+
+[[http.services.registryTrust]]
+name = "github"
+trustedRoot = "/etc/go-fs/trusted_root.json"  # keyless: cosign 3, GitHub attestations
+identity = "https://github.com/acme/app/.github/workflows/release.yml@refs/tags/*"
+issuer = "https://token.actions.githubusercontent.com"
+repositories = ["acme/*"]
+```
+
+What is checked:
+
+- **cosign signatures and attestations made with a key**, under their `.sig`
+  and `.att` tags or as Sigstore bundles: ECDSA, Ed25519 and RSA public keys.
+- **Keyless Sigstore bundles**, as cosign 3 and GitHub's attestations store
+  them. The certificate has to chain to a Fulcio authority of the trusted
+  root, name the identity and the issuer, and have been valid when the Rekor
+  entry or the RFC 3161 timestamp says it was used. `gh attestation
+  trusted-root > trusted_root.json` writes the roots of Sigstore's public
+  instance and of GitHub's own, which signs the attestations of private
+  repositories, one per line; both are read.
+- **Notary Project signatures** in JWS envelopes, against the root
+  certificates, with their expiry. COSE envelopes are listed but not checked.
+
+The keyless check needs no network: the trusted root is read from its file,
+never refreshed online, so update it when Sigstore rotates its keys. Legacy
+keyless `.sig` signatures of cosign 2 are not checked.
+
+A signature is checked when it is pushed, which the log records as `registry
+signature verified`, with the trust and the signer, or `registry signature not
+verified`, with the reason. The page then shows **verified** when a verified
+signature is for what the tag points to or for each of its platforms,
+**partly verified** when only some platforms have one, and **not verified**
+when none verifies. **Details** names the trust and the signer of each, or why
+it was not verified. A repository no trust is for shows **signed** as before.
+The results are kept until the configuration is reloaded, and a change of the
+trusts takes effect with the reload. A key or root the registry cannot read
+is refused with the rest of the file.
+
+Nothing is refused for its signature: an unsigned or unverified image is
+pushed and pulled as any other. Whoever relies on a signature checks it
+where the image is pulled, with `cosign verify`, `notation verify`, `gh
+attestation verify` or a policy of the cluster. What the registry checks is
+for its admin to see.
+
 - **Plain HTTP.** Docker only talks to a registry over plain HTTP when it is
   `localhost` or listed in `insecure-registries` of the daemon's
   configuration; use the TLS port everywhere else.

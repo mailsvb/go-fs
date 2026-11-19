@@ -236,6 +236,7 @@ func (q *registryRequest) putManifest() {
 	q.s.log.Info("registry manifest pushed", "repository", name, "reference", ref,
 		"digest", d.String(), "mediaType", mediaType, "user", nameOf(q.user),
 		"address", clientAddress(q.set, q.r))
+	q.logVerification(d, doc, tag)
 	header := q.w.Header()
 	header.Set("Location", "/v2/"+name+"/manifests/"+d.String())
 	header.Set("Docker-Content-Digest", d.String())
@@ -393,7 +394,9 @@ func (q *registryRequest) referrersOf() {
 		q.internal("cannot list the referrers", err)
 		return
 	}
-	filter := q.r.URL.Query().Get("artifactType")
+	// a media type has no space in it, but often a plus, which a query
+	// that was not escaped carries as one
+	filter := strings.ReplaceAll(q.r.URL.Query().Get("artifactType"), " ", "+")
 	descriptors := []v1.Descriptor{}
 	for _, d := range found {
 		rev, err := q.store.readRevision(q.route.name, d)

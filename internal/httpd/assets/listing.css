@@ -629,6 +629,9 @@ td.c-plat { white-space: normal; }
   white-space: nowrap;
 }
 .badge.more { border-style: dashed; cursor: help; }
+.badge.artifacts { border-color: var(--accent); color: var(--accent); cursor: help; }
+.badge.verified { border-style: solid; font-weight: 600; }
+.badge.unverified { border-color: var(--line); border-style: dashed; color: var(--faint); }
 td.c-acts button[aria-expanded="true"] { opacity: 1; background: var(--ground); color: var(--ink); }
 
 .menu {
@@ -708,6 +711,9 @@ dl.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .layers ol { margin: 0.4rem 0 0; padding-left: 1.4rem; }
 .layers li { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.1rem 0; }
 .layers li .meta { flex: none; }
+.artifacts ol { margin: 0; padding: 0; list-style: none; }
+.artifacts li + li { margin-top: 0.75rem; }
+.artifacts li > div { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.3rem; font-size: 0.85rem; }
 
 /* The login page: one card, centred both ways, with nothing else on it. The
    page at / that asks what to log in to has tiles of the card's size, side by

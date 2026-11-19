@@ -773,6 +773,37 @@ sonos = false
 # 1400 on the addresses of the private networks it is on.
 sonosSpeakers = []
 
+# The signers whose signatures the container registry verifies, one table per
+# signer. Every signature and attestation pushed next to an image, by cosign,
+# notation or GitHub's actions/attest-build-provenance, is checked against
+# them, and the registry page says which signer verified an image, or that
+# none did. Nothing is refused: a client that relies on a signature still
+# verifies it itself.
+# [[http.services.registryTrust]]
+# Names the signer on the registry page: letters, digits, dots, dashes and
+# underscores. Unique, whatever its case.
+# name = "release"
+# A PEM file with the public key signatures are made with, such as the
+# cosign.pub of cosign generate-key-pair: any ECDSA, Ed25519 or RSA key.
+# Exactly one of publicKey, certificates and trustedRoot is set.
+# publicKey = "/etc/go-fs/cosign.pub"
+# A PEM file with the root certificates of trusted Notary Project
+# signatures, as notation keeps them in its trust store.
+# certificates = "/etc/go-fs/notation-ca.pem"
+# A Sigstore trusted_root.json, for keyless signatures: Sigstore publishes the
+# one of its public instance, and gh attestation trusted-root prints GitHub's,
+# which attestations of private repositories need. It is read as it is, never
+# refreshed online.
+# trustedRoot = "/etc/go-fs/trusted_root.json"
+# Who a keyless signature has to be made by: the identity its certificate
+# names, a * standing for anything, and the OIDC issuer that vouched for it.
+# Both are needed with trustedRoot.
+# identity = "https://github.com/acme/app/.github/workflows/release.yml@refs/tags/*"
+# issuer = "https://token.actions.githubusercontent.com"
+# The repositories the signer is trusted for, a * standing for anything.
+# Empty is every repository.
+# repositories = ["acme/*"]
+
 # The TLS interface of the same HTTP server: it serves the folder, accounts and
 # limits of [http] above.
 [https]

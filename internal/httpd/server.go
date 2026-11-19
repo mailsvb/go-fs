@@ -188,6 +188,10 @@ type settings struct {
 	// disks is the folder of the Disks page, nil while it is off or the
 	// binary was built without it.
 	disks diskFolder
+	// registryTrusts are [[http.services.registryTrust]], read, and
+	// verifications what checking signatures against them came to.
+	registryTrusts []registryTrust
+	verifications  *verificationCache
 }
 
 func (s *Server) settings() *settings {
@@ -270,11 +274,15 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 	if err != nil {
 		return nil, fmt.Errorf("general.baseFolderDisks: %w", err)
 	}
+	trusts, err := loadRegistryTrusts(cfg.RegistryTrust)
+	if err != nil {
+		return nil, err
+	}
 	return &settings{cfg: cfg, https: https, accounts: accounts, tokens: bearers,
 		s3accounts: s3accounts, registryAccounts: registryAccounts, registry: store,
 		jellyfin: len(cfg.JellyfinFolders) > 0, subsonic: len(cfg.SubsonicFolders) > 0, publicPaths: public,
 		musicPaths: musicPaths, proxies: proxies, ssh: sshCfg, servers: servers,
-		disks: disks}, nil
+		disks: disks, registryTrusts: trusts, verifications: &verificationCache{}}, nil
 }
 
 // Reload swaps the accounts, the tokens, the paths and the limits that are read

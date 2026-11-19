@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -18,6 +19,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/mailsvb/go-fs/internal/imagesig"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -472,17 +474,26 @@ type registryTag struct {
 	digest     digest.Digest
 	summary    imageSummary
 	pushed     time.Time
+	// artifacts are the signatures, attestations and SBOMs of the image
+	// and of each of its platforms
+	artifacts []registryArtifact
 }
 
 // registryTags reads the tags of a repository. A tag whose manifest cannot be
-// read is still listed, without what it is, so that it can be deleted.
-func (s *Server) registryTags(store *registryStore, name string) ([]registryTag, error) {
+// read is still listed, without what it is, so that it can be deleted. A
+// fallback tag of an image the repository holds is not: it is listed with
+// that image, as one of its artifacts.
+func (s *Server) registryTags(set *settings, name string) ([]registryTag, error) {
+	store := set.registry
 	tags, err := store.readTags(name)
 	if err != nil {
 		return nil, err
 	}
 	found := make([]registryTag, 0, len(tags))
 	for tag, d := range tags {
+		if store.attachedTag(name, tag) {
+			continue
+		}
 		entry := registryTag{repository: name, tag: tag, digest: d}
 		if summary, err := s.summarize(store, name, d); err == nil {
 			entry.summary = summary
@@ -493,9 +504,189 @@ func (s *Server) registryTags(store *registryStore, name string) ([]registryTag,
 		if pushed, err := store.revisionTime(name, d); err == nil {
 			entry.pushed = pushed
 		}
+		entry.artifacts = artifactsOf(set, name, entry.subjects(), tags)
 		found = append(found, entry)
 	}
 	return found, nil
+}
+
+// subjects are the manifests a signature of the tag may be for: what the tag
+// points to, and each platform of an index. cosign signs the digest it is
+// given, the index's unless asked to recurse, and buildx and GitHub attest
+// the index's.
+func (entry registryTag) subjects() []digest.Digest {
+	subjects := []digest.Digest{entry.digest}
+	for _, platform := range entry.summary.platforms {
+		if !slices.Contains(subjects, platform.digest) {
+			subjects = append(subjects, platform.digest)
+		}
+	}
+	return subjects
+}
+
+// attachedTag reports whether a tag is a fallback tag, sha256-<hex>.sig and
+// the like, of a manifest the repository holds.
+func (st *registryStore) attachedTag(name, tag string) bool {
+	subject, _, ok := fallbackTagSubject(tag)
+	if !ok {
+		return false
+	}
+	_, err := st.readRevision(name, subject)
+	return err == nil
+}
+
+// registryArtifact is a signature, an attestation, an SBOM or another
+// artifact stored for an image.
+type registryArtifact struct {
+	kind         string
+	subject      digest.Digest
+	digest       digest.Digest
+	mediaType    string
+	artifactType string
+	// signed says that it carries a signature: an SBOM cosign attached is
+	// a plain document, one it attested is signed
+	signed bool
+	// tag is the fallback tag it was found by, "" for a referrer
+	tag    string
+	pushed time.Time
+	// verification is what checking its signature against the trusts of
+	// the repository came to, nil when it carries none or there are none
+	verification *imagesig.Result
+}
+
+// fallbackKinds name what is under a fallback tag that does not say what it
+// is itself.
+var fallbackKinds = map[string]string{"sig": "signature", "att": "attestation", "sbom": "SBOM"}
+
+// artifactsOf finds the artifacts a repository holds for some manifests: their
+// referrers, and what their fallback tags point to. One found both ways is
+// listed once.
+func artifactsOf(set *settings, name string, subjects []digest.Digest, tags map[string]digest.Digest) []registryArtifact {
+	store := set.registry
+	var found []registryArtifact
+	seen := map[digest.Digest]bool{}
+	add := func(subject, d digest.Digest, tag, fallback string) {
+		if seen[d] {
+			return
+		}
+		rev, err := store.readRevision(name, d)
+		if err != nil {
+			return
+		}
+		doc, err := readManifest(store, d)
+		if err != nil {
+			return
+		}
+		seen[d] = true
+		entry := registryArtifact{kind: artifactKindOf(doc), subject: subject, digest: d,
+			mediaType: rev.MediaType, artifactType: doc.ArtifactType, signed: artifactSigned(doc), tag: tag}
+		if entry.artifactType == "" && doc.Config != nil {
+			entry.artifactType = doc.Config.MediaType
+		}
+		if entry.kind == "" {
+			entry.kind = fallback
+		}
+		if entry.kind == "" {
+			entry.kind = "artifact"
+		}
+		if pushed, err := store.revisionTime(name, d); err == nil {
+			entry.pushed = pushed
+		}
+		if entry.signed {
+			if result, checked := set.verifyArtifact(name, subject, d); checked {
+				entry.verification = &result
+			}
+		}
+		found = append(found, entry)
+	}
+	for _, subject := range subjects {
+		referrers, _ := store.referrers(name, subject)
+		for _, d := range referrers {
+			add(subject, d, "", "")
+		}
+	}
+	for _, tag := range slices.Sorted(maps.Keys(tags)) {
+		subject, suffix, ok := fallbackTagSubject(tag)
+		if !ok || !slices.Contains(subjects, subject) {
+			continue
+		}
+		if suffix != "" {
+			add(subject, tags[tag], tag, fallbackKinds[suffix])
+			continue
+		}
+		// the tag schema of the distribution specification: an index
+		// of the referrers
+		if index, err := readManifest(store, tags[tag]); err == nil {
+			for _, entry := range index.Manifests {
+				add(subject, entry.Digest, tag, "")
+			}
+		}
+	}
+	return found
+}
+
+// artifactsBadge sums up the artifacts of a tag in one badge. Where the
+// repository has trusts to check signatures against, it says what that came
+// to: verified when a verified signature is for what the tag points to or for
+// each of its platforms, partly verified when only some platforms have one,
+// and not verified when none was. Otherwise it says what there is: signed
+// when one of them is a signature, attested when one is a signed statement,
+// and else what they are. Its title names the trusts and each kind.
+func artifactsBadge(entry registryTag) *registryBadge {
+	if len(entry.artifacts) == 0 {
+		return nil
+	}
+	var kinds, trustedBy []string
+	signature, signed, checked := false, false, false
+	verified := map[digest.Digest]bool{}
+	for _, artifact := range entry.artifacts {
+		if !slices.Contains(kinds, artifact.kind) {
+			kinds = append(kinds, artifact.kind)
+		}
+		signature = signature || strings.HasSuffix(artifact.kind, "signature")
+		signed = signed || artifact.signed
+		if result := artifact.verification; result != nil {
+			checked = true
+			if result.OK {
+				verified[artifact.subject] = true
+				if !slices.Contains(trustedBy, result.TrustedBy) {
+					trustedBy = append(trustedBy, result.TrustedBy)
+				}
+			}
+		}
+	}
+	slices.Sort(kinds)
+	slices.Sort(trustedBy)
+	title := strings.Join(kinds, ", ")
+	if checked {
+		badge := &registryBadge{Label: "not verified", Title: "no trusted signer · " + title, Class: "unverified"}
+		if len(verified) > 0 {
+			all := verified[entry.digest]
+			if !all {
+				all = true
+				for _, platform := range entry.summary.platforms {
+					all = all && verified[platform.digest]
+				}
+			}
+			badge = &registryBadge{Label: "partly verified", Title: "verified by " + strings.Join(trustedBy, ", ") +
+				" for some platforms only · " + title, Class: "unverified"}
+			if all {
+				badge = &registryBadge{Label: "verified", Title: "verified by " + strings.Join(trustedBy, ", ") +
+					" · " + title, Class: "verified"}
+			}
+		}
+		return badge
+	}
+	label := "artifacts"
+	switch {
+	case signature:
+		label = "signed"
+	case signed:
+		label = "attested"
+	case len(kinds) == 1:
+		label = kinds[0]
+	}
+	return &registryBadge{Label: label, Title: title}
 }
 
 // --- the page --------------------------------------------------------------
@@ -542,6 +733,8 @@ type registryBadge struct {
 	Title string
 	// More stands in for the platforms a row has no room for.
 	More bool
+	// Class is a further class of the badge: verified or unverified.
+	Class string
 }
 
 // maxBadges is how many badges a row shows. A tag with more platforms shows
@@ -564,10 +757,12 @@ type registryRow struct {
 	Tag        string
 	Pull       string
 	Platforms  []registryBadge
-	Pushed     string
-	Unix       int64
-	Size       string
-	Bytes      int64
+	// Artifacts sums up the signatures and attestations, if there are any.
+	Artifacts *registryBadge
+	Pushed    string
+	Unix      int64
+	Size      string
+	Bytes     int64
 }
 
 type registryData struct {
@@ -630,7 +825,7 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 	}
 	var tags []registryTag
 	for _, name := range shown {
-		found, err := s.registryTags(store, name)
+		found, err := s.registryTags(set, name)
 		if err != nil {
 			s.logFor(r).Error("registry page cannot read the tags", "repository", name, "error", err)
 			http.Error(w, "Server Error", http.StatusInternalServerError)
@@ -752,7 +947,13 @@ func (s *Server) folderRow(store *registryStore, names []string, child string, v
 	var notes []string
 	if slices.Contains(names, child) {
 		if tags, err := store.readTags(child); err == nil {
-			notes = append(notes, plural(len(tags), "tag", "tags"))
+			shown := 0
+			for tag := range tags {
+				if !store.attachedTag(child, tag) {
+					shown++
+				}
+			}
+			notes = append(notes, plural(shown, "tag", "tags"))
 		}
 	}
 	below := 0
@@ -807,6 +1008,7 @@ func tagRow(entry registryTag, tree bool, host string) registryRow {
 		row.Platforms = append(row.Platforms[:maxBadges-1:maxBadges-1],
 			registryBadge{Label: "…more", Title: strings.Join(rest, ", "), More: true})
 	}
+	row.Artifacts = artifactsBadge(entry)
 	return row
 }
 
@@ -964,6 +1166,28 @@ type registryImageJSON struct {
 	Pull       string                 `json:"pull"`
 	Tags       []string               `json:"tags"`
 	Platforms  []registryPlatformJSON `json:"platforms"`
+	Artifacts  []registryArtifactJSON `json:"artifacts"`
+}
+
+// registryArtifactJSON is a signature, attestation or SBOM of the tag. Its
+// platform is the platform of the index it is for, "" when it is for what the
+// tag points to.
+type registryArtifactJSON struct {
+	Kind         string `json:"kind"`
+	Digest       string `json:"digest"`
+	MediaType    string `json:"mediaType"`
+	ArtifactType string `json:"artifactType,omitempty"`
+	Subject      string `json:"subject"`
+	Platform     string `json:"platform,omitempty"`
+	Tag          string `json:"tag,omitempty"`
+	Signed       bool   `json:"signed"`
+	Pushed       string `json:"pushed,omitempty"`
+	// Verified says whether the signature was checked against the trusts
+	// of the repository, and what that came to; "" when it was not.
+	Verified  string `json:"verified,omitempty"`
+	TrustedBy string `json:"trustedBy,omitempty"`
+	Signer    string `json:"signer,omitempty"`
+	Problem   string `json:"problem,omitempty"`
 }
 
 // registryTagQuery reads the repository and the tag a request names, and the
@@ -1047,8 +1271,48 @@ func (s *Server) registryImage(set *settings, w http.ResponseWriter, r *http.Req
 		}
 		answer.Platforms = append(answer.Platforms, entry)
 	}
+	answer.Artifacts = artifactsJSON(set, name, d, summary, tags)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, answer)
+}
+
+// artifactsJSON lists the artifacts of a tag that points to d for its
+// details.
+func artifactsJSON(set *settings, name string, d digest.Digest, summary imageSummary,
+	tags map[string]digest.Digest) []registryArtifactJSON {
+	entry := registryTag{digest: d, summary: summary}
+	platforms := map[digest.Digest]string{}
+	for _, platform := range summary.platforms {
+		if platform.digest != d {
+			platforms[platform.digest] = platform.key
+		}
+	}
+	found := []registryArtifactJSON{}
+	for _, artifact := range artifactsOf(set, name, entry.subjects(), tags) {
+		item := registryArtifactJSON{
+			Kind:         artifact.kind,
+			Digest:       artifact.digest.String(),
+			MediaType:    artifact.mediaType,
+			ArtifactType: artifact.artifactType,
+			Subject:      artifact.subject.String(),
+			Platform:     platforms[artifact.subject],
+			Tag:          artifact.tag,
+			Signed:       artifact.signed,
+		}
+		if !artifact.pushed.IsZero() {
+			item.Pushed = artifact.pushed.UTC().Format(time.RFC3339)
+		}
+		if result := artifact.verification; result != nil {
+			item.Verified = "no"
+			if result.OK {
+				item.Verified, item.TrustedBy, item.Signer = "yes", result.TrustedBy, result.Identity
+			} else {
+				item.Problem = result.Err
+			}
+		}
+		found = append(found, item)
+	}
+	return found
 }
 
 // registryUntag deletes a tag, as DELETE /v2/<name>/manifests/<tag> does.
