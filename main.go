@@ -182,7 +182,6 @@ func run(stop <-chan struct{}) error {
 	logging.Summary(logger.Logger, "read", *configPath)
 	config.TraceProbes(logger.Logger)
 	traceService(logger.Logger)
-	warnAboutSecrets(logger.Logger, *configPath, cfg)
 	warnAboutReserved(logger.Logger, cfg)
 	if viewer.Compiled && !viewer.Available() {
 		// a plain go build before the fetch makes a binary that works, but
@@ -206,7 +205,7 @@ func run(stop <-chan struct{}) error {
 	// the share links of files and the login tokens of browsers are signed
 	// with keys the file keeps, so a link handed out and a browser logged in
 	// survive a restart and an update; a file without them is given them
-	if ensured, generated, err := config.EnsureSecrets(*configPath, cfg, logger.Logger); err != nil {
+	if ensured, generated, moved, err := config.EnsureSecrets(*configPath, cfg, logger.Logger); err != nil {
 		logger.Warn("cannot store generated secrets in the configuration file, so share "+
 			"links stop working and browsers are logged out at every restart",
 			"path", *configPath, "error", err)
@@ -216,7 +215,15 @@ func run(stop <-chan struct{}) error {
 			logger.Info("generated a secret and stored it in the configuration file",
 				"key", key, "path", *configPath)
 		}
+		// a file from before [http] had its tables keeps them in [http]
+		for _, key := range moved {
+			logger.Info("moved a secret into its table of the configuration file",
+				"key", key, "path", *configPath)
+		}
 	}
+	// after the secrets, so that the retired keys it names are those still
+	// in the file rather than the ones just moved out of [http]
+	warnAboutSecrets(logger.Logger, *configPath, cfg)
 
 	keys, err := selfupdate.TrustedKeys()
 	if err != nil {

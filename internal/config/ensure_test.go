@@ -10,8 +10,20 @@ import (
 )
 
 // ensureIn writes body as a configuration file, ensures its generated secrets
-// and returns what the file says afterwards.
+// and returns what the file says afterwards. The file has none at the old
+// place directly in [http], so none may be moved.
 func ensureIn(t *testing.T, body string) (Config, string, []string) {
+	t.Helper()
+	cfg, written, generated, moved := ensureMoving(t, body)
+	if len(moved) != 0 {
+		t.Fatalf("moved = %v", moved)
+	}
+	return cfg, written, generated
+}
+
+// ensureMoving is ensureIn for a file that may keep its secrets directly in
+// [http], and returns what was moved from there as well.
+func ensureMoving(t *testing.T, body string) (Config, string, []string, []string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "go-fs.toml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -21,7 +33,7 @@ func ensureIn(t *testing.T, body string) (Config, string, []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ensured, generated, err := EnsureSecrets(path, cfg, nil)
+	ensured, generated, moved, err := EnsureSecrets(path, cfg, nil)
 	if err != nil {
 		t.Fatalf("EnsureSecrets: %v", err)
 	}
@@ -29,7 +41,7 @@ func ensureIn(t *testing.T, body string) (Config, string, []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ensured, string(written), generated
+	return ensured, string(written), generated, moved
 }
 
 // rereadSecrets parses what was written and checks that it holds the secrets
@@ -157,7 +169,7 @@ func TestEnsureSecretsKeepsTheFileMode(t *testing.T) {
 	if err := os.Chmod(path, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := EnsureSecrets(path, Default(), nil); err != nil {
+	if _, _, _, err := EnsureSecrets(path, Default(), nil); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
@@ -170,18 +182,69 @@ func TestEnsureSecretsKeepsTheFileMode(t *testing.T) {
 }
 
 // The secrets of a file written before [http] had its tables sit directly in
-// [http], where they are no longer read: the file is given new ones in the
-// tables, and the old keys are left where they are.
-func TestEnsureSecretsIgnoresTheFlatKeys(t *testing.T) {
-	body := "[http]\nport = 9082\nshareLinkSecret = \"" + strings.Repeat("s", 40) + "\"\n"
-	cfg, written, generated := ensureIn(t, body)
-	if !slices.Equal(generated, []string{"http.main.shareLinkSecret", "http.auth.httpSessionTokenSecret"}) {
-		t.Fatalf("generated = %v", generated)
+// [http], where they are no longer read. They are moved into their tables
+// rather than replaced, so that the share links handed out and the browsers
+// logged in survive the upgrade; every other key of [http] stays where it is.
+func TestEnsureSecretsMovesTheFlatKeys(t *testing.T) {
+	share := strings.Repeat("s", 40)
+	session, err := GenerateSessionSecret()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.HasPrefix(written, body) || cfg.HTTP.ShareLinkSecret == strings.Repeat("s", 40) {
+	body := "# the server\n[http]\nport = 9082\nshareLinkSecret = \"" + share + "\"\n" +
+		"# signs the logins\nhttpSessionTokenSecret = \"" + session + "\"\n\n[[users]]\nusername = \"john\"\n"
+	cfg, written, generated, moved := ensureMoving(t, body)
+	if len(generated) != 0 {
+		t.Errorf("generated = %v", generated)
+	}
+	if !slices.Equal(moved, []string{"http.main.shareLinkSecret", "http.auth.httpSessionTokenSecret"}) {
+		t.Errorf("moved = %v", moved)
+	}
+	if cfg.HTTP.ShareLinkSecret != share || cfg.HTTP.SessionTokenSecret != session {
+		t.Errorf("the secrets are %q and %q, want those of [http]", cfg.HTTP.ShareLinkSecret, cfg.HTTP.SessionTokenSecret)
+	}
+	reread := rereadSecrets(t, written, cfg)
+	if reread.HTTP.Port != 8080 {
+		t.Errorf("port = %d, want the default: only the secrets are moved", reread.HTTP.Port)
+	}
+	if retired := RetiredKeys([]byte(written)); !slices.Equal(retired,
+		[]string{"http.port is ignored, use http.main.port"}) {
+		t.Errorf("retired keys left = %v in\n%s", retired, written)
+	}
+	for _, kept := range []string{"# the server\n[http]\nport = 9082\n# signs the logins\n", "[[users]]\nusername = \"john\"\n"} {
+		if !strings.Contains(written, kept) {
+			t.Errorf("the file lost %q:\n%s", kept, written)
+		}
+	}
+}
+
+// go-toml read a key of [http] in any case, so the old place is matched in any
+// case as well.
+func TestEnsureSecretsMovesAFlatKeyInAnyCase(t *testing.T) {
+	share := strings.Repeat("s", 40)
+	cfg, written, generated, moved := ensureMoving(t, "[http]\nShareLinkSecret = \""+share+"\"\n")
+	if !slices.Equal(moved, []string{"http.main.shareLinkSecret"}) ||
+		!slices.Equal(generated, []string{"http.auth.httpSessionTokenSecret"}) {
+		t.Fatalf("moved = %v, generated = %v", moved, generated)
+	}
+	if cfg.HTTP.ShareLinkSecret != share || strings.Contains(written, "ShareLinkSecret") {
 		t.Errorf("the file is\n%s", written)
 	}
-	if reread := rereadSecrets(t, written, cfg); reread.HTTP.Port != 8080 {
-		t.Errorf("port = %d, want the default", reread.HTTP.Port)
+	rereadSecrets(t, written, cfg)
+}
+
+// A secret at the old place that could not be signed with is not moved: the
+// table is given a new one, and the old line is left for the warning about
+// retired keys to point at.
+func TestEnsureSecretsDoesNotMoveAnUnusableFlatKey(t *testing.T) {
+	body := "[http]\nshareLinkSecret = \"short\"\nhttpSessionTokenSecret = \"not base64\"\n"
+	cfg, written, generated, moved := ensureMoving(t, body)
+	if len(moved) != 0 ||
+		!slices.Equal(generated, []string{"http.main.shareLinkSecret", "http.auth.httpSessionTokenSecret"}) {
+		t.Fatalf("moved = %v, generated = %v", moved, generated)
 	}
+	if !strings.HasPrefix(written, body) {
+		t.Errorf("the old lines have to stay:\n%s", written)
+	}
+	rereadSecrets(t, written, cfg)
 }

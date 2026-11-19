@@ -112,7 +112,11 @@ The keys of `[http]` live in four tables: `[http.main]` (`enabled`, `port`,
 `sonos`, `sonosSpeakers`). A file written for an older version that still sets
 one of them directly in `[http]` is not moved: that key is reported at startup
 and not read, so its default applies until it is set in its table. Applying a
-change in the admin interface writes the tables and drops the old keys.
+change in the admin interface writes the tables and drops the old keys. The
+two generated secrets, `shareLinkSecret` and `httpSessionTokenSecret`, are the
+exception: go-fs moves them into `[http.main]` and `[http.auth]` at the first
+start, so that the share links handed out keep working and the browsers logged
+in stay logged in across the upgrade.
 
 `[[general.cleanup]]` keeps a folder from growing without bound: once an hour
 everything but the newest `keep` files in it is removed. Paths are relative to
