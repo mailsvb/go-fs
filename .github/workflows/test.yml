@@ -184,31 +184,35 @@ jobs:
           make packages
           make rpm VERSION="$(cat VERSION).1"
 
-      # the rpm of the latest release, which still shipped the configuration
-      # as a config file, for the upgrade from it below
-      - name: download the released rpm
+      # the rpms to upgrade from below: that of the latest release, and that of
+      # 0.19.1, the last release that shipped the configuration as a config
+      # file rather than leaving it to go-fs to write
+      - name: download the released rpms
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p released
-          gh release download --repo "$GITHUB_REPOSITORY" --dir released \
+          gh release download --repo "$GITHUB_REPOSITORY" --dir released/latest \
             --pattern 'go-fs-[0-9]*.x86_64.rpm'
-          ls released
+          gh release download v0.19.1 --repo "$GITHUB_REPOSITORY" --dir released/config-file \
+            --pattern 'go-fs-[0-9]*.x86_64.rpm'
+          ls -R released
 
       # install, start, upgrade and remove the rpm the way dnf does on a
       # server; the container has no systemd, so go-fs is started by hand as
       # the account the unit runs it as. The rpm ships no configuration: go-fs
       # writes the starter at its first start. The upgrade keeps the
       # configuration go-fs wrote its secrets into, and the removal keeps it as
-      # go-fs.toml.rpmsave. Then the same from the released rpm, which owned
-      # the file as a config file: the upgrade to one that owns it as a ghost
-      # must leave it where it is rather than move it aside as go-fs.toml.rpmsave.
+      # go-fs.toml.rpmsave. Then the upgrades from the released rpms: each has
+      # to keep the configuration go-fs ran with, and the one from 0.19.1, which
+      # owned the file as a config file, must leave it where it is rather than
+      # move it aside as go-fs.toml.rpmsave on the way to owning it as a ghost.
       - name: install the rpm
         run: |
           docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/released:/released:ro" rockylinux:9 sh -euxc '
             version=$(ls /dist/go-fs-[0-9]*.x86_64.rpm | sort -V | head -1)
             update=$(ls /dist/go-fs-[0-9]*.x86_64.rpm | sort -V | tail -1)
-            released=$(ls /released/go-fs-[0-9]*.x86_64.rpm)
+            latest=$(ls /released/latest/go-fs-[0-9]*.x86_64.rpm)
+            configfile=$(ls /released/config-file/go-fs-[0-9]*.x86_64.rpm)
             # serve starts go-fs as the service would, waits for it to answer
             # and stops it again, leaving its log in /tmp/go-fs.log
             serve() {
@@ -223,6 +227,26 @@ jobs:
               curl -fsS -o /dev/null -u admin:admin http://127.0.0.1:8080/
               kill $pid; wait $pid || true
               cat /tmp/go-fs.log
+            }
+            # upgrade installs a released rpm, runs it, upgrades to this
+            # checkout and checks that the configuration came through; it
+            # removes go-fs again afterwards
+            upgrade() {
+              dnf install -y "$1"
+              serve
+              secret=$(grep "^httpSessionTokenSecret = " /etc/go-fs/go-fs.toml)
+              # the released rpm may be newer than this checkout, so the
+              # upgrade to it is forced the way rpm -U --oldpackage does one
+              rpm -U --oldpackage "$update"
+              test ! -e /etc/go-fs/go-fs.toml.rpmsave
+              grep -qxF "$secret" /etc/go-fs/go-fs.toml
+              serve
+              grep -qxF "$secret" /etc/go-fs/go-fs.toml
+              if grep -q "wrote the starter configuration" /tmp/go-fs.log; then
+                echo "go-fs wrote a starter over the upgraded configuration"; exit 1
+              fi
+              dnf remove -y go-fs
+              rm -f /etc/go-fs/go-fs.toml.rpmsave
             }
             dnf install -y "$version"
             id go-fs
@@ -253,20 +277,10 @@ jobs:
             grep -q "^httpSessionTokenSecret = \"..*\"" /etc/go-fs/go-fs.toml.rpmsave
             rm -f /etc/go-fs/go-fs.toml.rpmsave
 
-            dnf install -y "$released"
-            test -e /etc/go-fs/go-fs.toml
-            serve
-            secret=$(grep "^httpSessionTokenSecret = " /etc/go-fs/go-fs.toml)
-            # the released rpm may be newer than this checkout, so the
-            # upgrade to it is forced the way rpm -U --oldpackage does one
-            rpm -U --oldpackage "$update"
-            test ! -e /etc/go-fs/go-fs.toml.rpmsave
-            grep -qxF "$secret" /etc/go-fs/go-fs.toml
-            serve
-            grep -qxF "$secret" /etc/go-fs/go-fs.toml
-            if grep -q "wrote the starter configuration" /tmp/go-fs.log; then
-              echo "go-fs wrote a starter over the upgraded configuration"; exit 1
-            fi
+            upgrade "$latest"
+            # 0.19.1 wrote the configuration when it was installed
+            rpm -qp --configfiles "$configfile" | grep -qxF /etc/go-fs/go-fs.toml
+            upgrade "$configfile"
           '
 
       - uses: actions/upload-artifact@v7
