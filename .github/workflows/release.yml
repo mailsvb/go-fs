@@ -338,7 +338,11 @@ jobs:
           docker run --rm --entrypoint deno go-fs:test --version | sed -n 1p
           docker run --rm --entrypoint yt-dlp go-fs:test --version
 
-      # the same build again, from the cache, pushed under every tag
+      # the same build again, from the cache, pushed under every tag, with
+      # an attestation beside the image: the SLSA provenance (the commit, the
+      # alpine digest, the build arguments) and an SBOM in SPDX of what the
+      # image carries. Both are set rather than left to the action's
+      # defaults, which leave out the SBOM.
       - name: push the image
         uses: docker/build-push-action@v7
         with:
@@ -351,6 +355,20 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
+          provenance: mode=max
+          sbom: true
+
+      # the pushed image carries both: the provenance, and an SBOM that lists
+      # at least the packages of Alpine that Fetch runs
+      - name: check the attestations
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/go-fs:$VERSION"
+          docker buildx imagetools inspect "$image" --format '{{ json .Provenance }}' \
+            | jq -e '.SLSA != null' >/dev/null
+          docker buildx imagetools inspect "$image" --format '{{ json .SBOM }}' \
+            | jq -e '[.SPDX.packages[].name] | index("ffmpeg") and index("deno")' >/dev/null
 
   # The zypper/dnf repository on GitHub Pages, rebuilt from the rpms of the
   # five newest releases, so older versions drop out. Pages must be set to

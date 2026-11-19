@@ -147,6 +147,21 @@ docker pull ghcr.io/mailsvb/go-fs:latest
 docker rm -f go-fs && docker run -d --name go-fs ...  # as before
 ```
 
+Each image carries an attestation as well. It holds the SLSA provenance,
+which names the commit the image was built from, the digest of the Alpine
+base and the build arguments, and an SBOM in SPDX, which lists the packages
+in the image. A scanner reads them from the registry without pulling the image:
+
+```shell
+docker buildx imagetools inspect ghcr.io/mailsvb/go-fs:latest --format '{{ json .Provenance }}'
+docker buildx imagetools inspect ghcr.io/mailsvb/go-fs:latest --format '{{ json .SBOM }}'
+```
+
+So every release shows three entries on the package page of GitHub. The
+tagged one is an index pointing at the image for linux/amd64 and at the
+attestation, which have no tag of their own. Deleting either of them breaks
+that release's tags.
+
 ### Windows: msi
 
 ```powershell
