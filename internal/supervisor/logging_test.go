@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
@@ -16,7 +17,9 @@ import (
 // A reload that changes log.level takes effect without a restart: that is how
 // debug output is switched on to look at a problem on a running server.
 func TestReloadSwitchesTheLogLevel(t *testing.T) {
-	var out bytes.Buffer
+	// the servers Apply starts log from their own goroutines, the staging
+	// sweep among them, while the test reads what has been written so far
+	var out lockedBuffer
 	root := logging.NewTo(&out, "info", "text")
 	sup := New(root.Logger, filepath.Join(t.TempDir(), "go-fs.toml"))
 	sup.TrackLog(root)
@@ -58,6 +61,25 @@ func TestReloadSwitchesTheLogLevel(t *testing.T) {
 	if !strings.Contains(out.String(), "general.logFormat changed") {
 		t.Errorf("a format change cannot apply and has to say so:\n%s", out.String())
 	}
+}
+
+// lockedBuffer is a bytes.Buffer that may be written and read from several
+// goroutines at once.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func TestChangedSections(t *testing.T) {
