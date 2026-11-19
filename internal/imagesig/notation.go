@@ -139,7 +139,7 @@ func verifyJWS(r *Result, subject digest.Digest, raw []byte, trusts []*Trust) er
 	}
 	var p notaryPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
-		return fmt.Errorf("Notation payload: %w", err)
+		return fmt.Errorf("notation payload: %w", err)
 	}
 	sig, err := base64.RawURLEncoding.DecodeString(env.Signature)
 	if err != nil {
