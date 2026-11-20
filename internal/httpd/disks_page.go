@@ -152,9 +152,9 @@ type disksData struct {
 	Script  template.JS
 }
 
-var disksTemplate = template.Must(template.ParseFS(assets, "assets/disks.html", "assets/partials.html"))
+var disksTemplate = withCredentials(template.ParseFS(assets, "assets/disks.html", "assets/partials.html"))
 
-var disksScript = template.JS(mustRead("assets/disks.js"))
+var disksScript = withCredentialsScript(mustRead("assets/disks.js"))
 
 func (s *Server) disksPage(set *settings, w http.ResponseWriter, r *http.Request, cred credential) {
 	nonce, err := pageNonce()

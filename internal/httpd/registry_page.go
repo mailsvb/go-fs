@@ -809,9 +809,9 @@ type registryData struct {
 	Script  template.JS
 }
 
-var registryTemplate = template.Must(template.ParseFS(assets, "assets/registry.html", "assets/partials.html"))
+var registryTemplate = withCredentials(template.ParseFS(assets, "assets/registry.html", "assets/partials.html"))
 
-var registryScript = template.JS(mustRead("assets/registry.js"))
+var registryScript = withCredentialsScript(mustRead("assets/registry.js"))
 
 // registryPage renders the list or the folder view.
 func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Request, user *account) {

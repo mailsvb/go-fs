@@ -179,10 +179,17 @@ func TestTheMainURLOffersNoAdminWhereThereIsNone(t *testing.T) {
 				cfg.PathsWithoutAuth = nil
 				tune(cfg)
 			})
-			// with the files alone to offer, / goes straight to their login
-			res, _ := pageRequest(t, server, http.MethodGet, "/", nil)
-			if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/?go-fs=login" {
-				t.Errorf("answer = %d to %q, want 303 to the login", res.StatusCode, res.Header.Get("Location"))
+			// the files are offered, and the Profile page, since the server
+			// has a file to change a password in, but not the interface
+			res, body := pageRequest(t, server, http.MethodGet, "/", nil)
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("answer = %d, want 200", res.StatusCode)
+			}
+			if !strings.Contains(body, ">Files<") || !strings.Contains(body, ">Profile<") {
+				t.Errorf("the page does not offer the files and the profile:\n%s", body)
+			}
+			if strings.Contains(body, "go-fs=admin") {
+				t.Errorf("the page offers the admin interface:\n%s", body)
 			}
 		})
 	}

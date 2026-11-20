@@ -115,6 +115,7 @@ dialog pre.snippet { margin: 0; padding: 0.6rem; overflow-x: auto; background: v
 </dialog>
 
 <script id="state" type="application/json">{{.State}}</script>
+{{if and .Session.User .Session.Credentials}}{{template "credentials" .Session}}{{end}}
 <script nonce="{{.Nonce}}">{{.Script}}</script>
 </body>
 </html>

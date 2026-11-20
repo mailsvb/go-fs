@@ -39,6 +39,9 @@ type env struct {
 	// store is where a service keeps what it has to remember across a
 	// restart, each in a bucket of its own; nil in tests that hand none over.
 	store *store.Store
+	// reload reads the file at path and applies it now, which the http
+	// server calls once it has changed a password in it.
+	reload func() error
 }
 
 // entry describes how one service is switched on, built and updated.
@@ -90,17 +93,18 @@ var builtIn = []entry{
 		order:   orderHTTP,
 		enabled: func(e env) bool { return e.cfg.HTTP.Enabled || e.cfg.HTTPS.Enabled },
 		create: func(e env, log *slog.Logger) (service.Server, error) {
-			server, err := httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.cfg.UsableServers(), e.path, e.store.Bucket(keys), e.store, log)
+			server, err := httpd.New(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.Users, e.cfg.Tokens, e.cfg.UsableServers(), e.path, e.store.Bucket(keys), e.store, log)
 			if err != nil {
 				return nil, err
 			}
 			if e.updater != nil {
 				server.SetUpdater(e.updater)
 			}
+			server.SetReloader(e.reload)
 			return server, nil
 		},
 		reload: func(s service.Server, e env) error {
-			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.HTTPServerUsers(), e.cfg.Tokens, e.cfg.UsableServers())
+			return s.(*httpd.Server).Reload(e.cfg.HTTP, e.cfg.HTTPS, e.cfg.General.SSH, e.cfg.Users, e.cfg.Tokens, e.cfg.UsableServers())
 		},
 	},
 	{
@@ -175,6 +179,10 @@ type Supervisor struct {
 	// handed one over; tests leave it nil.
 	store *store.Store
 
+	// ctx is what the first Apply was given, which the servers started by a
+	// reload the http server asks for live on.
+	ctx context.Context
+
 	mu      sync.Mutex
 	running map[string]service.Server
 	current config.Config
@@ -214,7 +222,10 @@ func (s *Supervisor) Apply(ctx context.Context, cfg config.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	current := env{cfg: cfg, path: s.path, updater: s.updater, store: s.store}
+	if s.ctx == nil {
+		s.ctx = ctx
+	}
+	current := env{cfg: cfg, path: s.path, updater: s.updater, store: s.store, reload: s.reloadNow}
 	if s.applied {
 		s.log.Info("applying the changed configuration",
 			"sections", strings.Join(changedSections(s.current, cfg), ","))
@@ -445,12 +456,18 @@ func (s *Supervisor) Watch(ctx context.Context, path string, interval time.Durat
 // reload loads the file and applies it, unless it says the same thing as what
 // is already running.
 func (s *Supervisor) reload(ctx context.Context, path string) {
+	if err := s.load(ctx, path); err != nil {
+		s.log.Error("the configuration was not applied, keeping the running one",
+			"path", path, "error", err)
+	}
+}
+
+// load is reload, reporting what went wrong rather than logging it.
+func (s *Supervisor) load(ctx context.Context, path string) error {
 	logging.Summary(s.log, "read", path)
 	cfg, err := config.Load(path)
 	if err != nil {
-		s.log.Error("the configuration was not applied, keeping the running one",
-			"path", path, "error", err)
-		return
+		return err
 	}
 
 	s.mu.Lock()
@@ -458,12 +475,24 @@ func (s *Supervisor) reload(ctx context.Context, path string) {
 	s.mu.Unlock()
 	if unchanged {
 		s.log.Info("the configuration file changed but says the same thing, nothing to do")
-		return
+		return nil
 	}
+	return s.Apply(ctx, cfg)
+}
 
-	if err := s.Apply(ctx, cfg); err != nil {
-		s.log.Error("applying the configuration", "error", err)
+// reloadNow applies the file at once, whether or not it is watched: the http
+// server calls it after changing a password in it, so that the new password
+// works everywhere right away. The watcher's next look at the file then finds
+// nothing left to do.
+func (s *Supervisor) reloadNow() error {
+	s.mu.Lock()
+	ctx := s.ctx
+	s.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
 	}
+	s.log.Info("reloading the configuration", "reason", "a password was changed", "path", s.path)
+	return s.load(ctx, s.path)
 }
 
 func stampOf(path string) stamp {

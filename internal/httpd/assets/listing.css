@@ -823,7 +823,9 @@ dl.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
   font-weight: 600;
   cursor: pointer;
 }
-.tiles { display: flex; justify-content: center; gap: 8px; width: 100%; }
+/* they wrap rather than run off both sides where the window is too narrow
+   for all of them in a row */
+.tiles { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: 100%; }
 .card.tile {
   flex: none;
   align-items: center;

@@ -16,6 +16,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/httpd/viewer"
 	"github.com/mailsvb/go-fs/internal/mp3edit"
 	"github.com/mailsvb/go-fs/internal/vfs"
+	"github.com/mailsvb/go-fs/internal/webui"
 )
 
 // entry is one line of a directory listing.
@@ -215,7 +216,7 @@ var assets embed.FS
 
 // listingTemplate is parsed once: a page that cannot be built is a bug in the
 // embedded template rather than something a request can cause.
-var listingTemplate = template.Must(template.ParseFS(assets, "assets/listing.html", "assets/partials.html"))
+var listingTemplate = withCredentials(template.ParseFS(assets, "assets/listing.html", "assets/partials.html"))
 
 // loginTemplate is the page that asks for a password. It is a template of its
 // own rather than a branch inside the listing, so that "the login page shows no
@@ -227,9 +228,20 @@ var loginTemplate = template.Must(template.ParseFS(assets, "assets/login.html"))
 // of the URL space is deliberate: every path this server answers is a path in
 // the served folder, so an asset URL would shadow a real name.
 var (
-	listingStyle  = template.CSS(mustRead("assets/listing.css"))
-	listingScript = template.JS(mustRead("assets/listing.js"))
+	listingStyle  = template.CSS(mustRead("assets/listing.css")) + webui.CredentialsStyle()
+	listingScript = withCredentialsScript(mustRead("assets/listing.js"))
 )
+
+// withCredentials adds the Credentials overlay to a page's template, which
+// every page with the session menu has; see internal/webui.
+func withCredentials(page *template.Template, err error) *template.Template {
+	return template.Must(template.Must(page, err).Parse(webui.CredentialsTemplate()))
+}
+
+// withCredentialsScript is a page's script followed by the overlay's.
+func withCredentialsScript(script string) template.JS {
+	return template.JS(script+"\n;\n") + webui.CredentialsScript()
+}
 
 func mustRead(name string) string {
 	body, err := assets.ReadFile(name)
@@ -378,6 +390,10 @@ type sessionView struct {
 	CanLogin bool
 	Login    string
 	Logout   string
+	// Credentials is where the Credentials overlay posts a password change,
+	// empty where nobody is signed in with a session or passwords cannot be
+	// changed here.
+	Credentials string
 	// Admin is the link to the admin interface, empty for everyone but an
 	// admin account signed in with a session while the interface is on.
 	Admin string

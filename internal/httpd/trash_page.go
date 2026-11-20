@@ -173,9 +173,9 @@ type trashData struct {
 	Script    template.JS
 }
 
-var trashTemplate = template.Must(template.ParseFS(assets, "assets/trash.html", "assets/partials.html"))
+var trashTemplate = withCredentials(template.ParseFS(assets, "assets/trash.html", "assets/partials.html"))
 
-var trashScript = template.JS(mustRead("assets/trash.js"))
+var trashScript = withCredentialsScript(mustRead("assets/trash.js"))
 
 // trashPage renders a folder of the trash.
 func (s *Server) trashPage(set *settings, w http.ResponseWriter, r *http.Request, cred credential, folder vfs.Target) {

@@ -33,6 +33,7 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/features"
+	"github.com/mailsvb/go-fs/internal/webui"
 )
 
 //go:embed assets
@@ -184,14 +185,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // pageTemplate is parsed once: a page that cannot be built is a bug in the
 // embedded template rather than something a request can cause.
-var pageTemplate = template.Must(template.ParseFS(assets, "assets/index.html"))
+var pageTemplate = template.Must(template.Must(template.ParseFS(assets, "assets/index.html")).
+	Parse(webui.CredentialsTemplate()))
 
 // pageStyle and pageScript are inlined into the page. They cannot be served at
 // URLs of their own: every path the file server answers is a path in the
 // served folder, so an asset URL would shadow a real name.
 var (
-	pageStyle  = template.CSS(mustRead("assets/admin.css"))
-	pageScript = template.JS(mustRead("assets/admin.js"))
+	pageStyle  = template.CSS(mustRead("assets/admin.css")) + webui.CredentialsStyle()
+	pageScript = template.JS(mustRead("assets/admin.js")+"\n;\n") + webui.CredentialsScript()
 )
 
 func mustRead(name string) string {
@@ -216,10 +218,12 @@ type pageData struct {
 	// Servers are the stored servers the menu opens, from the Nav.
 	Servers []NavLink
 	// Trash is the link to the Trash page, from the Nav.
-	Trash  string
-	Nonce  string
-	Style  template.CSS
-	Script template.JS
+	Trash string
+	// Credentials is where the Credentials overlay posts, from the Nav.
+	Credentials string
+	Nonce       string
+	Style       template.CSS
+	Script      template.JS
 }
 
 // handlePage serves the interface itself, with its style and script inlined
@@ -238,15 +242,16 @@ func (h *Handler) handlePage(w http.ResponseWriter, r *http.Request) {
 		files = ""
 	}
 	err = pageTemplate.Execute(&page, pageData{
-		Files:    files,
-		Logout:   markedURL(r.URL, "logout"),
-		Registry: nav.Registry,
-		User:     nav.User,
-		Servers:  nav.Servers,
-		Trash:    nav.Trash,
-		Nonce:    nonce,
-		Style:    pageStyle,
-		Script:   pageScript,
+		Files:       files,
+		Logout:      markedURL(r.URL, "logout"),
+		Registry:    nav.Registry,
+		User:        nav.User,
+		Servers:     nav.Servers,
+		Trash:       nav.Trash,
+		Credentials: nav.Credentials,
+		Nonce:       nonce,
+		Style:       pageStyle,
+		Script:      pageScript,
 	})
 	if err != nil {
 		h.log.Error("the admin interface cannot render its page", "error", err)
@@ -469,6 +474,9 @@ type Nav struct {
 	Servers  []NavLink
 	Trash    string
 	User     string
+	// Credentials is where the Credentials overlay posts a password change,
+	// empty where passwords cannot be changed.
+	Credentials string
 }
 
 // NavLink is a page of the file server the menu names.

@@ -51,8 +51,9 @@ func homeRequest(r *http.Request) bool {
 
 // homeTiles is what a browser may go on to from /: the files where they are
 // served and an http account can log in, the registry where it is on and
-// someone may look at it, an account of its own or anyone at all, and the
-// admin interface where it is on and an account may open it. Each link goes
+// someone may look at it, an account of its own or anyone at all, the admin
+// interface where it is on and an account may open it, and the Profile page
+// where some account has a password to change. Each link goes
 // to its page, which sends a browser without the session it needs to log in.
 func (s *Server) homeTiles(set *settings, u *url.URL) []homeTile {
 	var tiles []homeTile
@@ -66,6 +67,12 @@ func (s *Server) homeTiles(set *settings, u *url.URL) []homeTile {
 	}
 	if s.adminAvailable(set) {
 		tiles = append(tiles, homeTile{Label: "Admin", Link: adminURL(&url.URL{Path: "/"}), Icon: "i-gear"})
+	}
+	if s.profileOn(set) {
+		// where any account with a password changes it, one that may use
+		// nothing else here too; the page sends a browser without a session
+		// to log in, which returns there
+		tiles = append(tiles, homeTile{Label: "Profile", Link: profileURL(), Icon: "i-user"})
 	}
 	return tiles
 }

@@ -233,6 +233,7 @@
   </form>
 </dialog>
 
+{{if and .Session.User .Session.Credentials}}{{template "credentials" .Session}}{{end}}
 <script nonce="{{.Nonce}}">{{.Script}}</script>
 </body>
 </html>

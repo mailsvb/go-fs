@@ -61,7 +61,7 @@ func cleanURL(u *url.URL) string {
 	query := stripped.Query()
 	query.Del(sessionParam)
 	switch then := query.Get(returnParam); then {
-	case actionRegistry, actionRemote, actionTrash, admin.ActionPage, actionDisks:
+	case actionRegistry, actionRemote, actionTrash, admin.ActionPage, actionDisks, actionProfile:
 		query.Set(sessionParam, then)
 	}
 	query.Del(returnParam)
@@ -83,10 +83,10 @@ func markedURL(u *url.URL, action string) string {
 	switch query.Get(sessionParam) {
 	case actionRegistry:
 		query.Set(returnParam, actionRegistry)
-	case actionTrash, actionRemote, admin.ActionPage, actionDisks:
-		// the Trash, a stored server, the admin interface and the Disks page
-		// are only shown to a session, so each is returned to after a login
-		// and left after a logout
+	case actionTrash, actionRemote, admin.ActionPage, actionDisks, actionProfile:
+		// the Trash, a stored server, the admin interface, the Disks page and
+		// the Profile page are only shown to a session, so each is returned
+		// to after a login and left after a logout
 		if action == actionLogin {
 			query.Set(returnParam, query.Get(sessionParam))
 		}
@@ -102,9 +102,14 @@ func returnsToRegistry(u *url.URL) bool {
 	return u.Query().Get(returnParam) == actionRegistry
 }
 
+// returnsToProfile reports a login that was reached from the Profile page.
+func returnsToProfile(u *url.URL) bool {
+	return u.Query().Get(returnParam) == actionProfile
+}
+
 // handleSession routes the two endpoints.
 func (s *Server) handleSession(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, action string) {
-	if !canLogIn(set) && !canLogInToRegistry(set) {
+	if !canLogIn(set) && !canLogInToRegistry(set) && !s.profileOn(set) {
 		// no account may log in, so these endpoints do not exist here
 		http.NotFound(w, r)
 		return
@@ -126,7 +131,8 @@ func (s *Server) handleSession(set *settings, w http.ResponseWriter, r *http.Req
 	// logout signs people out for reading a page
 	if action == actionLogin && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 		cred := s.identify(set, w, r)
-		if cred.token || (returnsToRegistry(r.URL) && s.registrySession(set, r) != nil) {
+		if cred.token || (returnsToRegistry(r.URL) && s.registrySession(set, r) != nil) ||
+			(returnsToProfile(r.URL) && s.profileSession(set, r) != nil) {
 			http.Redirect(w, r, cleanURL(r.URL), http.StatusSeeOther)
 			return
 		}
@@ -194,9 +200,15 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 		return
 	}
 	// a registry-only account has nothing in the files to come back to, so
-	// a login from anywhere but the registry page lands on it
-	if !returnsToRegistry(r.URL) && accountNamed(set.accounts, user.name) == nil {
-		http.Redirect(w, r, registryURL(r.URL), http.StatusSeeOther)
+	// a login from anywhere but the registry page lands on it, and an
+	// account that is neither of the files nor of the registry on the
+	// Profile page, the one page it may see
+	if !returnsToRegistry(r.URL) && !returnsToProfile(r.URL) && accountNamed(set.accounts, user.name) == nil {
+		if set.registry != nil && accountNamed(set.registryAccounts, user.name) != nil {
+			http.Redirect(w, r, registryURL(r.URL), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, profileURL(), http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, cleanURL(r.URL), http.StatusSeeOther)
@@ -206,14 +218,21 @@ func (s *Server) handleLogin(set *settings, w http.ResponseWriter, r *http.Reque
 // with them. An account that sets registry may log in too, while the registry
 // is on, so that it can see the registry page; its session is no session of
 // the file tree, since checkToken only finds it there among the http accounts.
+// So may any other account with a password, while passwords can be changed
+// here, for the Profile page and nothing else.
 func (s *Server) checkLogin(set *settings, name, password string) *account {
 	if user := matchAccount(set.accounts, name, password); user != nil {
 		return user
 	}
-	if set.registry == nil {
+	if set.registry != nil {
+		if user := matchAccount(set.registryAccounts, name, password); user != nil {
+			return user
+		}
+	}
+	if !s.profileOn(set) {
 		return nil
 	}
-	return matchAccount(set.registryAccounts, name, password)
+	return matchAccount(set.profileAccounts, name, password)
 }
 
 // handleLogout drops the token, whatever it named. The token is read only to
@@ -244,6 +263,9 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request, target vfs.Ta
 	where := vfs.AsFolder(target.Virtual)
 	if returnsToRegistry(r.URL) || r.URL.Query().Get(sessionParam) == actionRegistry {
 		where = "Container registry"
+	}
+	if returnsToProfile(r.URL) {
+		where = "Profile"
 	}
 	page, err := renderLogin(loginData{
 		Path:   where,
@@ -286,6 +308,9 @@ func (s *Server) sessionViewFor(set *settings, r *http.Request, cred credential)
 	if s.offersRegistry(set, cred, registryUser) {
 		who.Registry = registryURL(r.URL)
 	}
+	if s.profileOn(set) {
+		who.Credentials = passwordURL()
+	}
 	if cred.token && cred.user != nil {
 		who.User = cred.user.name
 		// a stored server is browsed in the listing, which is not there
@@ -313,7 +338,9 @@ func (s *Server) sessionViewFor(set *settings, r *http.Request, cred credential)
 		return who
 	}
 	// someone who authenticated with a header has no session to log out of, so
-	// they are offered the login rather than a logout that would clear nothing
+	// they are offered the login rather than a logout that would clear nothing,
+	// nor a password change that needs one
+	who.Credentials = ""
 	who.CanLogin = canLogIn(set) || canLogInToRegistry(set)
 	return who
 }

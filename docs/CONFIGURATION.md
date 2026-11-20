@@ -222,6 +222,12 @@ log in anywhere (the shipped configuration lists one, `admin`, see
 one entry with both switches on. An entry that switches nothing on is kept
 without being served, which is the way to park an account.
 
+Every account with a password may also change it from a browser, on the HTTP
+server's Profile page, whichever servers it sets — it logs in there for that and
+for nothing else. The change rewrites the account's `password` line in this
+file, keeping the rest of it as it is, and applies the file at once; see
+[Changing your password](BROWSER.md#changing-your-password).
+
 Each account may have its own `basefolder`, which FTP and SFTP serve instead of
 `general.baseFolderFiles`; HTTP scopes an account by `paths` instead. `allowLoginWithoutPassword`
 is read by FTP alone, `authorizedKeys` by SFTP alone and `paths` by HTTP and S3;

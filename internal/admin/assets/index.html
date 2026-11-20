@@ -14,6 +14,7 @@
   <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 3 3.5 7.5v9L12 21l8.5-4.5v-9z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/></symbol>
   <symbol id="i-server" viewBox="0 0 24 24"><path d="M4 4.5h16v6H4zm0 9h16v6H4z"/><path d="M7.5 7.5h.5m-.5 9h.5"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3m0 13v3M2.5 12h3m13 0h3M5.3 5.3l2.1 2.1m9.2 9.2 2.1 2.1m0-13.4-2.1 2.1m-9.2 9.2-2.1 2.1"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4.5"/><path d="m11.2 11.8 8.3-8.3m-3 3 2.5 2.5m-5-0.5 2 2"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M11 4H5v16h6"/><path d="M20 12H10m3.5-3.5L17 12l-3.5 3.5"/></symbol>
   <symbol id="i-caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
 </svg>
@@ -28,6 +29,7 @@
       {{if .Registry}}<a href="{{.Registry}}"><svg class="ic"><use href="#i-box"/></svg>Registry</a>{{end}}
       {{range .Servers}}<a href="{{.Link}}"><svg class="ic"><use href="#i-server"/></svg>{{.Name}}</a>{{end}}
       {{if .Trash}}<a href="{{.Trash}}"><svg class="ic"><use href="#i-trash"/></svg>Trash</a>{{end}}
+      {{if .Credentials}}<button type="button" data-credentials><svg class="ic"><use href="#i-key"/></svg>Credentials</button>{{end}}
       <form class="inline" method="post" action="{{.Logout}}" target="_top"><button type="submit"><svg class="ic"><use href="#i-logout"/></svg>Log out{{with .User}} {{.}}{{end}}</button></form>
     </div>
   </details>
@@ -260,6 +262,7 @@
   <button id="apply" type="button">Apply</button>
 </footer>
 
+{{if .Credentials}}{{template "credentials" .}}{{end}}
 <script nonce="{{.Nonce}}">{{.Script}}</script>
 </body>
 </html>

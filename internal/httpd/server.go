@@ -91,6 +91,14 @@ type Server struct {
 	// updater takes a new binary at ?go-fs=update. It is nil unless main
 	// handed one over, and a test that is not about updates leaves it so.
 	updater Updater
+	// configPath is the configuration file, which a password change is
+	// written to; "" where there is none, and then nobody may change one.
+	configPath string
+	// reloader applies the configuration file to every running server at
+	// once, which a password change calls after writing it; see SetReloader.
+	reloader func() error
+	// passwordMu keeps two password changes from rewriting the file at once.
+	passwordMu sync.Mutex
 
 	plain  net.Listener
 	secure net.Listener
@@ -163,6 +171,11 @@ type settings struct {
 	// they are a list of their own, so a registry-only entry cannot reach the
 	// file tree.
 	registryAccounts []*account
+	// profileAccounts are the [[users]] entries that have a password, whatever
+	// servers they set: each may log in to the Profile page and change its
+	// password there, and a session of one that sets neither http nor
+	// registry reaches nothing else.
+	profileAccounts []*account
 	// registry is the store under general.baseFolderRegistry, nil when the
 	// registry is off.
 	registry *registryStore
@@ -203,14 +216,19 @@ func (s *Server) settings() *settings {
 }
 
 // newSettings compiles a section into what the request path needs. users are
-// the [[users]] entries that set http or s3, which the supervisor hands over
-// already filtered. root is the served folder: where it ignores case the path
+// the [[users]] entries, all of them: those that set http, s3 or registry are
+// accounts of those, and every one with a password may change it. root is the served folder: where it ignores case the path
 // patterns have to as well, and it is the folder a token without its own is
 // served.
 func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.User, tokens []config.Token, servers []config.Server, root *vfs.Root, logger *slog.Logger) (*settings, error) {
 	fold := root.CaseInsensitive()
-	var web, s3, registry []config.User
+	var web, s3, registry, profile []config.User
 	for _, user := range users {
+		// every entry with a password may log in to change it, an FTP or an
+		// SFTP account too, and reaches nothing else that way
+		if user.Password != "" {
+			profile = append(profile, user)
+		}
 		// an entry that sets s3 or registry alone is an account of that API
 		// and nothing else
 		if user.HTTP {
@@ -224,6 +242,10 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 		}
 	}
 	accounts, err := buildAccounts(web, fold)
+	if err != nil {
+		return nil, err
+	}
+	profileAccounts, err := buildAccounts(profile, fold)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +309,7 @@ func newSettings(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users [
 		return nil, err
 	}
 	return &settings{cfg: cfg, https: https, accounts: accounts, tokens: bearers,
-		s3accounts: s3accounts, registryAccounts: registryAccounts, registry: store,
+		s3accounts: s3accounts, registryAccounts: registryAccounts, profileAccounts: profileAccounts, registry: store,
 		jellyfin: len(cfg.JellyfinFolders) > 0, subsonic: len(cfg.SubsonicFolders) > 0, publicPaths: public,
 		musicPaths: musicPaths, proxies: proxies, ssh: sshCfg, servers: servers,
 		disks: disks, registryTrusts: trusts, verifications: &verificationCache{},
@@ -392,6 +414,7 @@ func New(cfg config.HTTP, https config.HTTPS, sshCfg config.SSH, users []config.
 		dav:           newDAVState(),
 		jellyfin:      newJellyfinState(data, logger),
 		subsonic:      newSubsonicState(data, logger),
+		configPath:    configPath,
 	}
 	if configPath != "" {
 		// built whether or not the switch is on: the switch is read from the
@@ -708,6 +731,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// so does the Disks page, whose disks are no files of the served folder
 	if action := disksPageAction(r); action != "" {
 		s.handleDisks(set, w, r, action)
+		return
+	}
+
+	// and the Profile page and the password change, which any account with
+	// a password may reach, whatever else it may
+	if action := profileAction(r); action != "" {
+		s.handleProfile(set, w, r, action)
 		return
 	}
 

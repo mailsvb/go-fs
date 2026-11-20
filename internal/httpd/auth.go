@@ -335,6 +335,13 @@ func (s *Server) checkToken(set *settings, w http.ResponseWriter, r *http.Reques
 			s.renewSession(set, w, r, registryUser, claims)
 			return nil
 		}
+		if profileUser := s.profileClaims(set, claims); profileUser != nil && s.profileOn(set) {
+			// a session of an account that may only change its password:
+			// nothing here knows it but the Profile page, which it is kept
+			// for
+			s.renewSession(set, w, r, profileUser, claims)
+			return nil
+		}
 		s.logFor(r).Info("http session token names an account that is no longer configured",
 			"user", claims.Subject, "address", clientAddress(set, r))
 		s.clearSession(w)

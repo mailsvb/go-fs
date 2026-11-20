@@ -25,8 +25,10 @@ The main URL `/` is where someone arrives who has not said what they came for.
 Where `/` needs an account and the browser is not signed in, it is not sent
 straight to the login for the files: it gets a page that offers **Files** and,
 while the [registry](REGISTRY.md) is on and someone may look at it,
-**Registry**, as two large tiles. Each leads to its own login, and the login
-returns to it. Where only one of them applies, the browser goes straight there.
+**Registry**, as large tiles, along with **Admin** and **Profile** (see
+[Changing your password](#changing-your-password)) where they apply. Each
+leads to its own login, and the login returns to it. Where only one of them
+applies, the browser goes straight there.
 A browser that is signed in gets what it always did — the listing, or the
 registry page for an account that sets `registry` and not `http` — and so
 does a root that `pathsWithoutAuth` makes public, a query on `/`, and a program.
@@ -105,6 +107,43 @@ browser.
 `http.sessionTimeout` was what this used to be called, before the session became
 a token that expires rather than a row in memory. A file that still sets it
 loads, and says on startup that it is ignored.
+
+## Changing your password
+
+Whoever is signed in with a session finds **Credentials** in the menu of the
+header, just above **Log out**, on every page that has the menu: the listing,
+the registry page, the Trash, the Disks page and the admin interface. It blurs
+the page and opens a card the size of the login's, which asks for the current
+password and the new one twice. **Apply** changes it, **Cancel** leaves it as
+it was. The new password needs at least 8 characters, may not be the current
+one or one of the example passwords this documentation prints, and may hold no
+control characters. A wrong current password counts toward the lock against
+guessing exactly as a failed login does.
+
+The start page at `/` offers a **Profile** tile beside the others, which opens
+the same card over the start page (`?go-fs=profile`). It is there for the
+accounts that may use nothing else here: **any account with a password may log
+in to it**, one that sets only `ftp`, `sftp` or `s3` too. Such an account's
+session reaches the Profile page and nothing else, and a login it makes
+anywhere lands there. Because Profile is a tile of its own, a server that only
+serves the files now shows the start page rather than going straight to their
+login.
+
+The password lives in the configuration file, so a change rewrites that
+account's `password` line and nothing else: the file is edited as text, its
+comments and layout stay as they were, and the result has to parse to the
+same configuration with only that password changed before it is written. A
+file that keeps its accounts in a way this cannot edit — `users` written as an
+inline array, a password spread over several lines — is left alone and the card
+says to ask an administrator. No copy of the previous file is kept, as it
+would be one more copy of the old password.
+
+The file is then applied at once, whether or not `reloadConfig` is on, so the
+new password works on every server right away. The browser that made the
+change is issued a new session and stays signed in; every other browser signed
+in to the account is signed out, as for any password change. Without a
+configuration file to write to there is nothing to change, and neither the menu
+item nor the tile is offered.
 
 ## The trash
 
