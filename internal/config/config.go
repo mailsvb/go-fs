@@ -818,9 +818,6 @@ func validateRegistry(where string, server Server) error {
 			return fmt.Errorf("%s %q: caCert %w", where, server.Name, err)
 		}
 	}
-	if server.VaultPath != "" {
-		return fmt.Errorf("%s %q: a container registry holds no vault", where, server.Name)
-	}
 	rights := server.Rights()
 	if rights.Upload || rights.Create || rights.Delete || rights.Rename {
 		return fmt.Errorf("%s %q: a container registry is only pulled from: "+
@@ -2056,6 +2053,11 @@ func (c Config) validateServers() error {
 		}
 		if (server.VaultPath == "") != (server.VaultPassword == "") {
 			return fmt.Errorf("%s %q: vaultPath and vaultPassword are set together or not at all", where, server.Name)
+		}
+		// checked before a vault makes the server absent, so a build
+		// without vaults refuses it as well
+		if server.Type == ServerTypeRegistry && server.VaultPath != "" {
+			return fmt.Errorf("%s %q: a container registry holds no vault", where, server.Name)
 		}
 		if absentServer(server) {
 			// what this binary cannot reach it does not check either
