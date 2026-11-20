@@ -41,8 +41,8 @@ func openDisks(folder string, log *slog.Logger) (diskFolder, error) {
 	return disks.Open(folder, log)
 }
 
+// actionDisks, the page itself, is named in session.go, which every build has
 const (
-	actionDisks           = "disks"
 	actionDisksState      = "disks-state"
 	actionDisksCreate     = "disks-create"
 	actionDisksResize     = "disks-resize"

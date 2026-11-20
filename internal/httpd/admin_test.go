@@ -69,8 +69,9 @@ func TestAdminInterfaceNeedsAnAdminSession(t *testing.T) {
 	if res.StatusCode != http.StatusSeeOther {
 		t.Errorf("an anonymous browser was answered %d, want 303 to the login page", res.StatusCode)
 	}
-	if location := res.Header.Get("Location"); !strings.Contains(location, "go-fs=login") {
-		t.Errorf("the browser was sent to %q, want the login page", location)
+	location := res.Header.Get("Location")
+	if !strings.Contains(location, "go-fs=login") || !strings.Contains(location, "go-fs-then=admin") {
+		t.Errorf("the browser was sent to %q, want the login page that returns to the interface", location)
 	}
 	if res, _ := get(t, server, "/?go-fs=admin-config"); res.StatusCode != http.StatusUnauthorized {
 		t.Errorf("an anonymous fetch was answered %d, want 401", res.StatusCode)
@@ -99,7 +100,10 @@ func TestAdminInterfaceNeedsAnAdminSession(t *testing.T) {
 		t.Errorf("the refusal names %v", record["user"])
 	}
 
-	// and the admin
+	// and the admin, whose login from the interface goes back to it
+	if back := postLoginAt(t, server, location, "root", "secret").Header.Get("Location"); back != "/?go-fs=admin" {
+		t.Errorf("the login from the interface went on to %q, want back to it", back)
+	}
 	root := login(t, server, "/", "root", "secret")
 	res = withSession(t, server, http.MethodGet, "/?go-fs=admin", root)
 	body := bodyOf(t, res)

@@ -462,9 +462,16 @@ func browserGet(t *testing.T, server *testServer, path string) *http.Response {
 // postLogin submits the login form for a path and returns the answer.
 func postLogin(t *testing.T, server *testServer, path, name, password string) *http.Response {
 	t.Helper()
+	return postLoginAt(t, server, path+"?go-fs=login", name, password)
+}
+
+// postLoginAt posts the login form to a login URL as a page sent the browser
+// there, with whatever the URL remembers about where to come back to.
+func postLoginAt(t *testing.T, server *testServer, location, name, password string) *http.Response {
+	t.Helper()
 	form := url.Values{"username": {name}, "password": {password}}
 	req, err := http.NewRequest(http.MethodPost,
-		server.url(path+"?go-fs=login"), strings.NewReader(form.Encode()))
+		server.url(location), strings.NewReader(form.Encode()))
 	if err != nil {
 		t.Fatal(err)
 	}

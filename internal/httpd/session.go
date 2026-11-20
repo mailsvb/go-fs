@@ -25,6 +25,10 @@ const sessionParam = "go-fs"
 const (
 	actionLogin  = "login"
 	actionLogout = "logout"
+	// actionDisks is the Disks page. It is named here rather than beside its
+	// endpoints because a login returns to it, and this file is in every
+	// build, the ones without the page included.
+	actionDisks = "disks"
 )
 
 // maxLoginBody is all a login form can possibly be. The endpoint answers
@@ -57,7 +61,7 @@ func cleanURL(u *url.URL) string {
 	query := stripped.Query()
 	query.Del(sessionParam)
 	switch then := query.Get(returnParam); then {
-	case actionRegistry, actionRemote, actionTrash:
+	case actionRegistry, actionRemote, actionTrash, admin.ActionPage, actionDisks:
 		query.Set(sessionParam, then)
 	}
 	query.Del(returnParam)
@@ -70,26 +74,21 @@ func loginURL(u *url.URL) string {
 	return markedURL(u, actionLogin)
 }
 
-// markedURL is this request's own URL with the marker set to action. The
-// registry page is the one page under the marker a login or a logout returns
-// to, so leaving it for one of them remembers where to come back to.
+// markedURL is this request's own URL with the marker set to action. Leaving
+// a page served under the marker for a login remembers where to come back to;
+// the registry page is the one a logout returns to as well.
 func markedURL(u *url.URL, action string) string {
 	marked := *u
 	query := marked.Query()
 	switch query.Get(sessionParam) {
 	case actionRegistry:
 		query.Set(returnParam, actionRegistry)
-	case actionTrash:
-		// the Trash page is only shown to a session, so it is returned to
-		// after a login and left after a logout, as a stored server is
+	case actionTrash, actionRemote, admin.ActionPage, actionDisks:
+		// the Trash, a stored server, the admin interface and the Disks page
+		// are only shown to a session, so each is returned to after a login
+		// and left after a logout
 		if action == actionLogin {
-			query.Set(returnParam, actionTrash)
-		}
-	case actionRemote:
-		// a stored server is only shown to a session, so the page is
-		// returned to after a login and left after a logout
-		if action == actionLogin {
-			query.Set(returnParam, actionRemote)
+			query.Set(returnParam, query.Get(sessionParam))
 		}
 	}
 	query.Set(sessionParam, action)

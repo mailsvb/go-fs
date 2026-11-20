@@ -56,8 +56,14 @@ func diskState(t *testing.T, server *testServer, session *http.Cookie) disksStat
 
 func TestTheDisksPageIsForAdminsWithASession(t *testing.T) {
 	server, _ := disksServer(t)
-	if res := browserGet(t, server, "/?go-fs=disks"); res.StatusCode != http.StatusSeeOther {
-		t.Errorf("an anonymous browser = %d, want 303 to the login page", res.StatusCode)
+	res := browserGet(t, server, "/?go-fs=disks")
+	location := res.Header.Get("Location")
+	if res.StatusCode != http.StatusSeeOther || !strings.Contains(location, "go-fs=login") ||
+		!strings.Contains(location, "go-fs-then=disks") {
+		t.Errorf("an anonymous browser = %d to %q, want 303 to the login page that returns here", res.StatusCode, location)
+	}
+	if back := postLoginAt(t, server, location, "root", "secret").Header.Get("Location"); back != "/?go-fs=disks" {
+		t.Errorf("the login from the page went on to %q, want back to it", back)
 	}
 	if res, _ := get(t, server, "/?go-fs=disks-state"); res.StatusCode != http.StatusUnauthorized {
 		t.Errorf("an anonymous fetch = %d", res.StatusCode)
@@ -79,7 +85,7 @@ func TestTheDisksPageIsForAdminsWithASession(t *testing.T) {
 	}
 
 	root := login(t, server, "/", "root", "secret")
-	res := withSession(t, server, http.MethodGet, "/?go-fs=disks", root)
+	res = withSession(t, server, http.MethodGet, "/?go-fs=disks", root)
 	page := bodyOf(t, res)
 	if res.StatusCode != http.StatusOK || !strings.Contains(page, `id="disks"`) || !strings.Contains(page, `"nbdPort":10809`) {
 		t.Fatalf("the page = %d:\n%s", res.StatusCode, page)
