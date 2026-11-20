@@ -49,12 +49,14 @@ func homeRequest(r *http.Request) bool {
 	return r.URL.Path == "/" && r.URL.RawQuery == ""
 }
 
-// homeTiles is what a browser that is not signed in may go on to from /: the
-// files where an http account can log in, and the registry where it is on and
-// someone may look at it, an account of its own or anyone at all.
-func homeTiles(set *settings, u *url.URL) []homeTile {
+// homeTiles is what a browser may go on to from /: the files where they are
+// served and an http account can log in, the registry where it is on and
+// someone may look at it, an account of its own or anyone at all, and the
+// admin interface where it is on and an account may open it. Each link goes
+// to its page, which sends a browser without the session it needs to log in.
+func (s *Server) homeTiles(set *settings, u *url.URL) []homeTile {
 	var tiles []homeTile
-	if canLogIn(set) {
+	if filesOn(set) && canLogIn(set) {
 		tiles = append(tiles, homeTile{Label: "Files", Link: loginURL(u), Icon: "i-folder"})
 	}
 	if set.registry != nil && (canLogInToRegistry(set) || set.cfg.RegistryAnonymousRead) {
@@ -62,16 +64,26 @@ func homeTiles(set *settings, u *url.URL) []homeTile {
 		// returns there
 		tiles = append(tiles, homeTile{Label: "Registry", Link: registryURL(u), Icon: "i-box"})
 	}
+	if s.adminAvailable(set) {
+		tiles = append(tiles, homeTile{Label: "Admin", Link: adminURL(&url.URL{Path: "/"}), Icon: "i-gear"})
+	}
 	return tiles
 }
 
-// home answers a browser that asked for / without the account it needs. With
-// one place to go it is sent there, and with more it is asked which.
+// home answers a browser that asked for / without the account it needs, or
+// any browser at all while the files are not served, since / then has no
+// listing to show. With one place to go it is sent there, and with more it is
+// asked which.
 func (s *Server) home(set *settings, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	tiles := homeTiles(set, r.URL)
+	tiles := s.homeTiles(set, r.URL)
 	switch len(tiles) {
 	case 0:
+		if !filesOn(set) {
+			// nothing is served here that a browser could open
+			http.NotFound(w, r)
+			return
+		}
 		http.Redirect(w, r, loginURL(r.URL), http.StatusSeeOther)
 		return
 	case 1:
@@ -98,4 +110,24 @@ func (s *Server) home(set *settings, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(page)
 	}
+}
+
+// filesOn reports whether the http server serves the files of the served
+// folder, which http.services.files switches off for a server that is there
+// for its registry, say.
+func filesOn(set *settings) bool {
+	return set.cfg.Files
+}
+
+// withoutFiles answers a request for the files while they are not served. A
+// browser asking for the plain / gets the page that offers what is left;
+// anything else names nothing on this server.
+func (s *Server) withoutFiles(set *settings, w http.ResponseWriter, r *http.Request) {
+	if homeRequest(r) && browserRequest(r) && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		s.home(set, w, r)
+		return
+	}
+	s.logFor(r).Debug("http files are not served, http.services.files is off", "method", r.Method,
+		"url", r.URL.Path, "address", clientAddress(set, r))
+	http.NotFound(w, r)
 }

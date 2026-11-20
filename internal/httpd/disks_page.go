@@ -164,7 +164,10 @@ func (s *Server) disksPage(set *settings, w http.ResponseWriter, r *http.Request
 		return
 	}
 	who := s.sessionViewFor(set, r, cred)
-	who.Page, who.Disks, who.Files = "Disks", "", "/"
+	who.Page, who.Disks = "Disks", ""
+	if filesOn(set) {
+		who.Files = "/"
+	}
 	data := disksData{
 		Title:   "Disks",
 		State:   disksState(set),

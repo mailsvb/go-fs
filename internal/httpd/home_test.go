@@ -143,3 +143,47 @@ func TestAPublicRootIsStillItsListing(t *testing.T) {
 		t.Errorf("a public root got %d without its listing", res.StatusCode)
 	}
 }
+
+// The main URL offers the admin interface where it is on and an account may
+// open it, beside the files.
+func TestTheMainURLOffersAdmin(t *testing.T) {
+	server := adminServer(t, func(cfg *httpConfig) { cfg.PathsWithoutAuth = nil })
+	res, body := pageRequest(t, server, http.MethodGet, "/", nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	for _, want := range []string{`href="/?go-fs=login"`, `href="/?go-fs=admin"`, ">Admin<", `id="i-gear"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page has no %s:\n%s", want, body)
+		}
+	}
+
+	// the tile leads to the login, which returns to the interface
+	res = browserGet(t, server, "/?go-fs=admin")
+	if location := res.Header.Get("Location"); res.StatusCode != http.StatusSeeOther ||
+		!strings.Contains(location, "go-fs=login") {
+		t.Errorf("the admin tile answered %d to %q, want 303 to the login", res.StatusCode, location)
+	}
+}
+
+func TestTheMainURLOffersNoAdminWhereThereIsNone(t *testing.T) {
+	cases := map[string]func(*httpConfig){
+		"switched off": func(cfg *httpConfig) { cfg.EnableAdminInterface = false },
+		"no admin account": func(cfg *httpConfig) {
+			cfg.Users = []config.User{fullUser("john", "doe")}
+		},
+	}
+	for name, tune := range cases {
+		t.Run(name, func(t *testing.T) {
+			server := adminServer(t, func(cfg *httpConfig) {
+				cfg.PathsWithoutAuth = nil
+				tune(cfg)
+			})
+			// with the files alone to offer, / goes straight to their login
+			res, _ := pageRequest(t, server, http.MethodGet, "/", nil)
+			if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/?go-fs=login" {
+				t.Errorf("answer = %d to %q, want 303 to the login", res.StatusCode, res.Header.Get("Location"))
+			}
+		})
+	}
+}

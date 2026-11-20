@@ -289,7 +289,9 @@ func (s *Server) sessionViewFor(set *settings, r *http.Request, cred credential)
 	}
 	if cred.token && cred.user != nil {
 		who.User = cred.user.name
-		if mayBrowseRemote(cred) {
+		// a stored server is browsed in the listing, which is not there
+		// while the files are not served
+		if mayBrowseRemote(cred) && filesOn(set) {
 			for _, server := range serversFor(set, cred.user) {
 				who.Servers = append(who.Servers, serverLink{Name: server.Name, Link: remoteURL(server.Name, "")})
 			}

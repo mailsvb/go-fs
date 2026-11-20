@@ -870,7 +870,7 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 	who.Page, who.Registry = "Registry", ""
 	// a registry-only account has no files to go back to: its menu holds
 	// nothing but the logout
-	if s.registryOnly(set, r, cred) == nil {
+	if s.registryOnly(set, r, cred) == nil && filesOn(set) {
 		who.Files = base
 	}
 	listView, treeView := view, view

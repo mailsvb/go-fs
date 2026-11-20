@@ -107,7 +107,7 @@ The keys of `[http]` live in four tables: `[http.main]` (`enabled`, `port`,
 `address`, `enableAdminInterface`, `enableSelfUpdate`, `shareLinkSecret`,
 `trustedProxies`), `[http.connection]` (`maxConnections`, the timeouts,
 `maxUploadSize`, `maxChunkSize`, `pathsWithoutAuth`), `[http.auth]` (the
-`httpSession…` keys and the `login…` keys) and `[http.services]` (`enableS3`,
+`httpSession…` keys and the `login…` keys) and `[http.services]` (`files`, `enableS3`,
 `registryAnonymousRead`, `webdav`, `webdavClients`, `jellyfinDiscovery`,
 `sonos`, `sonosSpeakers`, and the lists `[[http.services.registryTrust]]` and
 `[[http.services.imagesign]]`). A file written for an older version sets them
@@ -396,6 +396,7 @@ data connection owes nothing on the control one.
 | `http.auth.loginAttempts`, `http.auth.loginLockout` | `5`, `60` | an address that sends five wrong passwords in a minute is refused for a minute, at once |
 | `http.main.trustedProxies` | `[]` | a forwarded address, and a forwarded `https`, is believed only from a proxy listed here |
 | `users[].ftp`, `users[].sftp`, `users[].http`, `users[].s3` | `false` | an account logs in only to the servers it switches on |
+| `http.services.files` | `true` | the http server serves the folder it is given; switched off it keeps the registry, the admin interface and the Disks and Trash pages, and serves none of the files, by no way in |
 | `http.services.enableS3` | `true` | the S3 API is there wherever the HTTP server is, and serves only the accounts that set `s3` |
 | `http.services.jellyfinDiscovery` | `false` | answering broadcasts opens a UDP port on every interface, so being found on the network is switched on deliberately |
 | `http.services.sonos` | `false` | playing on a speaker hands it a link that fetches the file without an account, and searches the network by multicast, or else tries port 1400 on its addresses, so it is switched on deliberately |

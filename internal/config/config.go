@@ -1156,6 +1156,11 @@ type HTTPAuth struct {
 // HTTPServices is [http.services]: what the server answers besides the files
 // themselves, on both listeners.
 type HTTPServices struct {
+	// Files serves the files of Basefolder on both listeners: the listing,
+	// the file methods, WebDAV, S3, share links and Play on Sonos. Off, the
+	// http server answers the registry, the admin interface, the Disks and
+	// Trash pages and the music repositories, and nothing of the folder.
+	Files bool `toml:"files"`
 	// EnableS3 answers requests signed with AWS Signature Version 4 as the S3
 	// API, on both listeners. Every folder directly in Basefolder is a bucket,
 	// found by its name ignoring case, in the one region, S3Region, and only
@@ -1371,6 +1376,7 @@ func Default() Config {
 				LoginLockout:         60,
 			},
 			HTTPServices: HTTPServices{
+				Files:                 true,
 				EnableS3:              true,
 				RegistryAnonymousRead: true,
 				WebDAVClients:         DefaultWebDAVClients(),

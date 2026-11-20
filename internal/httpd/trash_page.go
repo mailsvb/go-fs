@@ -232,7 +232,10 @@ func (s *Server) trashPage(set *settings, w http.ResponseWriter, r *http.Request
 		return
 	}
 	who := s.sessionViewFor(set, r, cred)
-	who.Page, who.Trash, who.Files = "Trash", "", liveFolderLink(s.root, folder.Virtual)
+	who.Page, who.Trash = "Trash", ""
+	if filesOn(set) {
+		who.Files = liveFolderLink(s.root, folder.Virtual)
+	}
 	data := trashData{
 		Title:     vfs.AsFolder(folder.Virtual) + " · Trash",
 		Crumbs:    trashCrumbs(folder.Virtual),

@@ -614,8 +614,16 @@ func TestMigrateMovesTheHTTPKeysOfTheLastRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(changes) != len(httpKeys) {
-		t.Errorf("changes = %q, want one for each of the %d keys", changes, len(httpKeys))
+	// keys that came after the tables were never directly in [http]
+	newer := map[string]bool{"files": true}
+	moved := 0
+	for _, key := range httpKeys {
+		if !newer[key.key] {
+			moved++
+		}
+	}
+	if len(changes) != moved {
+		t.Errorf("changes = %q, want one for each of the %d keys", changes, moved)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

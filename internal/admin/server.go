@@ -233,8 +233,12 @@ func (h *Handler) handlePage(w http.ResponseWriter, r *http.Request) {
 	}
 	var page bytes.Buffer
 	nav := navOf(r)
+	files := markedURL(r.URL, "")
+	if nav.NoFiles {
+		files = ""
+	}
 	err = pageTemplate.Execute(&page, pageData{
-		Files:    markedURL(r.URL, ""),
+		Files:    files,
 		Logout:   markedURL(r.URL, "logout"),
 		Registry: nav.Registry,
 		User:     nav.User,
@@ -458,6 +462,9 @@ func WithClient(ctx context.Context, address string) context.Context {
 // servers the session may browse, the link to the Trash page, empty while
 // there is no trash, and the account that is signed in.
 type Nav struct {
+	// NoFiles says the file server does not serve its files, so the menu
+	// has no Files to go back to.
+	NoFiles  bool
 	Registry string
 	Servers  []NavLink
 	Trash    string

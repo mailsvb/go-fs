@@ -232,6 +232,13 @@ file tree: a browser that asks for a file or a folder, public ones included,
 is sent to the registry page instead, and its menu holds nothing but **Log
 out**.
 
+A server that is there for its registry alone sets
+`http.services.files = false`. The http server then answers nothing of
+`general.baseFolderFiles`, no listing, no file, no WebDAV, S3 or share link, and
+the page at `/` offers the **Registry** and, where an account sets `isAdmin`,
+**Admin** instead of **Files**, to a visitor and a session alike. ftp, sftp and
+tftp keep their own switches.
+
 What is served:
 
 - **Pulling.** Manifests by tag or digest, blobs with ranges, the tag list and

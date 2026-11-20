@@ -181,8 +181,9 @@ func newRequestID() string {
 // handleS3 authenticates an S3 request and dispatches it.
 func (s *Server) handleS3(set *settings, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Amz-Request-Id", newRequestID())
-	if !set.cfg.EnableS3 {
-		s.logFor(r).Debug("s3 request refused, http.services.enableS3 is off", "method", r.Method, "path", r.URL.Path,
+	// the buckets are the folders of the files, so S3 goes with them
+	if !set.cfg.EnableS3 || !filesOn(set) {
+		s.logFor(r).Debug("s3 request refused, http.services.enableS3 or files is off", "method", r.Method, "path", r.URL.Path,
 			"address", clientAddress(set, r))
 		writeS3Error(w, r, s3Err(http.StatusForbidden, "AccessDenied",
 			"The S3 API is switched off on this server."))

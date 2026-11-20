@@ -28,6 +28,20 @@ func (s *Server) admits(set *settings, cred credential) bool {
 		cred.token && cred.user != nil && cred.user.isAdmin
 }
 
+// adminAvailable reports whether the admin interface is on and some account
+// could open it, which is when the page at / offers it.
+func (s *Server) adminAvailable(set *settings) bool {
+	if s.admin == nil || !set.cfg.EnableAdminInterface {
+		return false
+	}
+	for _, user := range set.accounts {
+		if user.isAdmin {
+			return true
+		}
+	}
+	return false
+}
+
 // handleAdmin guards the interface and hands the request over.
 func (s *Server) handleAdmin(set *settings, w http.ResponseWriter, r *http.Request) {
 	if s.admin == nil || !set.cfg.EnableAdminInterface {
@@ -71,7 +85,7 @@ func (s *Server) handleAdmin(set *settings, w http.ResponseWriter, r *http.Reque
 	// and its menu offers the registry where the listing's would
 	who := s.sessionViewFor(set, r, cred)
 	ctx := admin.WithClient(r.Context(), address)
-	nav := admin.Nav{Registry: who.Registry, Trash: who.Trash, User: who.User}
+	nav := admin.Nav{Registry: who.Registry, Trash: who.Trash, User: who.User, NoFiles: !filesOn(set)}
 	for _, server := range who.Servers {
 		nav.Servers = append(nav.Servers, admin.NavLink{Name: server.Name, Link: server.Link})
 	}

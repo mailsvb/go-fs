@@ -24,7 +24,7 @@
   <details class="nav">
     <summary class="plain"><svg class="ic"><use href="#i-gear"/></svg>Admin<svg class="ic caret"><use href="#i-caret"/></svg></summary>
     <div class="menu">
-      <a href="{{.Files}}"><svg class="ic"><use href="#i-folder"/></svg>Files</a>
+      {{if .Files}}<a href="{{.Files}}"><svg class="ic"><use href="#i-folder"/></svg>Files</a>{{end}}
       {{if .Registry}}<a href="{{.Registry}}"><svg class="ic"><use href="#i-box"/></svg>Registry</a>{{end}}
       {{range .Servers}}<a href="{{.Link}}"><svg class="ic"><use href="#i-server"/></svg>{{.Name}}</a>{{end}}
       {{if .Trash}}<a href="{{.Trash}}"><svg class="ic"><use href="#i-trash"/></svg>Trash</a>{{end}}

@@ -764,6 +764,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// everything below serves the files of the served folder, which may be
+	// switched off: / then offers the pages that are left, and every other
+	// path is not there
+	if !filesOn(set) {
+		s.withoutFiles(set, w, r)
+		return
+	}
+
 	// a share link stands in for an account, for the download of the one
 	// file it was made for and nothing else
 	if s.sharedFile(set, r, target) {
