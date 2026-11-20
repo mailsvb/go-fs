@@ -35,9 +35,9 @@ docker pull host:8443/team/app:1.0
 |---|---|
 | Endpoint | `host:8443` (or the plain port), under `/v2/` |
 | Storage | `general.baseFolderRegistry`, which nothing else may serve |
-| Pulling | anyone while `http.services.registryAnonymousRead = true` (the default), otherwise an account that sets `registry` |
-| Pushing, tagging, deleting | an account that sets `registry` |
-| Credentials | a token from `/v2/_token`, fetched with the account's username and password as `docker login` does, or HTTP Basic on every request |
+| Pulling | anyone while `http.services.registryAnonymousRead = true` (the default), otherwise an account that sets `registry` or a `[[tokens]]` entry that sets `allowRegistry` |
+| Pushing, tagging, deleting | an account that sets `registry`, or a token that sets `allowRegistry` |
+| Credentials | a token from `/v2/_token`, fetched with the account's username and password as `docker login` does, or HTTP Basic on every request; a go-fs bearer token goes where the password goes, or as `Authorization: Bearer` on every request |
 
 The folder is made when it is not there, and it must be none of the folders the servers serve,
 nor hold one or lie inside one: go-fs refuses to start with it otherwise, and
@@ -62,6 +62,17 @@ accepted for five minutes; changing the account's password ends them at once.
 A request may also carry Basic credentials itself, which is what `curl -u`
 sends. A wrong password counts against the address in the same lock as
 everywhere else, so `docker login` with a wrong one fails as it should.
+
+A go-fs bearer token (`[[tokens]]`, made on the **TOKENS** tab) that sets
+`allowRegistry = true` stands in for such an account, which is what CI wants:
+`docker login host:8443 -u ci -p gofs_…` takes it as the password, with any
+username, and a script may send it directly, as `curl -H "Authorization:
+Bearer gofs_…" https://host:8443/v2/_catalog`. Its `paths` and file rights do
+not apply here. A token without `allowRegistry` is treated like an account
+without `registry`: it pulls where anyone may and is refused with `403`
+elsewhere. Replacing the token, letting it expire or turning `allowRegistry` off
+ends the registry tokens it was given at once. An unknown token counts against
+the address; an expired one does not.
 
 **Several architectures under one tag.** A tag names either an image for one
 platform or an index that lists one image per platform, which is what

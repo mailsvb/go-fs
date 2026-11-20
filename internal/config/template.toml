@@ -326,6 +326,12 @@ isAdmin = true
 # Whether the token may upload a new go-fs binary to ?go-fs=update, which also
 # needs http.main.enableSelfUpdate. False when not set.
 # allowSelfUpdate = true
+# Whether the token may push to, pull from and delete from the container
+# registry (general.baseFolderRegistry), as an account that sets registry does.
+# docker login takes the token as its password, with any username, and a script
+# may send it as "Authorization: Bearer <token>" on every registry request.
+# Independent of paths. False when not set.
+# allowRegistry = true
 
 # Remote servers the file listing sends files to, one table per server. The
 # Send File dialog lists them by name, beside Manual, which asks for a login

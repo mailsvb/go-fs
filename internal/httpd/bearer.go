@@ -40,30 +40,49 @@ func buildTokens(tokens []config.Token, fold bool) ([]*account, error) {
 	return resolved, nil
 }
 
-// checkBearer resolves a bearer token to its account. Every configured token
-// is compared, whether or not an earlier one matched, so the time a refusal
-// takes does not depend on which tokens exist. A token that has expired is
-// refused like one that does not, and recorded as such; only an unknown token
-// counts towards the lock, since an expired one was a real credential once.
+// checkBearer resolves a bearer token to its account. A token that has
+// expired is refused like one that does not, and recorded as such; only an
+// unknown token counts towards the lock, since an expired one was a real
+// credential once.
 func (s *Server) checkBearer(set *settings, r *http.Request, presented string) *account {
+	found, expired := matchToken(set, presented)
+	switch {
+	case found == nil:
+		s.logFor(r).Info("http login refused", "method", "bearer", "address", clientAddress(set, r))
+		s.recordFailure(set, r)
+		return nil
+	case expired:
+		s.logExpiredToken(set, r, found)
+		return nil
+	}
+	return found
+}
+
+// matchToken finds the token presented, and says whether it has expired. It
+// records nothing, which is left to the caller. Every configured token is
+// compared, whether or not an earlier one matched, so the time a refusal takes
+// does not depend on which tokens exist.
+func matchToken(set *settings, presented string) (found *account, expired bool) {
 	hash := config.HashToken(strings.TrimSpace(presented))
-	var found *account
 	for _, token := range set.tokens {
 		if secrets.Match(hash, token.hash) && found == nil {
 			found = token
 		}
 	}
 	if found == nil {
-		s.logFor(r).Info("http login refused", "method", "bearer", "address", clientAddress(set, r))
-		s.recordFailure(set, r)
-		return nil
+		return nil, false
 	}
-	if !found.expires.IsZero() && !time.Now().Before(found.expires) {
-		s.logFor(r).Info("http bearer token expired", "user", found.name,
-			"expired", found.expires.Format(time.RFC3339), "address", clientAddress(set, r))
-		return nil
-	}
-	return found
+	return found, tokenExpired(found)
+}
+
+// tokenExpired reports a token whose expiry has passed.
+func tokenExpired(token *account) bool {
+	return !token.expires.IsZero() && !time.Now().Before(token.expires)
+}
+
+func (s *Server) logExpiredToken(set *settings, r *http.Request, token *account) {
+	s.logFor(r).Info("http bearer token expired", "user", token.name,
+		"expired", token.expires.Format(time.RFC3339), "address", clientAddress(set, r))
 }
 
 // refuseBearer answers a request whose bearer token was refused, as RFC 6750

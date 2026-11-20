@@ -307,7 +307,9 @@ func registryRead(method string) bool {
 
 // registryAccess decides whether a request may reach the registry, and
 // answers it when it may not. A request identifies itself with a registry
-// token (see registry_token.go) or with Basic credentials.
+// token (see registry_token.go) or with Basic credentials; a go-fs bearer
+// token that sets allowRegistry is taken where a registry account is, as the
+// password or as a bearer of its own.
 //
 // A pull is public while http.services.registryAnonymousRead is on; everything else,
 // the status of an upload included, takes an account that sets registry.
@@ -324,7 +326,11 @@ func (s *Server) registryAccess(set *settings, w http.ResponseWriter, r *http.Re
 	header := r.Header.Get("Authorization")
 	switch {
 	case strings.HasPrefix(header, "Bearer "):
-		user, ok := s.registryBearer(set, strings.TrimPrefix(header, "Bearer "))
+		raw := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+		if !looksLikeRegistryToken(raw) {
+			return s.registryRawToken(set, w, r, route, raw, needsAccount)
+		}
+		user, ok := s.registryBearer(set, raw)
 		if !ok {
 			s.logFor(r).Debug("registry token refused", "method", r.Method, "path", r.URL.Path,
 				"address", clientAddress(set, r))
@@ -354,7 +360,18 @@ func (s *Server) registryAccess(set *settings, w http.ResponseWriter, r *http.Re
 					"address", clientAddress(set, r), "path", r.URL.Path)
 				return user, true
 			}
-			if s.otherAccount(set, name, password) {
+			token, kind := s.registryTokenFor(set, r, password)
+			switch kind {
+			case registryToken:
+				s.logins.clear(clientAddress(set, r))
+				s.logFor(r).Debug("http authenticated", "user", token.name, "method", "registry",
+					"address", clientAddress(set, r), "path", r.URL.Path)
+				return token, true
+			case expiredToken:
+				s.registryChallenge(set, w, r, route, false, true)
+				return nil, false
+			}
+			if kind == otherToken || s.otherAccount(set, name, password) {
 				if !needsAccount {
 					return nil, true
 				}
@@ -380,6 +397,46 @@ func (s *Server) registryAccess(set *settings, w http.ResponseWriter, r *http.Re
 		return nil, false
 	}
 	return nil, true
+}
+
+// registryRawToken decides on a request that sends a go-fs bearer token
+// ([[tokens]]) itself rather than one fetched from /v2/_token, which is what a
+// script does: as on any other path, an unknown one counts against the
+// address.
+func (s *Server) registryRawToken(set *settings, w http.ResponseWriter, r *http.Request, route registryRoute,
+	raw string, needsAccount bool) (*account, bool) {
+	if remaining, locked := s.lockedOut(set, r); locked {
+		s.logFor(r).Info("http login refused, the address is locked out", "method", "bearer",
+			"address", clientAddress(set, r), "remaining", remaining.Round(time.Second))
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter(remaining)))
+		writeRegistryError(w, r, regErr(http.StatusTooManyRequests, "TOOMANYREQUESTS",
+			"too many failed logins from your address"))
+		return nil, false
+	}
+	token, kind := s.registryTokenFor(set, r, raw)
+	switch kind {
+	case registryToken:
+		s.logins.clear(clientAddress(set, r))
+		s.logFor(r).Debug("http authenticated", "user", token.name, "method", "registry",
+			"address", clientAddress(set, r), "path", r.URL.Path)
+		return token, true
+	case otherToken:
+		if !needsAccount {
+			return nil, true
+		}
+		s.logFor(r).Info("registry refused a token that does not set allowRegistry", "user", token.name,
+			"method", r.Method, "path", r.URL.Path, "address", clientAddress(set, r))
+		writeRegistryError(w, r, regErr(http.StatusForbidden, "DENIED",
+			"requested access to the resource is denied"))
+		return nil, false
+	case expiredToken:
+		s.registryChallenge(set, w, r, route, true, true)
+		return nil, false
+	}
+	s.logFor(r).Info("http login refused", "method", "bearer", "address", clientAddress(set, r))
+	s.recordFailure(set, r)
+	s.registryChallenge(set, w, r, route, true, true)
+	return nil, false
 }
 
 // registryLock is the mutex serializing the changes to one repository or one

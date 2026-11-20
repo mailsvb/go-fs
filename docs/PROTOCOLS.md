@@ -371,6 +371,9 @@ What a token may do is set on its own entry:
   with no pattern can reach nothing.
 - **`expires`:** an RFC 3339 time. Edit it to extend a token, or clear it to
   make the token permanent.
+- **`allowRegistry`:** the token pushes to, pulls from and deletes from the
+  [container registry](REGISTRY.md) as an account that sets `registry` does,
+  whatever its `paths`: `docker login host:8443 -u ci -p gofs_…` (any username).
 
 Only the HTTP server accepts tokens. FTP, SFTP and TFTP never see them.
 

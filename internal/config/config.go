@@ -344,6 +344,9 @@ type Permissions struct {
 	// SelfUpdate lets a bearer token replace the go-fs binary; accounts never
 	// have it, an admin updates through a session instead.
 	SelfUpdate bool
+	// Registry lets a bearer token use the container registry; accounts set
+	// User.Registry instead.
+	Registry bool
 }
 
 // Token is a bearer token for the HTTP server: a credential a script or an API
@@ -381,6 +384,13 @@ type Token struct {
 	// ?go-fs=update, which needs http.main.enableSelfUpdate as well. It is
 	// independent of paths.
 	AllowSelfUpdate *bool `toml:"allowSelfUpdate,omitempty"`
+
+	// AllowRegistry lets the token push to, pull from and delete from the
+	// container registry of the HTTP server, as an account that sets registry
+	// does: docker login takes it as the password, with any username, and a
+	// script may send it as the bearer token of every registry request. It is
+	// independent of paths and of the rights above.
+	AllowRegistry *bool `toml:"allowRegistry,omitempty"`
 }
 
 // Permissions resolves the token entry the way User.Permissions resolves an
@@ -394,6 +404,7 @@ func (t Token) Permissions() Permissions {
 		FolderDelete:  boolOr(t.AllowUserFolderDelete, false),
 		FolderCreate:  boolOr(t.AllowUserFolderCreate, false),
 		SelfUpdate:    boolOr(t.AllowSelfUpdate, false),
+		Registry:      boolOr(t.AllowRegistry, false),
 	}
 }
 

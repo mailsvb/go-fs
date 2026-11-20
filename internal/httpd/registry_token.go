@@ -111,11 +111,58 @@ func (s *Server) registryBearer(set *settings, raw string) (*account, bool) {
 	if claims.Subject == "" {
 		return nil, true
 	}
+	if strings.HasPrefix(claims.Subject, tokenPrefix) {
+		token := accountNamed(set.tokens, claims.Subject)
+		if token == nil || !token.perms.Registry || tokenExpired(token) || !s.tokens.issuedFor(claims, token) {
+			return nil, false
+		}
+		return token, true
+	}
 	user := accountNamed(set.registryAccounts, claims.Subject)
 	if user == nil || !s.tokens.issuedFor(claims, user) {
 		return nil, false
 	}
 	return user, true
+}
+
+// What a go-fs bearer token presented to the registry turns out to be.
+type registryTokenKind int
+
+const (
+	// notAToken is no token configured.
+	notAToken registryTokenKind = iota
+	// registryToken sets allowRegistry and has not expired: it is let in as an
+	// account that sets registry is.
+	registryToken
+	// otherToken does not set allowRegistry: like the password of an account
+	// that does not set registry, it pulls where anyone may.
+	otherToken
+	// expiredToken was a credential once, so it is refused without counting
+	// against the address.
+	expiredToken
+)
+
+// registryTokenFor reads what a client sent, as the password of docker login
+// or as a bearer of its own, as a go-fs bearer token ([[tokens]]). It logs an
+// expired one and records nothing else.
+func (s *Server) registryTokenFor(set *settings, r *http.Request, presented string) (*account, registryTokenKind) {
+	token, expired := matchToken(set, presented)
+	switch {
+	case token == nil:
+		return nil, notAToken
+	case expired:
+		s.logExpiredToken(set, r, token)
+		return token, expiredToken
+	case !token.perms.Registry:
+		return token, otherToken
+	}
+	return token, registryToken
+}
+
+// looksLikeRegistryToken reports a bearer shaped like a JWT, which is what
+// /v2/_token hands out. One that is not is read as a go-fs bearer token.
+func looksLikeRegistryToken(raw string) bool {
+	return strings.Count(raw, ".") == 2
 }
 
 // registryScope is the access a request needs, in the form of the token
@@ -174,13 +221,26 @@ func (s *Server) handleRegistryToken(set *settings, w http.ResponseWriter, r *ht
 			return
 		}
 		name, password, ok := parseBasic(header)
+		var token *account
+		kind := notAToken
 		if ok {
 			user = matchAccount(set.registryAccounts, name, password)
+			if user == nil {
+				// docker login takes a token as the password, with any
+				// username, as other registries take theirs
+				token, kind = s.registryTokenFor(set, r, password)
+			}
 		}
 		switch {
 		case user != nil:
 			s.logins.clear(clientAddress(set, r))
-		case ok && s.otherAccount(set, name, password):
+		case kind == registryToken:
+			user = token
+			s.logins.clear(clientAddress(set, r))
+		case kind == expiredToken:
+			s.basicChallenge(set, w, r, true)
+			return
+		case kind == otherToken || ok && s.otherAccount(set, name, password):
 			// the right password of an account without registry: it may pull
 			// where anyone may, and nothing more
 			if !set.cfg.RegistryAnonymousRead {

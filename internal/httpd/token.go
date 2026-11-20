@@ -246,5 +246,11 @@ func (s *signer) fingerprint(user *account) string {
 	// the separator is what stops "ab"+"c" and "a"+"bc" fingerprinting alike
 	mac.Write([]byte{0})
 	mac.Write([]byte(user.password))
+	if user.hash != "" {
+		// a bearer token has no password, and is what its hash stands for:
+		// a token replaced under the same name ends what the old one got
+		mac.Write([]byte{0})
+		mac.Write([]byte(user.hash))
+	}
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
 }
