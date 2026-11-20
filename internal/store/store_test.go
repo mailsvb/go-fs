@@ -53,7 +53,7 @@ type share struct {
 
 func TestDefaultPath(t *testing.T) {
 	cases := []struct{ config, want string }{
-		{"/etc/go-fs/go-fs.toml", "/etc/go-fs/go-fs.db"},
+		{"/var/lib/go-fs/go-fs.toml", "/var/lib/go-fs/go-fs.db"},
 		{"go-fs.toml", "go-fs.db"},
 		{"conf/other.toml", "conf/other.db"},
 		{"noextension", "noextension.db"},

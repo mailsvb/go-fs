@@ -786,15 +786,15 @@ sonosSpeakers = []
 # A PEM file with the public key signatures are made with, such as the
 # cosign.pub of cosign generate-key-pair: any ECDSA, Ed25519 or RSA key.
 # Exactly one of publicKey, certificates and trustedRoot is set.
-# publicKey = "/etc/go-fs/cosign.pub"
+# publicKey = "/var/lib/go-fs/cosign.pub"
 # A PEM file with the root certificates of trusted Notary Project
 # signatures, as notation keeps them in its trust store.
-# certificates = "/etc/go-fs/notation-ca.pem"
+# certificates = "/var/lib/go-fs/notation-ca.pem"
 # A Sigstore trusted_root.json, for keyless signatures: Sigstore publishes the
 # one of its public instance, and gh attestation trusted-root prints GitHub's,
 # which attestations of private repositories need. It is read as it is, never
 # refreshed online.
-# trustedRoot = "/etc/go-fs/trusted_root.json"
+# trustedRoot = "/var/lib/go-fs/trusted_root.json"
 # Who a keyless signature has to be made by: the identity its certificate
 # names, a * standing for anything, and the OIDC issuer that vouched for it.
 # Both are needed with trustedRoot.

@@ -156,7 +156,7 @@ checksums:
 	@echo "wrote $(DIST)/SHA256SUMS"
 
 # packages builds what the installers need at the released version: the rpm
-# packages into DIST, and the binaries and configuration the msi is made of,
+# packages into DIST, and the binaries and the configuration the msi is made of,
 # which only the WiX Toolset on Windows can build, into PKG. It runs after
 # release, which empties DIST, and writes the checksums again.
 packages: rpm msi-inputs
@@ -173,8 +173,11 @@ RPM_LIGHT_SERVES := HTTP, HTTPS, an S3 compatible API and an OCI registry
 # and conflict with each other: they install the same files. With
 # SIGNING_KEY_FILE naming an armored PGP private key, and NFPM_RPM_PASSPHRASE
 # unlocking it, the rpms are signed, as the package repository needs them to be.
+# Each ships the starter configuration as /usr/share/go-fs/go-fs.toml, which
+# its first install copies to /var/lib/go-fs/go-fs.toml.
 rpm: viewer-deps
 	@mkdir -p $(PKG)/linux $(DIST)
+	@go run ./tools/starter -installer rpm -o $(PKG)/linux/go-fs.toml
 	@for product in $(BINARY) $(LIGHT); do \
 		if [ "$$product" = "$(LIGHT)" ]; then \
 			conflicts=$(BINARY); serves="$(RPM_LIGHT_SERVES)"; \
@@ -192,9 +195,11 @@ rpm: viewer-deps
 		done; \
 	done
 
-# both msi install the same folders, each its own product's binary
+# both msi install the same folders, each its own product's binary, and the
+# same starter configuration, as C:\ProgramData\go-fs\go-fs.toml
 msi-inputs: viewer-deps
 	@mkdir -p $(PKG)
+	@go run ./tools/starter -installer msi -o $(PKG)/go-fs.msi.toml
 	@for product in $(BINARY) $(LIGHT); do \
 		for arch in amd64; do \
 			bin=$(PKG)/$${product}_windows_$$arch.exe; \
@@ -207,7 +212,8 @@ msi-inputs: viewer-deps
 # What packaging/docker/Dockerfile builds the container image from, and all it
 # sees: the linux/amd64 binary stamped as the image's, so that it leaves
 # updating to a newer image and writes the image's starter configuration, with
-# every server listening on all interfaces, the entrypoint and the licence.
+# every server listening on all interfaces, to /var/lib/go-fs/go-fs.toml at the
+# first start, the entrypoint and the licence.
 DOCKER := $(PKG)/docker
 
 docker-inputs: viewer-deps

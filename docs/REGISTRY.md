@@ -280,15 +280,15 @@ included):
 ```toml
 [[http.services.registryTrust]]
 name = "release"
-publicKey = "/etc/go-fs/cosign.pub"           # cosign sign --key, cosign attest --key
+publicKey = "/var/lib/go-fs/cosign.pub"           # cosign sign --key, cosign attest --key
 
 [[http.services.registryTrust]]
 name = "notary"
-certificates = "/etc/go-fs/notation-ca.pem"   # notation sign
+certificates = "/var/lib/go-fs/notation-ca.pem"   # notation sign
 
 [[http.services.registryTrust]]
 name = "github"
-trustedRoot = "/etc/go-fs/trusted_root.json"  # keyless: cosign 3, GitHub attestations
+trustedRoot = "/var/lib/go-fs/trusted_root.json"  # keyless: cosign 3, GitHub attestations
 identity = "https://github.com/acme/app/.github/workflows/release.yml@refs/tags/*"
 issuer = "https://token.actions.githubusercontent.com"
 repositories = ["acme/*"]

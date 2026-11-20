@@ -1,12 +1,20 @@
 #!/bin/sh
-# rpm passes 1 on an install and 2 or more on an upgrade. The service is
-# enabled and started on the install, and restarted into the new binary on an
-# upgrade, unless it had been stopped. Without systemd running, in a container
-# build for instance, there is nothing to start.
+# rpm passes 1 on an install and 2 or more on an upgrade. Whenever there is
+# no configuration yet, the starter the package ships is copied into place,
+# readable by go-fs alone: go-fs generates its secrets into it at the first
+# start. The service is enabled and started on the install, and restarted
+# into the new binary on an upgrade, unless it had been stopped. Without
+# systemd running, in a container build for instance, there is nothing to
+# start.
 #
 # Either way the last lines rpm prints say where the admin interface is, and
 # after a first install which account logs in to it.
+config=/var/lib/go-fs/go-fs.toml
+if [ ! -e "$config" ]; then
+    install -m 0600 -o go-fs -g go-fs /usr/share/go-fs/go-fs.toml "$config"
+fi
 note() {
+    echo "go-fs: the configuration is $config"
     echo "go-fs: the admin interface is available at http://localhost:8080/?go-fs=admin"
     if [ "${1:-1}" -eq 1 ]; then
         echo "go-fs: log in as admin with the password admin, then change that password"

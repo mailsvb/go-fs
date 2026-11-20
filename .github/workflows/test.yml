@@ -199,13 +199,13 @@ jobs:
 
       # install, start, upgrade and remove the rpm the way dnf does on a
       # server; the container has no systemd, so go-fs is started by hand as
-      # the account the unit runs it as. The rpm ships no configuration: go-fs
-      # writes the starter at its first start. The upgrade keeps the
-      # configuration go-fs wrote its secrets into, and the removal keeps it as
-      # go-fs.toml.rpmsave. Then the upgrades from the released rpms: each has
-      # to keep the configuration go-fs ran with, and the one from 0.19.1, which
-      # owned the file as a config file, must leave it where it is rather than
-      # move it aside as go-fs.toml.rpmsave on the way to owning it as a ghost.
+      # the account the unit runs it as. The install copies the starter the
+      # rpm ships to /var/lib/go-fs/go-fs.toml, which no package owns: the
+      # upgrade keeps the configuration go-fs wrote its secrets into, and the
+      # removal leaves it in place. Then the upgrades from the released rpms,
+      # which kept the configuration in /etc/go-fs: each has to move the file
+      # go-fs ran with to /var/lib/go-fs, the one from 0.19.1, which owned it
+      # as a config file, without rpm moving it aside as go-fs.toml.rpmsave.
       - name: install the rpm
         run: |
           docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/released:/released:ro" rockylinux:9 sh -euxc '
@@ -213,11 +213,14 @@ jobs:
             update=$(ls /dist/go-fs-[0-9]*.x86_64.rpm | sort -V | tail -1)
             latest=$(ls /released/latest/go-fs-[0-9]*.x86_64.rpm)
             configfile=$(ls /released/config-file/go-fs-[0-9]*.x86_64.rpm)
-            # serve starts go-fs as the service would, waits for it to answer
-            # and stops it again, leaving its log in /tmp/go-fs.log
+            config=/var/lib/go-fs/go-fs.toml
+            old=/etc/go-fs/go-fs.toml
+            # serve starts go-fs with the configuration at $1, as the service
+            # would, waits for it to answer and stops it again, leaving its
+            # log in /tmp/go-fs.log
             serve() {
               setpriv --reuid go-fs --regid go-fs --init-groups \
-                /usr/bin/go-fs -config /etc/go-fs/go-fs.toml > /tmp/go-fs.log 2>&1 &
+                /usr/bin/go-fs -config "$1" > /tmp/go-fs.log 2>&1 &
               pid=$!
               for i in $(seq 1 20); do curl -sS -o /dev/null http://127.0.0.1:8080/ && break; sleep 0.5; done
               # every path needs an account by default, http.pathsWithoutAuth
@@ -229,22 +232,29 @@ jobs:
               cat /tmp/go-fs.log
             }
             # upgrade installs a released rpm, runs it, upgrades to this
-            # checkout and checks that the configuration came through; it
-            # removes go-fs again afterwards
+            # checkout and checks that the configuration came through to
+            # /var/lib/go-fs, from /etc/go-fs where the release kept it there;
+            # it removes go-fs and its configuration again afterwards
             upgrade() {
+              from=$config
+              if rpm -qlp "$1" | grep -qxF "$old"; then from=$old; fi
               dnf install -y "$1"
-              serve
-              secret=$(grep "^httpSessionTokenSecret = " /etc/go-fs/go-fs.toml)
+              serve "$from"
+              secret=$(grep "^httpSessionTokenSecret = " "$from")
               # a value of [http] of its own, which a release before its
               # tables keeps directly in [http]
-              sed -i "s/^maxConnections = .*/maxConnections = 77/" /etc/go-fs/go-fs.toml
+              sed -i "s/^maxConnections = .*/maxConnections = 77/" "$from"
               # the released rpm may be newer than this checkout, so the
               # upgrade to it is forced the way rpm -U --oldpackage does one
               rpm -U --oldpackage "$update"
-              test ! -e /etc/go-fs/go-fs.toml.rpmsave
-              grep -qxF "$secret" /etc/go-fs/go-fs.toml
-              serve
-              grep -qxF "$secret" /etc/go-fs/go-fs.toml
+              test ! -e "$old"
+              test ! -e "$old.rpmsave"
+              test "$(stat -c %U:%a "$config")" = go-fs:600
+              test -e /var/lib/go-fs/go-fs.db
+              grep -qxF "$secret" "$config"
+              grep -q -- "-config $config" /usr/lib/systemd/system/go-fs.service
+              serve "$config"
+              grep -qxF "$secret" "$config"
               if grep -q "wrote the starter configuration" /tmp/go-fs.log; then
                 echo "go-fs wrote a starter over the upgraded configuration"; exit 1
               fi
@@ -255,49 +265,59 @@ jobs:
               fi
               # the keys of [http] are moved into its tables with their values,
               # and none is left where this version no longer reads it
-              grep -qx "maxConnections = 77" /etc/go-fs/go-fs.toml
-              grep -qx "\[http.connection\]" /etc/go-fs/go-fs.toml
+              grep -qx "maxConnections = 77" "$config"
+              grep -qx "\[http.connection\]" "$config"
               if grep -q "no longer reads" /tmp/go-fs.log; then
                 echo "go-fs left a key of the upgraded configuration unread"; exit 1
               fi
-              if awk "/^\[http\]/{f=1;next} /^\[/{f=0} f && /^[A-Za-z]/" /etc/go-fs/go-fs.toml | grep -q .; then
+              if awk "/^\[http\]/{f=1;next} /^\[/{f=0} f && /^[A-Za-z]/" "$config" | grep -q .; then
                 echo "go-fs left keys directly in [http]"; exit 1
               fi
               dnf remove -y go-fs
-              rm -f /etc/go-fs/go-fs.toml.rpmsave
+              rm -f "$config" /var/lib/go-fs/go-fs.db
             }
             dnf install -y "$version"
             id go-fs
-            test ! -e /etc/go-fs/go-fs.toml
-            test "$(stat -c %U /etc/go-fs)" = go-fs
+            # the install copied the starter, which go-fs has not run with yet
+            test ! -e /etc/go-fs
+            test "$(stat -c %U:%a "$config")" = go-fs:600
+            # rockylinux:9 has no cmp
+            test "$(sha256sum < /usr/share/go-fs/go-fs.toml)" = "$(sha256sum < "$config")"
+            if rpm -qf "$config"; then
+              echo "the package owns the configuration"; exit 1
+            fi
             test "$(stat -c %U /var/lib/go-fs/files)" = go-fs
             test "$(stat -c %U /var/lib/go-fs/registry)" = go-fs
+            test "$(stat -c %U /var/lib/go-fs/disks)" = go-fs
             test "$(stat -c %U:%a /var/lib/go-fs/trash)" = go-fs:700
-            if runuser -u go-fs -- /usr/bin/go-fs -check -config /etc/go-fs/go-fs.toml; then
-              echo "-check passed on a configuration that is not there"; exit 1
+            grep -q -- "-config $config" /usr/lib/systemd/system/go-fs.service
+            runuser -u go-fs -- /usr/bin/go-fs -check -config "$config"
+            serve "$config"
+            if grep -q "wrote the starter configuration" /tmp/go-fs.log; then
+              echo "go-fs wrote a starter, the rpm did not install it"; exit 1
             fi
-            test ! -e /etc/go-fs/go-fs.toml
-            serve
-            grep -q "wrote the starter configuration" /tmp/go-fs.log
             grep -q "installer=rpm" /tmp/go-fs.log
             grep -q "documentation prints" /tmp/go-fs.log
-            test "$(stat -c %U:%a /etc/go-fs/go-fs.toml)" = go-fs:600
-            grep -qxF "baseFolderRegistry = \"/var/lib/go-fs/registry\"" /etc/go-fs/go-fs.toml
-            grep -q "^httpSessionTokenSecret = \"..*\"" /etc/go-fs/go-fs.toml
-            runuser -u go-fs -- /usr/bin/go-fs -check -config /etc/go-fs/go-fs.toml
-            rpm -qf /etc/go-fs/go-fs.toml
+            test "$(stat -c %U:%a "$config")" = go-fs:600
+            grep -qxF "baseFolderRegistry = \"/var/lib/go-fs/registry\"" "$config"
+            grep -q "^httpSessionTokenSecret = \"..*\"" "$config"
+            secret=$(grep "^httpSessionTokenSecret = " "$config")
             dnf install -y "$update"
             rpm -q go-fs
-            grep -q "^httpSessionTokenSecret = \"..*\"" /etc/go-fs/go-fs.toml
+            grep -qxF "$secret" "$config"
             dnf remove -y go-fs
             test ! -e /usr/bin/go-fs
-            test ! -e /etc/go-fs/go-fs.toml
-            grep -q "^httpSessionTokenSecret = \"..*\"" /etc/go-fs/go-fs.toml.rpmsave
-            rm -f /etc/go-fs/go-fs.toml.rpmsave
+            # the removal keeps the configuration where it was
+            grep -qxF "$secret" "$config"
+            # a reinstall finds it and copies no starter over it
+            dnf install -y "$version"
+            grep -qxF "$secret" "$config"
+            dnf remove -y go-fs
+            rm -f "$config" /var/lib/go-fs/go-fs.db
 
             upgrade "$latest"
             # 0.19.1 wrote the configuration when it was installed
-            rpm -qp --configfiles "$configfile" | grep -qxF /etc/go-fs/go-fs.toml
+            rpm -qp --configfiles "$configfile" | grep -qxF "$old"
             upgrade "$configfile"
           '
 
@@ -306,6 +326,7 @@ jobs:
           name: msi-inputs
           path: |
             build/pkg/go-fs_windows_*.exe
+            build/pkg/go-fs.msi.toml
           if-no-files-found: error
 
   msi:
@@ -337,6 +358,7 @@ jobs:
             -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
             -d Version=0.0.1 `
             -d Bin="$PWD\build\pkg\go-fs_windows_amd64.exe" `
+            -d Config="$PWD\build\pkg\go-fs.msi.toml" `
             -o go-fs.msi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -358,9 +380,9 @@ jobs:
           $log = "$env:ProgramData\go-fs\logs\go-fs.log"
           Get-Content $log
           if (-not $up) { throw "go-fs does not answer on 127.0.0.1:8080" }
-          # the msi ships no configuration: the service wrote the starter
-          if (-not (Test-Path "$env:ProgramData\go-fs\go-fs.toml")) { throw "go-fs wrote no configuration" }
-          if (-not (Select-String -Quiet -Path $log -Pattern "wrote the starter configuration")) { throw "the log does not say go-fs wrote the starter" }
+          # the msi installed the starter configuration, so go-fs wrote none
+          if (-not (Test-Path "$env:ProgramData\go-fs\go-fs.toml")) { throw "the msi installed no configuration" }
+          if (Select-String -Quiet -Path $log -Pattern "wrote the starter configuration") { throw "go-fs wrote the starter, the msi did not install it" }
           if (-not (Select-String -Quiet -Path "$env:ProgramData\go-fs\go-fs.toml" -SimpleMatch -Pattern 'baseFolderFiles = "C:/ProgramData/go-fs/files"')) { throw "the starter does not serve C:/ProgramData/go-fs/files" }
           # every path needs an account by default, http.pathsWithoutAuth being
           # empty, so the root refuses a stranger and serves the admin account
@@ -370,6 +392,7 @@ jobs:
           Invoke-WebRequest -UseBasicParsing -Headers $admin http://127.0.0.1:8080/ | Out-Null
           if (-not (Test-Path "$env:ProgramData\go-fs\registry")) { throw "the install made no registry folder" }
           if (-not (Test-Path "$env:ProgramData\go-fs\trash")) { throw "the install made no trash folder" }
+          if (-not (Test-Path "$env:ProgramData\go-fs\disks")) { throw "the install made no disks folder" }
           try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/v2/ | Out-Null }
           catch { if ($_.Exception.Response.StatusCode.value__ -ne 401) { throw "the registry does not answer on /v2/: $_" } }
           if (-not (Select-String -Quiet -Path $log -Pattern "installer=msi")) { throw "the log does not say msi" }
@@ -379,3 +402,10 @@ jobs:
           if ($uninstall.ExitCode -ne 0) { Get-Content uninstall.log -Tail 80; exit $uninstall.ExitCode }
           if (Get-Service go-fs -ErrorAction SilentlyContinue) { throw "the service is still there" }
           if (-not (Test-Path "$env:ProgramData\go-fs\go-fs.toml")) { throw "the uninstall removed the configuration" }
+          # a reinstall keeps the configuration as the first install left it
+          Add-Content "$env:ProgramData\go-fs\go-fs.toml" "# changed"
+          $reinstall = Start-Process msiexec -Wait -PassThru -ArgumentList "/i go-fs.msi /qn /l*v reinstall.log"
+          if ($reinstall.ExitCode -ne 0) { Get-Content reinstall.log -Tail 80; exit $reinstall.ExitCode }
+          if (-not (Select-String -Quiet -Path "$env:ProgramData\go-fs\go-fs.toml" -SimpleMatch -Pattern "# changed")) { throw "the reinstall replaced the configuration" }
+          $uninstall = Start-Process msiexec -Wait -PassThru -ArgumentList "/x go-fs.msi /qn /l*v uninstall2.log"
+          if ($uninstall.ExitCode -ne 0) { Get-Content uninstall2.log -Tail 80; exit $uninstall.ExitCode }

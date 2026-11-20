@@ -1,7 +1,8 @@
 # The container image of go-fs, for linux/amd64, built by make docker from
 # build/pkg/docker, which make docker-inputs fills: the binary built with
 # -X main.packaging=docker, which writes the image's starter configuration
-# into /etc/go-fs at the first start, the entrypoint and the licence. The
+# to /var/lib/go-fs/go-fs.toml at the first start, the entrypoint and the
+# licence. Everything go-fs keeps is in /var/lib/go-fs, its one volume. The
 # release workflow pushes it to ghcr.io/mailsvb/go-fs.
 #
 # Besides go-fs it carries only what Fetch runs: yt-dlp, the ffmpeg and
@@ -26,8 +27,8 @@ LABEL org.opencontainers.image.title="go-fs" \
 
 # ffmpeg brings ffprobe; tzdata lets TZ set the time zone of the log
 RUN apk add --no-cache ca-certificates tzdata ffmpeg deno \
- && addgroup -S -g 10001 go-fs \
- && adduser -S -D -H -u 10001 -G go-fs -h /var/lib/go-fs -s /sbin/nologin go-fs
+ && addgroup -S -g 1000 go-fs \
+ && adduser -S -D -H -u 1000 -G go-fs -h /var/lib/go-fs -s /sbin/nologin go-fs
 
 # the download is checked against the checksums of the same release
 RUN set -eu; \
@@ -43,16 +44,16 @@ COPY entrypoint.sh /usr/bin/go-fs-entrypoint
 COPY LICENSE /usr/share/licenses/go-fs/LICENSE
 
 # The modes are set here rather than by COPY --chmod, which the classic
-# builder lacks. The folders of the configuration and of what is served are
-# owned by the account go-fs runs as. go-fs writes into its configuration
-# file by renaming a new one over it, so the whole folder is a volume, not
-# the file. A named volume is filled from these folders, owner and modes
-# included, so it belongs to 10001 too: a container started with --user as
-# another UID needs the volume handed to that UID once, or folders of the
-# host that UID owns. The entrypoint says so and prints the command.
+# builder lacks. /var/lib/go-fs holds the configuration and the folders it
+# serves from, all owned by the account go-fs runs as, 1000:1000. go-fs
+# writes into its configuration file by renaming a new one over it, so the
+# whole folder is the volume, not the file. A named volume is filled from
+# these folders, owner and modes included, so it belongs to 1000 too: a
+# container started with --user as another UID needs the volume handed to
+# that UID once, or a folder of the host that UID owns. The entrypoint says
+# so and prints the command.
 RUN chmod 0755 /usr/bin/go-fs /usr/bin/go-fs-entrypoint \
  && chmod 0644 /usr/share/licenses/go-fs/LICENSE \
- && install -d -o go-fs -g go-fs -m 0750 /etc/go-fs \
  && install -d -o go-fs -g go-fs -m 0750 /var/lib/go-fs \
  && for dir in files registry disks; do install -d -o go-fs -g go-fs -m 0750 /var/lib/go-fs/$dir; done \
  && for dir in temp trash; do install -d -o go-fs -g go-fs -m 0700 /var/lib/go-fs/$dir; done
@@ -62,7 +63,7 @@ RUN go-fs -version && ffmpeg -version >/dev/null && ffprobe -version >/dev/null 
  && deno --version && yt-dlp --version
 
 USER go-fs
-VOLUME ["/etc/go-fs", "/var/lib/go-fs"]
+VOLUME ["/var/lib/go-fs"]
 # http, https, ftp, ftps, sftp, tftp and nbd at the ports of the configuration;
 # only http is switched on
 EXPOSE 8080 8443 8021 8990 8022 8069/udp 10809

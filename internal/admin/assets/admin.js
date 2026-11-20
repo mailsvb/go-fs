@@ -345,7 +345,7 @@ function managedOrigin() {
 function managedHelp() {
   if (update.managedBy === "docker") {
     return "Updates come as a new container image: docker pull ghcr.io/mailsvb/go-fs:latest, "
-      + "then recreate the container; the configuration in the /etc/go-fs volume is kept.";
+      + "then recreate the container; the configuration in the /var/lib/go-fs volume is kept.";
   }
   return "Updates come as a new " + update.managedBy + " package from the go-fs repository: "
     + "zypper update go-fs or dnf upgrade go-fs, which restarts the service; the configuration "

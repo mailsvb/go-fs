@@ -34,7 +34,8 @@ HTTP server serves to its admins.
 
 Every [release](https://github.com/mailsvb/go-fs/releases) has an rpm for
 x86_64 and aarch64 and an msi for Windows x64. Both install go-fs as a
-service ([details](docs/INSTALL.md)). On openSUSE and SLES (Fedora and RHEL:
+service, with its configuration and data in `/var/lib/go-fs` or
+`C:\ProgramData\go-fs`, ready to start ([details](docs/INSTALL.md)). On openSUSE and SLES (Fedora and RHEL:
 see the [package page](https://mailsvb.github.io/go-fs/)):
 
 ```sh
@@ -53,7 +54,7 @@ As a container, for linux/amd64, with yt-dlp and ffmpeg for Fetch
 ([details](docs/INSTALL.md#linux-docker)):
 
 ```sh
-docker run -d -p 127.0.0.1:8080:8080 -v go-fs-config:/etc/go-fs ghcr.io/mailsvb/go-fs:latest
+docker run -d -p 127.0.0.1:8080:8080 -v go-fs-data:/var/lib/go-fs ghcr.io/mailsvb/go-fs:latest
 ```
 
 ## Run it

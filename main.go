@@ -123,9 +123,11 @@ func run(stop <-chan struct{}) error {
 		}
 	}
 
-	// a first start finds no configuration file, and is given the documented
-	// starter of the installer this build is made for, which it then serves
-	// from; a check only reads, so it never writes one
+	// the rpm and the msi copy the starter configuration into place when
+	// they install; a start that still finds no file, that of the image or
+	// of a plain binary, is given the documented starter of the installer
+	// this build is made for, the same file, which it then serves from. A
+	// check only reads, so it never writes one
 	var wroteStarter bool
 	if _, err := os.Stat(*configPath); errors.Is(err, fs.ErrNotExist) {
 		if *checkOnly {

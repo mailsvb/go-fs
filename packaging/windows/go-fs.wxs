@@ -7,15 +7,17 @@
     wix build packaging/windows/go-fs.wxs -arch x64 -ext WixToolset.Util.wixext
       -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext -d Version=0.10.0
       -d Bin=build/pkg/go-fs_windows_amd64.exe
+      -d Config=build/pkg/go-fs.msi.toml
       -o dist/go-fs-0.10.0-x64.msi
 
-  Bin is the binary built with -X main.packaging=msi, which make msi-inputs
-  builds. The msi ships no configuration: the service, started by the
-  install, writes the starter configuration of the msi at its first start,
-  serving C:\ProgramData\go-fs\files, with its container registry in
-  C:\ProgramData\go-fs\registry, its uploads staged in
-  C:\ProgramData\go-fs\temp and what is deleted kept in
-  C:\ProgramData\go-fs\trash.
+  Bin is the binary built with -X main.packaging=msi and Config the starter
+  configuration of the msi, both of which make msi-inputs builds. Everything
+  but the binary is kept in C:\ProgramData\go-fs: the first install copies
+  the configuration there as go-fs.toml, serving C:\ProgramData\go-fs\files,
+  with its container registry in C:\ProgramData\go-fs\registry, its disk
+  images in C:\ProgramData\go-fs\disks, its uploads staged in
+  C:\ProgramData\go-fs\temp, what is deleted kept in
+  C:\ProgramData\go-fs\trash and its log in C:\ProgramData\go-fs\logs.
 
   The same file builds the msi of go-fs-light, given -d Product=go-fs-light
   and the light binary as Bin:
@@ -144,6 +146,7 @@
       <Directory Id="DATAFOLDER" Name="go-fs">
         <Directory Id="FILESFOLDER" Name="files" />
         <Directory Id="REGISTRYFOLDER" Name="registry" />
+        <Directory Id="DISKSFOLDER" Name="disks" />
         <Directory Id="TEMPFOLDER" Name="temp" />
         <Directory Id="TRASHFOLDER" Name="trash" />
         <Directory Id="LOGFOLDER" Name="logs" />
@@ -153,8 +156,10 @@
     <Feature Id="Main" Title="$(Product)" AllowAbsent="no">
       <ComponentRef Id="Executable" />
       <ComponentRef Id="DataFolder" />
+      <ComponentRef Id="Configuration" />
       <ComponentRef Id="FilesFolder" />
       <ComponentRef Id="RegistryFolder" />
+      <ComponentRef Id="DisksFolder" />
       <ComponentRef Id="TempFolder" />
       <ComponentRef Id="TrashFolder" />
       <ComponentRef Id="LogFolder" />
@@ -212,6 +217,11 @@
     <Component Id="RegistryFolder" Directory="REGISTRYFOLDER" Guid="0858F146-76D9-454B-B13F-F6E6C70BBAD5" Permanent="yes">
       <CreateFolder />
     </Component>
+    <!-- the folder of the disk images of the Disks page and the nbd server,
+         which the configuration names -->
+    <Component Id="DisksFolder" Directory="DISKSFOLDER" Guid="41B858B9-C445-47BB-B547-E73030E5E501" Permanent="yes">
+      <CreateFolder />
+    </Component>
     <!-- the folder uploads are staged in, which the configuration names -->
     <Component Id="TempFolder" Directory="TEMPFOLDER" Guid="930AD851-0E42-4C0F-8172-515A552189D1" Permanent="yes">
       <CreateFolder />
@@ -225,9 +235,15 @@
       <CreateFolder />
     </Component>
 
-    <!-- The configuration is not installed but written by go-fs at its first
-         start, and so kept by an uninstall. Releases up to 0.19 installed
-         it as a permanent component, which an upgrade leaves in place. -->
+    <!-- The starter configuration, copied by the first install. It is never
+         overwritten, since go-fs writes the generated secrets and every
+         change made in the admin interface into it, and an uninstall keeps
+         it: it holds the accounts and the keys. The element is that of the
+         releases up to 0.19, so its component is the same one; a file the
+         releases between wrote at the first start is left as it is. -->
+    <Component Id="Configuration" Directory="DATAFOLDER" NeverOverwrite="yes" Permanent="yes">
+      <File Id="ConfigFile" Name="go-fs.toml" Source="$(Config)" KeyPath="yes" />
+    </Component>
 
     <Component Id="Firewall" Directory="INSTALLFOLDER" Guid="03E65786-3A1A-471B-B8B3-43024753353C" Condition="FIREWALL = 1">
       <RegistryValue Root="HKLM" Key="Software\go-fs" Name="Firewall" Type="integer" Value="1" KeyPath="yes" />

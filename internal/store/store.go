@@ -46,7 +46,7 @@ const sweepInterval = time.Hour
 const headerSize = 8
 
 // DefaultPath is the file beside the configuration file, named like it:
-// /etc/go-fs/go-fs.toml keeps its data in /etc/go-fs/go-fs.db.
+// /var/lib/go-fs/go-fs.toml keeps its data in /var/lib/go-fs/go-fs.db.
 func DefaultPath(configPath string) string {
 	return strings.TrimSuffix(configPath, filepath.Ext(configPath)) + FileExtension
 }

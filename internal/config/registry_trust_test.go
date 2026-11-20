@@ -76,14 +76,14 @@ func TestRegistryTrust(t *testing.T) {
 
 func TestRegistryTrustRoundTrips(t *testing.T) {
 	file := []byte("[general]\nbaseFolderFiles = \"/x\"\n\n[http.services]\nregistryAnonymousRead = true\n\n" +
-		"[[http.services.registryTrust]]\nname = \"release\"\npublicKey = \"/etc/go-fs/cosign.pub\"\n" +
+		"[[http.services.registryTrust]]\nname = \"release\"\npublicKey = \"/var/lib/go-fs/cosign.pub\"\n" +
 		"repositories = [\"acme/*\"]\n")
 	cfg, err := Parse(file)
 	if err != nil {
 		t.Fatal(err)
 	}
 	trust := cfg.HTTP.RegistryTrust
-	if len(trust) != 1 || trust[0].Name != "release" || trust[0].PublicKey != "/etc/go-fs/cosign.pub" ||
+	if len(trust) != 1 || trust[0].Name != "release" || trust[0].PublicKey != "/var/lib/go-fs/cosign.pub" ||
 		len(trust[0].Repositories) != 1 {
 		t.Errorf("trust = %+v", trust)
 	}
