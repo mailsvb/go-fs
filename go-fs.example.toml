@@ -858,7 +858,9 @@ sonosSpeakers = []
 # Names the signer on the registry page and in the log: letters, digits, dots,
 # dashes and underscores. Unique, whatever its case.
 # name = "mitel"
-# The label prefixes the signature may be under, one or several.
+# The label prefixes the signature may be under, one or several: the part
+# before .signature, what image-sign.sh was given with -r, so
+# org.opencontainers.image for org.opencontainers.image.signature.
 # labelPrefix = ["org.mitel.imagesign"]
 # What signatures are checked against: the PEM pasted as it is, several blocks
 # one after the other, in a multi-line string between three quotes in this

@@ -22,7 +22,10 @@ type ImageSign struct {
 	Name string `toml:"name"`
 	// LabelPrefix are the reverse-DNS prefixes the signature labels may be
 	// under, such as org.mitel.imagesign for org.mitel.imagesign.signature
-	// and org.mitel.imagesign.certchain.
+	// and org.mitel.imagesign.certchain: the part before .signature, what
+	// image-sign.sh was given with -r. A prefix written as the whole name of
+	// the label, org.mitel.imagesign.signature, is taken for
+	// org.mitel.imagesign where the image has no labels under the former.
 	LabelPrefix []string `toml:"labelPrefix"`
 	// Certificates are what a signature is checked against, as PEM pasted
 	// in, several blocks one after the other: CA certificates, root or

@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -185,11 +186,12 @@ func VerifyLabels(config []byte, trusts []*LabelTrust) LabelResult {
 	failed := trustErrors{what: "label prefixes"}
 	var prefixes []string
 	for _, trust := range trusts {
-		for _, prefix := range trust.Prefixes {
-			if !containsFold(prefixes, prefix) {
-				prefixes = append(prefixes, prefix)
+		for _, configured := range trust.Prefixes {
+			if !containsFold(prefixes, configured) {
+				prefixes = append(prefixes, configured)
 			}
-			if labels[prefix+".signature"] == "" && labels[prefix+".certchain"] == "" {
+			prefix, ok := labelPrefixOf(labels, configured)
+			if !ok {
 				continue
 			}
 			found = true
@@ -201,10 +203,58 @@ func VerifyLabels(config []byte, trusts []*LabelTrust) LabelResult {
 		}
 	}
 	if !found {
-		return LabelResult{Outcome: LabelMissing,
-			Err: "the image carries no signature labels under " + strings.Join(prefixes, ", ")}
+		why := "the image carries no signature labels under " + strings.Join(prefixes, ", ")
+		if others := signaturePrefixes(labels); len(others) > 0 {
+			why += "; it has them under " + strings.Join(others, ", ") + ", which no labelPrefix lists"
+		}
+		return LabelResult{Outcome: LabelMissing, Err: why}
 	}
 	return LabelResult{Outcome: LabelInvalid, Err: failed.String()}
+}
+
+// labelSuffixes are the names image-sign.sh puts after the prefix.
+var labelSuffixes = []string{".signature", ".certchain", ".alg"}
+
+// labelPrefixOf finds the prefix the signature labels of an image are under
+// for a configured prefix: the prefix itself, or, where it is written as the
+// whole name of one of the labels, such as org.example.signature for the
+// prefix org.example, the prefix that name has.
+func labelPrefixOf(labels map[string]string, configured string) (string, bool) {
+	if hasSignatureLabels(labels, configured) {
+		return configured, true
+	}
+	lower := strings.ToLower(configured)
+	for _, suffix := range labelSuffixes {
+		if strings.HasSuffix(lower, suffix) {
+			prefix := configured[:len(configured)-len(suffix)]
+			if hasSignatureLabels(labels, prefix) {
+				return prefix, true
+			}
+		}
+	}
+	return "", false
+}
+
+func hasSignatureLabels(labels map[string]string, prefix string) bool {
+	return labels[prefix+".signature"] != "" || labels[prefix+".certchain"] != ""
+}
+
+// signaturePrefixes are the prefixes an image carries signature labels
+// under, whatever is configured, so that a message can name them.
+func signaturePrefixes(labels map[string]string) []string {
+	var found []string
+	for key, value := range labels {
+		if value == "" {
+			continue
+		}
+		for _, suffix := range []string{".signature", ".certchain"} {
+			if prefix, ok := strings.CutSuffix(key, suffix); ok && prefix != "" && !slices.Contains(found, prefix) {
+				found = append(found, prefix)
+			}
+		}
+	}
+	slices.Sort(found)
+	return found
 }
 
 func containsFold(list []string, s string) bool {
@@ -332,3 +382,24 @@ func keyType(k any) string {
 // KeyFingerprint names a public key as Result.Identity and LabelResult.Signer
 // do: sha256: and the hex of the SHA-256 of its PKIX encoding.
 func KeyFingerprint(pub crypto.PublicKey) string { return keyFingerprint(pub) }
+
+// SignatureLabels are the keys of the labels that hold a signature under a
+// prefix of the trusts, as VerifyLabels finds them, so that a page can point
+// them out among the other labels.
+func SignatureLabels(labels map[string]string, trusts []*LabelTrust) map[string]bool {
+	keys := map[string]bool{}
+	for _, trust := range trusts {
+		for _, configured := range trust.Prefixes {
+			prefix, ok := labelPrefixOf(labels, configured)
+			if !ok {
+				continue
+			}
+			for _, suffix := range labelSuffixes {
+				if _, there := labels[prefix+suffix]; there {
+					keys[prefix+suffix] = true
+				}
+			}
+		}
+	}
+	return keys
+}

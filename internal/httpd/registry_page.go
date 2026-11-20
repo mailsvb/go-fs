@@ -1176,6 +1176,10 @@ type registryPlatformJSON struct {
 	Created   string              `json:"created,omitempty"`
 	Size      int64               `json:"size"`
 	Layers    []registryLayerJSON `json:"layers"`
+	// Image is what the configuration of the image says, and Annotations
+	// are those of its manifest.
+	Image       *registryConfigJSON `json:"image,omitempty"`
+	Annotations []registryLabelJSON `json:"annotations,omitempty"`
 }
 
 type registryImageJSON struct {
@@ -1190,6 +1194,9 @@ type registryImageJSON struct {
 	Tags       []string               `json:"tags"`
 	Platforms  []registryPlatformJSON `json:"platforms"`
 	Artifacts  []registryArtifactJSON `json:"artifacts"`
+	// Annotations are those of the manifest or the index the tag points
+	// to.
+	Annotations []registryLabelJSON `json:"annotations,omitempty"`
 }
 
 // registryArtifactJSON is a signature, attestation or SBOM of the tag. Its
@@ -1280,6 +1287,10 @@ func (s *Server) registryImage(set *settings, w http.ResponseWriter, r *http.Req
 		}
 	}
 	slices.Sort(answer.Tags)
+	if doc, err := readManifest(store, d); err == nil {
+		answer.Annotations = annotationsJSON(doc.Annotations)
+	}
+	trusts, _ := set.imageSignsFor(name)
 	for _, platform := range summary.platforms {
 		entry := registryPlatformJSON{
 			Platform:  platform.key,
@@ -1298,6 +1309,16 @@ func (s *Server) registryImage(set *settings, w http.ResponseWriter, r *http.Req
 		for _, layer := range platform.layers {
 			entry.Layers = append(entry.Layers, registryLayerJSON{Digest: layer.Digest.String(),
 				MediaType: layer.MediaType, Size: layer.Size})
+		}
+		if platform.digest != d {
+			if doc, err := readManifest(store, platform.digest); err == nil {
+				entry.Annotations = annotationsJSON(doc.Annotations)
+			}
+		}
+		if platform.config != "" {
+			if data, err := store.readBlob(platform.config, maxConfigSize); err == nil {
+				entry.Image, _ = describeConfig(data, platform.layers, trusts)
+			}
 		}
 		answer.Platforms = append(answer.Platforms, entry)
 	}

@@ -726,6 +726,20 @@ dl.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .layers ol { margin: 0.4rem 0 0; padding-left: 1.4rem; }
 .layers li { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.1rem 0; }
 .layers li .meta { flex: none; }
+.layers .pairs { margin: 0.4rem 0 0; padding: 0; list-style: none; }
+.layers .pairs li { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.15rem 0; border-bottom: 1px solid var(--line); }
+.layers .pairs .key { flex: none; max-width: 40%; color: var(--faint); }
+.layers .pairs .badge { flex: none; font-size: 0.7rem; }
+.layers .pairs .value { flex: 1 1 auto; min-width: 0; cursor: pointer; }
+.layers .pairs .value.clip { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.layers .pairs .copy { flex: none; height: auto; min-height: 0; padding: 0.05rem 0.45rem; font-size: 0.75rem; line-height: 1.3; }
+.layers.env li, .layers.diffids li { display: list-item; }
+.layers.history li { display: block; padding: 0.25rem 0; }
+.layers.history li + li { border-top: 1px solid var(--line); }
+.layers.history .step { white-space: pre-wrap; cursor: pointer; }
+.layers.history .step.clip { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.layers.history .meta { font-size: 0.8rem; }
+.layers.history li.empty .step { color: var(--faint); }
 .artifacts ol { margin: 0; padding: 0; list-style: none; }
 .artifacts li + li { margin-top: 0.75rem; }
 .artifacts li > div { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.3rem; font-size: 0.85rem; }

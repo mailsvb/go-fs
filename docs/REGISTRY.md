@@ -397,7 +397,13 @@ repositories = ["prod/*"]
 ```
 
 - **`labelPrefix`** lists the prefixes the labels may be under, one or
-  several.
+  several: the part before `.signature`, what `image-sign.sh` was given with
+  `-r`, so `org.opencontainers.image` for an image labelled
+  `org.opencontainers.image.signature`. A prefix written as the whole label
+  name, `org.opencontainers.image.signature`, is taken for
+  `org.opencontainers.image` when the image carries nothing under the former,
+  and an image that carries its signature under a prefix no entry lists is
+  shown as unsigned with that prefix named.
 - **`certificates`** is the PEM itself, pasted in, as many blocks as there
   are. A `CERTIFICATE` has to be a CA's, root or intermediate, and the
   signing certificate has to chain to one of them and be valid now. A

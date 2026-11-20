@@ -329,36 +329,175 @@
     return list;
   }
 
+  // fold is a <details> that shows how many there are of what it holds and
+  // opens on them.
+  function fold(className, count, one, many) {
+    var section = el("details", "layers " + className);
+    section.appendChild(el("summary", "", count === 1 ? "1 " + one : count + " " + many));
+    return section;
+  }
+
+  // command writes an entrypoint or a command as the Dockerfile's exec form
+  // would.
+  function command(list) {
+    return list && list.length ? JSON.stringify(list) : "";
+  }
+
+  function copyButton(text) {
+    var button = el("button", "plain copy", "Copy");
+    button.type = "button";
+    button.title = "Copy the value";
+    button.addEventListener("click", function () {
+      navigator.clipboard.writeText(text).then(function () {
+        button.textContent = "Copied";
+        setTimeout(function () { button.textContent = "Copy"; }, 1500);
+      }, function () {
+        say("The browser does not let the page copy here.");
+      });
+    });
+    return button;
+  }
+
+  // pairs lists labels or annotations, key=value, a long value clipped to a
+  // line until it is clicked.
+  function pairs(className, list, one, many) {
+    var section = fold(className, list.length, one, many);
+    var rows = el("ul", "pairs");
+    list.forEach(function (pair) {
+      var item = el("li");
+      var key = el("span", "mono key", pair.key);
+      item.appendChild(key);
+      if (pair.imagesign) {
+        var mark = el("span", "badge imagesign signed", "imagesign");
+        mark.title = "An imagesign entry of this repository reads its signature from this label";
+        item.appendChild(mark);
+      }
+      var value = el("span", "mono value clip", pair.value);
+      value.title = "Click to show all of it";
+      value.addEventListener("click", function () {
+        value.classList.toggle("clip");
+      });
+      item.appendChild(value);
+      item.appendChild(copyButton(pair.value));
+      rows.appendChild(item);
+    });
+    section.appendChild(rows);
+    return section;
+  }
+
+  function lines(className, list, one, many) {
+    var section = fold(className, list.length, one, many);
+    var rows = el("ol");
+    list.forEach(function (line) {
+      rows.appendChild(el("li", "mono", line));
+    });
+    section.appendChild(rows);
+    return section;
+  }
+
+  function layerList(layers) {
+    var section = fold("", layers.length, "layer", "layers");
+    var list = el("ol");
+    layers.forEach(function (layer) {
+      var item = el("li");
+      item.appendChild(el("span", "mono", layer.digest));
+      item.appendChild(el("span", "meta", readableSize(layer.size)));
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+    return section;
+  }
+
+  // history lists the steps the image was built in; where they line up with
+  // the layers, each step that made one names it and its size.
+  function history(image) {
+    var section = fold("history", image.history.length, "build step", "build steps");
+    var list = el("ol");
+    image.history.forEach(function (step) {
+      var item = el("li", step.emptyLayer ? "empty" : "");
+      var text = el("div", "mono step clip", step.createdBy || step.comment || "(no command recorded)");
+      text.title = "Click to show all of it";
+      text.addEventListener("click", function () {
+        text.classList.toggle("clip");
+      });
+      item.appendChild(text);
+      var meta = [];
+      if (step.created) {
+        meta.push(when(step.created));
+      }
+      if (step.emptyLayer) {
+        meta.push("no layer");
+      } else if (step.layer) {
+        meta.push(readableSize(step.size));
+      }
+      if (step.createdBy && step.comment) {
+        meta.push(step.comment);
+      }
+      var line = el("div", "meta");
+      line.appendChild(document.createTextNode(meta.join(" · ")));
+      if (step.layer) {
+        line.appendChild(el("span", "mono", " " + step.layer));
+      }
+      item.appendChild(line);
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+    return section;
+  }
+
   // Each platform is folded away, so the facts of the tag stay in view and
   // the admin opens only the platform they want to look at.
-  function platformSection(platform) {
+  function platformSection(platform, only) {
     var section = el("details", "platform");
+    section.open = only;
     var heading = el("summary");
     heading.appendChild(el("span", "badge", platform.label || "artifact"));
     if (platform.platform && platform.platform !== platform.label) {
       heading.appendChild(el("span", "meta", platform.platform));
     }
     section.appendChild(heading);
+    var image = platform.image || {};
+    var system = [image.os, image.architecture, image.variant].filter(Boolean).join("/");
+    if (image.osVersion) {
+      system += " " + image.osVersion;
+    }
     section.appendChild(facts([
       ["Manifest", platform.digest, true],
       ["Media type", platform.mediaType, true],
       ["Config", platform.config, true],
       ["Created", platform.created ? when(platform.created) : ""],
-      ["Size", readableSize(platform.size)]
+      ["Size", readableSize(platform.size)],
+      ["OS", system],
+      ["Author", image.author],
+      ["Entrypoint", command(image.entrypoint), true],
+      ["Cmd", command(image.cmd), true],
+      ["Working dir", image.workingDir, true],
+      ["User", image.user, true],
+      ["Ports", (image.exposedPorts || []).join(", "), true],
+      ["Volumes", (image.volumes || []).join(", "), true],
+      ["Healthcheck", command(image.healthcheck), true],
+      ["Stop signal", image.stopSignal, true],
+      ["Truncated", image.truncated ? "The configuration is too large to show all of it" : ""]
     ]));
-    if (platform.layers.length > 0) {
-      var fold = el("details", "layers");
-      fold.appendChild(el("summary", "",
-        platform.layers.length === 1 ? "1 layer" : platform.layers.length + " layers"));
-      var list = el("ol");
-      platform.layers.forEach(function (layer) {
-        var item = el("li");
-        item.appendChild(el("span", "mono", layer.digest));
-        item.appendChild(el("span", "meta", readableSize(layer.size)));
-        list.appendChild(item);
-      });
-      fold.appendChild(list);
-      section.appendChild(fold);
+    if (image.labels && image.labels.length > 0) {
+      section.appendChild(pairs("labels", image.labels, "label", "labels"));
+    }
+    if (image.env && image.env.length > 0) {
+      section.appendChild(lines("env", image.env, "environment variable", "environment variables"));
+    }
+    if (platform.annotations && platform.annotations.length > 0) {
+      section.appendChild(pairs("annotations", platform.annotations, "annotation", "annotations"));
+    }
+    if (image.history && image.history.length > 0) {
+      section.appendChild(history(image));
+    }
+    if (platform.layers.length > 0 && !image.historyMatches) {
+      section.appendChild(layerList(platform.layers));
+    }
+    if (image.diffIds && image.diffIds.length > 0) {
+      var ids = lines("diffids", image.diffIds, "diff_id", "diff_ids");
+      ids.title = "The digests of the uncompressed layers, which an imagesign signature is made over";
+      section.appendChild(ids);
     }
     return section;
   }
@@ -439,8 +578,11 @@
         ["Also tagged", image.tags.join(", ")],
         ["Index", image.merged ? "Built by the registry from images pushed one platform at a time" : ""]
       ]));
+      if (image.annotations && image.annotations.length > 0) {
+        holder.appendChild(pairs("annotations", image.annotations, "annotation", "annotations"));
+      }
       image.platforms.forEach(function (platform) {
-        holder.appendChild(platformSection(platform));
+        holder.appendChild(platformSection(platform, image.platforms.length === 1));
       });
       if (image.artifacts.length > 0) {
         holder.appendChild(artifactsSection(image.artifacts));
