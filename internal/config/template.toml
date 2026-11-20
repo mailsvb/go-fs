@@ -28,8 +28,8 @@ baseFolderRegistry = "/var/lib/go-fs/registry"
 # The disk images of the Disks page, which the nbd server serves to QEMU and
 # other NBD clients, all of them directly in this folder. Only an account that
 # sets isAdmin sees the Disks page, where images are made, resized, renamed,
-# cloned, uploaded and downloaded. Empty turns the Disks page off, and nbd
-# needs it. It must neither be nor hold nor lie inside baseFolderFiles,
+# cloned, uploaded and downloaded, while nbd is enabled. Empty turns the
+# Disks page off, and nbd needs it. It must neither be nor hold nor lie inside baseFolderFiles,
 # baseFolderRegistry, baseFolderTemp, baseFolderTrash or the basefolder of an
 # account: nothing but the Disks page and the nbd server may touch an image.
 # It is made with mode 0750 when it is not there.
@@ -757,7 +757,7 @@ loginLockout = 60
 # Serve the files of general.baseFolderFiles on both listeners: the listing,
 # downloads and uploads, WebDAV, S3, share links and Play on Sonos. With it
 # off the http server keeps the container registry, the admin interface, the
-# Disks and Trash pages and the music repositories, and the page at / offers
+# Disks page and the music repositories, and the page at / offers
 # those instead, which makes a registry-only server. ftp, sftp and tftp have
 # switches of their own and serve the folder whatever this says.
 files = true

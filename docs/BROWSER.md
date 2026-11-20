@@ -120,7 +120,9 @@ same name. FTP, SFTP and TFTP still delete for good, and so does everything
 when `general.baseFolderTrash` is empty.
 
 An account that sets `isAdmin` and has logged in through the browser finds
-**Trash** in the menu of the header, just above **Admin**. It shows the trash
+**Trash** in the menu of the header, just above **Admin**, while the files are
+served: with `http.services.files = false` nothing lands in the trash and
+nothing can go back, so the page is not there. It shows the trash
 the way the listing shows a folder, with when each entry was deleted.
 **Restore** in the row menu of a file or a folder moves it back to where it was
 deleted from, making the folders above it that are gone. A file that is in its

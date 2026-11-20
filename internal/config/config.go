@@ -81,7 +81,8 @@ type General struct {
 	BaseFolderRegistry string `toml:"baseFolderRegistry"`
 	// BaseFolderDisks holds the disk images of the Disks page, which the NBD
 	// server serves to QEMU and other NBD clients, all of them directly in
-	// it. Empty turns the Disks page off, and the NBD server needs it. It has
+	// it. The Disks page is there only while the NBD server is on, and both
+	// need it: empty turns them off. It has
 	// to be an absolute path to a folder that neither is nor holds nor lies
 	// inside any other folder of go-fs: nothing but the Disks page and the NBD
 	// server may touch an image, since a file server that replaced one under
@@ -1015,9 +1016,10 @@ type HTTP struct {
 	// the server. It is no key of the section.
 	RegistryBaseFolder string `toml:"-"`
 	// DisksFolder is general.baseFolderDisks, where the Disks page keeps the
-	// disk images, and NBDPort the port the NBD server serves them on, 0
-	// while it is off. Resolved hands both to the server; neither is a key of
-	// the section.
+	// disk images, and NBDPort the port the NBD server serves them on. Both
+	// are empty while the NBD server is off, which turns the Disks page off
+	// with it. Resolved hands both to the server; neither is a key of the
+	// section.
 	DisksFolder string `toml:"-"`
 	NBDPort     int    `toml:"-"`
 	// UploadStagingFolder is general.baseFolderTemp, which Resolved hands the
@@ -1696,9 +1698,11 @@ func (c Config) Resolved() Config {
 	c.HTTP.Basefolder = c.General.BaseFolderFiles
 	c.TFTP.Basefolder = c.General.BaseFolderFiles
 	c.HTTP.RegistryBaseFolder = c.General.BaseFolderRegistry
-	c.HTTP.DisksFolder = c.General.BaseFolderDisks
 	c.NBD.DisksFolder = c.General.BaseFolderDisks
+	// the Disks page manages what the NBD server serves, and has nothing to
+	// do while it is off
 	if c.nbdOn() {
+		c.HTTP.DisksFolder = c.General.BaseFolderDisks
 		c.HTTP.NBDPort = c.NBD.Port
 	}
 	c.HTTP.UploadStagingFolder = c.General.BaseFolderTemp

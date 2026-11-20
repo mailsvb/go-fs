@@ -56,8 +56,13 @@ func TestValidateAcceptsAnNBDServer(t *testing.T) {
 		t.Errorf("the http server is told the nbd port is %d", resolved.HTTP.NBDPort)
 	}
 	cfg.NBD.Enabled = false
-	if port := cfg.Resolved().HTTP.NBDPort; port != 0 {
-		t.Errorf("with nbd off the http server is told port %d", port)
+	off := cfg.Resolved()
+	if off.HTTP.NBDPort != 0 {
+		t.Errorf("with nbd off the http server is told port %d", off.HTTP.NBDPort)
+	}
+	// the Disks page goes with the NBD server
+	if off.HTTP.DisksFolder != "" {
+		t.Errorf("with nbd off the http server is handed the disks folder %q", off.HTTP.DisksFolder)
 	}
 }
 

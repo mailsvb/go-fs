@@ -122,6 +122,29 @@ func TestFilesOffKeepsTheRest(t *testing.T) {
 	}
 }
 
+// Off, the Trash page goes with the files even where a trash is set: nothing
+// lands in it and nothing can go back. Neither the registry page nor the
+// admin interface offers it, and its marker names nothing.
+func TestFilesOffHasNoTrash(t *testing.T) {
+	server := registryOnlyServer(t, func(cfg *httpConfig) {
+		cfg.TrashFolder = t.TempDir()
+		cfg.TrashRetentionDays = 30
+	})
+	root := login(t, server, "/", "root", "secret")
+	for _, page := range []string{"/?go-fs=registry", "/?go-fs=admin"} {
+		res, body := pageRequest(t, server, http.MethodGet, page, root)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("%s was answered %d, want 200", page, res.StatusCode)
+		}
+		if strings.Contains(body, "go-fs=trash") {
+			t.Errorf("%s offers the trash while the files are not served", page)
+		}
+	}
+	if res, _ := pageRequest(t, server, http.MethodGet, "/?go-fs=trash", root); res.StatusCode != http.StatusNotFound {
+		t.Errorf("the Trash page was answered %d, want 404", res.StatusCode)
+	}
+}
+
 // Off, / offers what is left to anyone, signed in or not, and never the
 // files.
 func TestFilesOffTheMainURLOffersWhatIsLeft(t *testing.T) {

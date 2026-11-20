@@ -48,7 +48,8 @@ what it deletes, see [The trash](BROWSER.md#the-trash); it is off while it is em
 must not overlap any of the others, and belongs on the same filesystem as
 `general.baseFolderFiles` as well. `general.baseFolderDisks` holds the VM
 disk images of the Disks page and the NBD server, see
-[VM disks over NBD](NBD.md); it is off while it is empty and must not overlap
+[VM disks over NBD](NBD.md); it is off while it is empty, the Disks page is
+there only while `[nbd]` is enabled, and it must not overlap
 any of the others either, since nothing but the Disks page and the NBD server
 may touch a running VM's disk. These are the only folders: no server has a
 folder of its own, and only an account can be pointed elsewhere, see
@@ -396,7 +397,7 @@ data connection owes nothing on the control one.
 | `http.auth.loginAttempts`, `http.auth.loginLockout` | `5`, `60` | an address that sends five wrong passwords in a minute is refused for a minute, at once |
 | `http.main.trustedProxies` | `[]` | a forwarded address, and a forwarded `https`, is believed only from a proxy listed here |
 | `users[].ftp`, `users[].sftp`, `users[].http`, `users[].s3` | `false` | an account logs in only to the servers it switches on |
-| `http.services.files` | `true` | the http server serves the folder it is given; switched off it keeps the registry, the admin interface and the Disks and Trash pages, and serves none of the files, by no way in |
+| `http.services.files` | `true` | the http server serves the folder it is given; switched off it keeps the registry, the admin interface and the Disks page, and serves none of the files, by no way in; the Trash page goes with the files |
 | `http.services.enableS3` | `true` | the S3 API is there wherever the HTTP server is, and serves only the accounts that set `s3` |
 | `http.services.jellyfinDiscovery` | `false` | answering broadcasts opens a UDP port on every interface, so being found on the network is switched on deliberately |
 | `http.services.sonos` | `false` | playing on a speaker hands it a link that fetches the file without an account, and searches the network by multicast, or else tries port 1400 on its addresses, so it is switched on deliberately |

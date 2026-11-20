@@ -200,7 +200,9 @@ page, which leaves its blocks of zeros as holes.
 
 ## The Disks page
 
-Accounts with `isAdmin` see **Disks** in the menu, after Files and Registry.
+Accounts with `isAdmin` see **Disks** in the menu, after Files and Registry,
+while the NBD server is enabled. With `[nbd] enabled = false` the page is not
+there, whether or not `general.baseFolderDisks` is set.
 The page lists every image with its size, the space it takes, who has it
 attached and when it last changed. It offers:
 

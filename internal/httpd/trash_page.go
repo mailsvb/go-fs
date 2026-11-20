@@ -54,9 +54,17 @@ func trashPageAction(r *http.Request) string {
 	}
 }
 
+// trashPageOn reports whether the Trash page is there: a trash to show, and
+// the files it restores into. While the files are not served nothing lands in
+// the trash and nothing can go back, so the page goes with them; what is
+// already in it still ages out.
+func trashPageOn(set *settings) bool {
+	return trashOn(set) && filesOn(set)
+}
+
 // offersTrash reports whether the request behind cred may use the trash.
 func offersTrash(set *settings, cred credential) bool {
-	return trashOn(set) && cred.token && cred.user != nil && cred.user.isAdmin
+	return trashPageOn(set) && cred.token && cred.user != nil && cred.user.isAdmin
 }
 
 // trashURL is the Trash page at the top of the trash.
@@ -67,7 +75,7 @@ func trashURL() string {
 // handleTrash guards the Trash page and its endpoints and hands the request
 // over.
 func (s *Server) handleTrash(set *settings, w http.ResponseWriter, r *http.Request, action string) {
-	if !trashOn(set) {
+	if !trashPageOn(set) {
 		// switched off, the marker names nothing
 		http.NotFound(w, r)
 		return
