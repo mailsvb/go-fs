@@ -389,12 +389,16 @@ func migratedHTTP(data string) (string, []string) {
 	insert := map[int][]string{}
 	tables := map[string][]httpBlock{}
 	var order []string
-	for _, key := range httpKeys {
+	for _, key := range slices.Concat(httpKeys, droppedHTTPKeys) {
 		for _, block := range blocks {
 			if block.key != key.key {
 				continue
 			}
 			from, to := "http."+block.spelled, "http."+block.table+"."+block.key
+			if block.replacement != "" {
+				changes = append(changes, from+" removed, "+block.replacement+" takes its default")
+				continue
+			}
 			if block.shadowed {
 				changes = append(changes, from+" removed, "+to+" is set")
 				continue

@@ -1455,6 +1455,16 @@ type httpKey struct {
 	table, key string
 	// field is the name of its field, which HTTP and flatHTTP both promote
 	field string
+	// replacement is, for a key of droppedHTTPKeys, the key that took its
+	// place and starts at its default
+	replacement string
+}
+
+// droppedHTTPKeys are keys a file written before [http] had its tables sets
+// directly in [http] that no table reads any more. Migrate removes them with
+// their comments, and what they said is not carried over.
+var droppedHTTPKeys = []httpKey{
+	{table: "registry", key: "registryAnonymousRead", replacement: "http.registry.anonymousRead"},
 }
 
 // httpKeys are the keys of the tables of [http], table by table in the order
@@ -1476,7 +1486,7 @@ var httpKeys = func() []httpKey {
 			// tables and was never a key of [http]
 			repeated := field.Type.Kind() == reflect.Slice && field.Type.Elem().Kind() == reflect.Struct
 			if key != "" && key != "-" && !repeated {
-				keys = append(keys, httpKey{tableName, key, field.Name})
+				keys = append(keys, httpKey{table: tableName, key: key, field: field.Name})
 			}
 		}
 	}
@@ -1511,7 +1521,7 @@ func readFlatHTTP(data []byte, cfg *Config) error {
 	from := reflect.ValueOf(old.HTTP)
 	into := reflect.ValueOf(&cfg.HTTP).Elem()
 	for _, key := range flat {
-		if !key.shadowed {
+		if !key.shadowed && key.replacement == "" {
 			into.FieldByName(key.field).Set(from.FieldByName(key.field))
 		}
 	}
@@ -1527,7 +1537,7 @@ type flatKey struct {
 }
 
 // flatHTTPKeys are the keys of the tables of [http] that data sets directly in
-// [http], in the order of httpKeys. go-toml reads a key and a table in any
+// [http], in the order of httpKeys, and then those of droppedHTTPKeys. go-toml reads a key and a table in any
 // case, so they are matched in any case here as well.
 func flatHTTPKeys(data []byte) []flatKey {
 	var tree map[string]any
@@ -1540,7 +1550,7 @@ func flatHTTPKeys(data []byte) []flatKey {
 		return nil
 	}
 	var found []flatKey
-	for _, key := range httpKeys {
+	for _, key := range slices.Concat(httpKeys, droppedHTTPKeys) {
 		spelled := ""
 		for name, value := range httpTable {
 			if _, isTable := value.(map[string]any); !isTable && strings.EqualFold(name, key.key) {

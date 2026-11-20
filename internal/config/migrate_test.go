@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -615,10 +616,10 @@ func TestMigrateMovesTheHTTPKeysOfTheLastRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	// keys that came after the tables were never directly in [http], and
-	// registryAnonymousRead is not moved to http.registry.anonymousRead: it
-	// stays in [http], where nothing reads it
+	// registryAnonymousRead is not moved to http.registry.anonymousRead but
+	// removed, which then takes its default
 	newer := map[string]bool{"files": true, "anonymousRead": true}
-	moved := 0
+	moved := len(droppedHTTPKeys)
 	for _, key := range httpKeys {
 		if !newer[key.key] {
 			moved++
@@ -626,6 +627,9 @@ func TestMigrateMovesTheHTTPKeysOfTheLastRelease(t *testing.T) {
 	}
 	if len(changes) != moved {
 		t.Errorf("changes = %q, want one for each of the %d keys", changes, moved)
+	}
+	if !slices.Contains(changes, "http.registryAnonymousRead removed, http.registry.anonymousRead takes its default") {
+		t.Errorf("registryAnonymousRead was not removed: %q", changes)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -654,14 +658,23 @@ func TestMigrateMovesTheHTTPKeysOfTheLastRelease(t *testing.T) {
 	}
 	for _, table := range []string{"[http]", "[http.main]", "[http.connection]", "[http.auth]", "[http.services]", "[http.registry]"} {
 		want := 1
-		if table == "[http.registry]" {
+		if table == "[http]" || table == "[http.registry]" {
 			want = 0
 		}
 		if got := strings.Count(string(data), "\n"+table+"\n"); got != want {
 			t.Errorf("%s is in the file %d times, want %d", table, got, want)
 		}
 	}
-	if strings.Count(string(data), "\n#") != strings.Count(old, "\n#") {
+	// the comment of registryAnonymousRead goes with it, and no other
+	dropped := "\n# Let anyone pull from the container registry (see\n# general.baseFolderRegistry) without credentials. With it off, pulling\n" +
+		"# takes an account that sets registry = true, as pushing always does.\nregistryAnonymousRead = true\n"
+	if !strings.Contains(old, dropped) {
+		t.Fatal("the template of 0.19.2 does not document registryAnonymousRead as expected")
+	}
+	if strings.Contains(string(data), "registryAnonymousRead =") || strings.Contains(string(data), "Let anyone pull") {
+		t.Error("registryAnonymousRead or its comment is left")
+	}
+	if strings.Count(string(data), "\n#") != strings.Count(strings.Replace(old, dropped, "\n", 1), "\n#") {
 		t.Error("comments were lost")
 	}
 	// the comment about [https] is still right above it

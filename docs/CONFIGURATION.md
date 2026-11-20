@@ -126,7 +126,10 @@ own, as `registryAnonymousRead`, `[[http.services.registryTrust]]` and
 read, so the registry takes the defaults, anonymous pulls and no signer, until
 they are written into `[http.registry]` as `anonymousRead`,
 `[[http.registry.trust]]` and `[[http.registry.imagesign]]`. An `imagesign`
-entry left behind refuses nothing, whatever its `mode`.
+entry left behind refuses nothing, whatever its `mode`. A file older still,
+which sets `registryAnonymousRead` directly in `[http]`, has that key removed
+with the comment above it when the other keys of `[http]` are moved, and
+`anonymousRead` takes its default.
 
 `[[general.cleanup]]` keeps a folder from growing without bound: once an hour
 everything but the newest `keep` files in it is removed. Paths are relative to
