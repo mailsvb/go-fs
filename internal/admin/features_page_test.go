@@ -96,7 +96,9 @@ enabled = true
 		t.Error("the page offers vaults")
 	}
 	for _, p := range got.Protocols {
-		if p.ID != config.ServerTypeArtifactory {
+		// go-fs-light keeps HTTP and the container registry, and so the
+		// servers reached by them
+		if p.ID != config.ServerTypeArtifactory && p.ID != config.ServerTypeRegistry {
 			t.Errorf("the page offers the protocol %s", p.ID)
 		}
 	}
