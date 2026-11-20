@@ -150,6 +150,10 @@ input[type="search"] {
   background: var(--raised);
 }
 .banner[hidden] { display: none; }
+/* a stored container registry opens a repository by its name, which one
+   that lists no catalog has no other way to */
+form.by-name { display: flex; gap: 0.5rem; margin: 0.75rem 1.5rem 0; }
+form.by-name input { flex: 1 1 auto; min-width: 0; max-width: 32rem; }
 .banner.good { border-left-color: var(--accent); }
 .banner .text { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .banner .close {
@@ -570,6 +574,11 @@ dialog .remote-list .entry .size { margin-left: auto; font-variant-numeric: tabu
 dialog .remote-list .entry.clash { color: var(--bad); }
 dialog .remote-list .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 dialog .remote-list li.note { padding: 0.3rem 0.6rem; color: var(--faint); font-size: 0.8rem; font-style: italic; }
+dialog .remote-list button[aria-pressed="true"] { background: var(--raised); color: var(--ink); font-weight: 600; }
+dialog .remote .by-name { display: flex; gap: 0.4rem; }
+#remote-pull .remote-list { height: min(16rem, 34vh); }
+dialog .remote .by-name input { flex: 1; min-width: 0; }
+dialog .remote .by-name.wanted input { border-color: var(--accent); }
 /* The downloads window: a row a fetch or a send, with how far it has got, how fast it
    goes, and the button that stops it or clears it away. */
 dialog .downloads-list { display: flex; flex-direction: column; gap: 0.15rem; margin: 0; padding: 0; list-style: none; max-height: 60vh; overflow-y: auto; }

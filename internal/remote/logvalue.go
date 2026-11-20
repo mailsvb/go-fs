@@ -16,6 +16,10 @@ func (l Login) LogValue() slog.Value {
 		slog.String("hostKey", l.HostKey),
 		slog.String("url", l.URL),
 		slog.Bool("token", l.Token != ""),
+		slog.String("auth", l.Auth),
+		slog.Bool("clientCert", l.ClientCert != ""),
+		slog.Bool("caCert", l.CACert != ""),
+		slog.Bool("skipVerify", l.SkipVerify),
 		slog.String("vaultPath", l.VaultPath),
 		slog.Bool("vaultPassword", l.VaultPassword != ""))
 }

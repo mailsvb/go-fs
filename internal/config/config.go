@@ -433,8 +433,8 @@ type Server struct {
 	// unique, whatever its case, and "Manual" is taken by the entry that
 	// asks for a login instead.
 	Name string `toml:"name"`
-	// Type is the protocol the server is reached with: sftp, smb or
-	// artifactory.
+	// Type is the protocol the server is reached with: sftp, smb,
+	// artifactory or registry.
 	Type string `toml:"type"`
 	// Host is the name or address of the server, without a scheme or a port,
 	// for a type reached by a host and a login.
@@ -456,6 +456,23 @@ type Server struct {
 	// Token is what such a server is logged in to with, as a Bearer token.
 	// It is kept as it is, as the password is.
 	Token string `toml:"token,omitempty"`
+
+	// Auth is how a container registry is logged in to: "" or none for
+	// not at all, basic with the username and the password, bearer with the
+	// token (and the username, where the registry exchanges the token for
+	// one of its own and wants one).
+	Auth string `toml:"auth,omitempty"`
+	// ClientCert and ClientKey are the certificate a container registry is
+	// shown when it asks for one, for mutual TLS, as base64 of their PEM.
+	// Both or neither. The key is kept as it is, as the password is.
+	ClientCert string `toml:"clientCert,omitempty"`
+	ClientKey  string `toml:"clientKey,omitempty"`
+	// CACert are the certificates, base64 of their PEM, that the one of a
+	// container registry is checked against in place of the roots of the
+	// system: those of an internal CA.
+	CACert string `toml:"caCert,omitempty"`
+	// SkipVerify takes whatever certificate a container registry shows.
+	SkipVerify bool `toml:"skipVerify,omitempty"`
 
 	// VaultPath is a folder of the server that is a vault of Cryptomator:
 	// what go-fs does on the server is then done in the vault, whose files
@@ -544,6 +561,10 @@ type ServerType struct {
 	// Token says the server is reached by a URL and logged in to with a
 	// Bearer token, rather than by a host, a port, a username and a password.
 	Token bool `json:"token"`
+	// Registry says the server is a container registry, reached by a URL and
+	// logged in to as its Auth says, and only ever read: its images are
+	// pulled from it.
+	Registry bool `json:"registry"`
 
 	// feature is the part of go-fs the protocol is, "" for one every binary
 	// has.
@@ -559,6 +580,16 @@ const (
 	// ServerTypeArtifactory is the REST API of a JFrog Artifactory, over HTTP
 	// or HTTPS with a Bearer token.
 	ServerTypeArtifactory = "artifactory"
+	// ServerTypeRegistry is a container registry, by the distribution API of
+	// OCI, over HTTP or HTTPS: the registry page pulls its images.
+	ServerTypeRegistry = "registry"
+)
+
+// The ways a container registry is logged in to.
+const (
+	RegistryAuthNone   = "none"
+	RegistryAuthBasic  = "basic"
+	RegistryAuthBearer = "bearer"
 )
 
 // ManualServer is the name the Send File dialog gives the login typed in, which
@@ -572,6 +603,7 @@ var allServerTypes = []ServerType{
 	{ID: ServerTypeSFTP, Label: "SFTP", DefaultPort: 22, HostKey: true, feature: features.SFTPRemote},
 	{ID: ServerTypeArtifactory, Label: "Artifactory", Token: true},
 	{ID: ServerTypeSMB, Label: "SMB", DefaultPort: 445, feature: features.SMB},
+	{ID: ServerTypeRegistry, Label: "Container registry", Registry: true},
 }
 
 // ServerTypes are the protocols a server may name in this binary: those of
@@ -706,6 +738,95 @@ func ArtifactoryURL(raw string) (string, error) {
 		p = "/artifactory"
 	}
 	return u.Scheme + "://" + strings.ToLower(u.Host) + p, nil
+}
+
+// RegistryURL reads the address of a container registry: http or https, a
+// host and an optional path its API is under, /v2/ being appended to it. An
+// address without a scheme is https. A slash at the end is dropped and the
+// host lowered, so that https://Acme.jfrog.io/ is https://acme.jfrog.io.
+// A path is kept, for an Artifactory whose Docker API of one repository is
+// at /artifactory/api/docker/<repository>.
+func RegistryURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("name the address of the registry")
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("%q is not an address", raw)
+	case u.Scheme != "http" && u.Scheme != "https":
+		return "", fmt.Errorf("%q has to begin with https:// or http://", raw)
+	case u.Host == "" || u.Hostname() == "":
+		return "", fmt.Errorf("%q names no host", raw)
+	case u.User != nil:
+		return "", errors.New("the address cannot hold a login; put it into its own fields")
+	case u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
+		return "", fmt.Errorf("%q has to be the address alone, without a query", raw)
+	}
+	p := strings.TrimRight(u.EscapedPath(), "/")
+	p = strings.TrimSuffix(p, "/v2")
+	return u.Scheme + "://" + strings.ToLower(u.Host) + p, nil
+}
+
+// RegistryAuth is how a container registry is logged in to, none where the
+// key is not set.
+func (s Server) RegistryAuth() string {
+	if s.Auth == "" {
+		return RegistryAuthNone
+	}
+	return s.Auth
+}
+
+// validateRegistry checks a server that is a container registry.
+func validateRegistry(where string, server Server) error {
+	if address, err := RegistryURL(server.URL); err != nil {
+		return fmt.Errorf("%s %q: url: %w", where, server.Name, err)
+	} else if address != server.URL {
+		return fmt.Errorf("%s %q: url %q has to be %q", where, server.Name, server.URL, address)
+	}
+	switch server.RegistryAuth() {
+	case RegistryAuthNone:
+		if server.Username != "" || server.Password != "" || server.Token != "" {
+			return fmt.Errorf("%s %q: auth none takes no username, password or token", where, server.Name)
+		}
+	case RegistryAuthBasic:
+		if server.Username == "" {
+			return fmt.Errorf("%s %q: auth basic needs a username", where, server.Name)
+		}
+		if server.Token != "" {
+			return fmt.Errorf("%s %q: auth basic takes a password, not a token", where, server.Name)
+		}
+	case RegistryAuthBearer:
+		if strings.TrimSpace(server.Token) == "" {
+			return fmt.Errorf("%s %q: auth bearer needs a token", where, server.Name)
+		}
+		if server.Password != "" {
+			return fmt.Errorf("%s %q: auth bearer takes a token, not a password", where, server.Name)
+		}
+	default:
+		return fmt.Errorf("%s %q: auth %q is not one of none, basic, bearer", where, server.Name, server.Auth)
+	}
+	if err := checkPair("clientCert", server.ClientCert, "clientKey", server.ClientKey); err != nil {
+		return fmt.Errorf("%s %q: %w", where, server.Name, err)
+	}
+	if server.CACert != "" {
+		if _, err := DecodeCertificate(server.CACert); err != nil {
+			return fmt.Errorf("%s %q: caCert %w", where, server.Name, err)
+		}
+	}
+	if server.VaultPath != "" {
+		return fmt.Errorf("%s %q: a container registry holds no vault", where, server.Name)
+	}
+	rights := server.Rights()
+	if rights.Upload || rights.Create || rights.Delete || rights.Rename {
+		return fmt.Errorf("%s %q: a container registry is only pulled from: "+
+			"allowUpload, allowCreate, allowDelete and allowRename stay off", where, server.Name)
+	}
+	return nil
 }
 
 // ShareAddress reads general.internalAddress or general.externalAddress: http
@@ -1947,6 +2068,12 @@ func (c Config) validateServers() error {
 				known[k] = t.ID
 			}
 			return fmt.Errorf("%s %q: type %q is not one of %s", where, server.Name, server.Type, strings.Join(known, ", "))
+		}
+		if kind.Registry {
+			if err := validateRegistry(where, server); err != nil {
+				return err
+			}
+			continue
 		}
 		if kind.Token {
 			if address, err := ArtifactoryURL(server.URL); err != nil {

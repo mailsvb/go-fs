@@ -183,6 +183,12 @@ func (s *Server) remoteSource(set *settings, w http.ResponseWriter, r *http.Requ
 		http.NotFound(w, r)
 		return config.Server{}, remote.Login{}, "", false
 	}
+	if isRegistryServer(server) {
+		// its tags are images, which the registry page pulls
+		http.Error(w, fmt.Sprintf("%s is a container registry: pull its images on the registry page", server.Name),
+			http.StatusForbidden)
+		return config.Server{}, remote.Login{}, "", false
+	}
 	if !server.Rights().Download {
 		s.logFor(r).Info("http remote fetch refused, the server does not allow downloads",
 			"server", server.Name, "user", cred.user.name, "address", address)

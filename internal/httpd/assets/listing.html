@@ -40,6 +40,14 @@
 </header>
 
 <div id="banner" class="banner"{{if not .Error}} hidden{{end}}><span class="text">{{.Error}}</span><button type="button" class="close" title="Dismiss" aria-label="Dismiss"><svg class="ic"><use href="#i-close"/></svg></button></div>
+{{if .ByName}}
+<form class="by-name" method="get" action="/">
+  <input type="hidden" name="go-fs" value="remote">
+  <input type="hidden" name="server" value="{{.ByName}}">
+  <input name="path" type="text" required placeholder="open a repository by its name: library/alpine" aria-label="Repository" autocomplete="off" spellcheck="false">
+  <button class="plain" type="submit">Open</button>
+</form>
+{{end}}
 
 <main>
 <table id="listing" data-folder="{{.Folder}}" data-sort="{{.Sort}}" data-dir="{{.Dir}}" data-max-chunk-size="{{.MaxChunkSize}}"{{if .Rights.Trash}} data-trash="1"{{end}}{{if .Remote}} data-remote="{{.Remote}}" data-query="{{.Query}}" data-path="{{.Path}}"{{end}}>

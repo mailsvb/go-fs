@@ -136,6 +136,17 @@ it ended.
   and replaces what that tag held. Validate lists the architectures the image
   offers, and the pull fetches the very image that was validated, even if the
   tag moves in between.
+- Pull image can instead take its image **From** a container registry stored
+  as a server of `type = "registry"` (see
+  [REMOTE-SERVERS.md](REMOTE-SERVERS.md#container-registries)). The menu
+  lists the registries that admit the account and allow downloads. The dialog
+  then browses the registry: its repositories as folders, from the catalog,
+  and the tags of each. A registry that lists no catalog, such as Docker Hub,
+  is browsed by a repository named in the box below the list. Clicking a tag
+  chooses it, and Validate and Pull go on as for an image typed in. The login
+  is the one the server stores, Basic, Bearer or a client certificate. The
+  page never sees it. The image is stored under its repository and tag, as
+  they are on that registry.
 - **Push to registry…** copies a tag to the image named, prefilled with the
   tag's own name: put the registry in front, `ghcr.io/my-org/team/app:1.0`,
   or change the name and tag as well. Validate proves that the login may push
@@ -144,6 +155,10 @@ it ended.
 
 Both take an optional username and password (or access token) for the other
 registry; they are used for that one transfer, never stored and never logged.
+Pull image may send a **Bearer token** instead: it goes as
+`Authorization: Bearer <token>`. A registry that turns it down with a
+challenge has it exchanged at its token service, as the password of the
+username where one is given.
 The other registry is reached over HTTPS unless the address starts with
 `http://`, as it may for a test registry on `localhost`. **Validate
 Connection**, ticked by default, checks the other registry's TLS certificate

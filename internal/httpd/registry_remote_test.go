@@ -52,18 +52,6 @@ func TestParseRemoteReference(t *testing.T) {
 	}
 }
 
-func TestParseChallenge(t *testing.T) {
-	scheme, params := parseChallenge(`Bearer realm="https://auth.example/token",service="registry.example",scope="repository:a/b:pull,push"`)
-	if scheme != "Bearer" || params["realm"] != "https://auth.example/token" ||
-		params["service"] != "registry.example" || params["scope"] != "repository:a/b:pull,push" {
-		t.Errorf("%s %v", scheme, params)
-	}
-	scheme, params = parseChallenge(`Basic realm=go-fs`)
-	if scheme != "Basic" || params["realm"] != "go-fs" {
-		t.Errorf("%s %v", scheme, params)
-	}
-}
-
 func TestPlatformFilter(t *testing.T) {
 	filter, err := parsePlatforms("linux/arm, linux/amd64 linux/arm64/v8")
 	if err != nil {

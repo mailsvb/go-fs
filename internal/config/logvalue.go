@@ -25,6 +25,10 @@ func (s Server) LogValue() slog.Value {
 		slog.String("hostKeyFingerprint", s.HostKeyFingerprint),
 		slog.String("url", s.URL),
 		slog.Bool("token", s.Token != ""),
+		slog.String("auth", s.Auth),
+		slog.Bool("clientCert", s.ClientCert != ""),
+		slog.Bool("caCert", s.CACert != ""),
+		slog.Bool("skipVerify", s.SkipVerify),
 		slog.String("vaultPath", s.VaultPath),
 		slog.Bool("vaultPassword", s.VaultPassword != ""),
 		slog.Any("allowedUsers", s.AllowedUsers))

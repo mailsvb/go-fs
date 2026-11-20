@@ -354,7 +354,8 @@ func TestServerTable(t *testing.T) {
 		"username": kindText, "password": kindSecret, "hostKeyFingerprint": kindText,
 		"url": kindText, "token": kindSecret, "allowDownload": kindBool, "allowUpload": kindBool,
 		"allowCreate": kindBool, "allowDelete": kindBool, "allowRename": kindBool, "allowedUsers": kindLines,
-		"vaultPath": kindText, "vaultPassword": kindSecret}
+		"vaultPath": kindText, "vaultPassword": kindSecret, "auth": kindText, "clientCert": kindText,
+		"clientKey": kindSecret, "caCert": kindText, "skipVerify": kindBool}
 	if !reflect.DeepEqual(kinds, want) {
 		t.Errorf("the server fields are %v, want %v", kinds, want)
 	}

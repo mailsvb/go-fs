@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/logging"
+	"github.com/mailsvb/go-fs/internal/ociauth"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -286,8 +287,8 @@ func shownURL(u *url.URL) string {
 // given for. The body is not decompressed: a .tar.gz served with a gzip
 // Content-Encoding is stored as the .tar.gz it is.
 var (
-	fetchClient         = &http.Client{Transport: newFetchTransport(remoteTransport), CheckRedirect: keepCredentialsHome}
-	insecureFetchClient = &http.Client{Transport: newFetchTransport(insecureRemoteTransport), CheckRedirect: keepCredentialsHome}
+	fetchClient         = &http.Client{Transport: newFetchTransport(ociauth.DefaultTransport), CheckRedirect: ociauth.KeepCredentialsHome}
+	insecureFetchClient = &http.Client{Transport: newFetchTransport(ociauth.InsecureTransport), CheckRedirect: ociauth.KeepCredentialsHome}
 )
 
 func newFetchTransport(base http.RoundTripper) http.RoundTripper {
@@ -379,7 +380,7 @@ func (s *Server) fetchFile(ctx context.Context, set *settings, job *registryJob,
 			// its message repeats the URL, query and all
 			err = urlErr.Err
 		}
-		return "", fmt.Errorf("%s: %w", fetch.url.Host, withCertificateHint(err))
+		return "", fmt.Errorf("%s: %w", fetch.url.Host, ociauth.WithCertificateHint(err))
 	}
 	defer func() { _ = res.Body.Close() }()
 	host := res.Request.URL.Host

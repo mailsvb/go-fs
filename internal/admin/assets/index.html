@@ -53,14 +53,49 @@
       <input id="server-host" name="host" type="text" required spellcheck="false" autocomplete="off" placeholder="sftp.example.com" data-login="host">
       <label for="server-port" data-login="host">port</label>
       <input id="server-port" name="port" type="number" required min="1" max="65535" data-login="host">
-      <label for="server-username" data-login="host">username</label>
-      <input id="server-username" name="username" type="text" required spellcheck="false" autocomplete="off" data-login="host">
-      <label for="server-password" data-login="host">password</label>
-      <input id="server-password" name="password" type="password" autocomplete="new-password" data-login="host">
-      <label for="server-url" data-login="token" hidden>server address</label>
-      <input id="server-url" name="url" type="text" required spellcheck="false" autocomplete="off" placeholder="https://acme.jfrog.io" data-login="token" hidden disabled>
-      <label for="server-token" data-login="token" hidden>token</label>
-      <input id="server-token" name="token" type="password" autocomplete="new-password" placeholder="sent as Authorization: Bearer" data-login="token" hidden disabled>
+      <label for="server-url" data-login="token registry" hidden>server address</label>
+      <input id="server-url" name="url" type="text" required spellcheck="false" autocomplete="off" placeholder="https://acme.jfrog.io" data-login="token registry" hidden disabled>
+      <label for="server-auth" data-login="registry" hidden>login</label>
+      <select id="server-auth" name="auth" data-login="registry" hidden disabled>
+        <option value="none">none, anonymous</option>
+        <option value="basic">Basic: username and password</option>
+        <option value="bearer">Bearer token</option>
+      </select>
+      <label for="server-username" data-login="host registry" data-auth="basic bearer">username</label>
+      <input id="server-username" name="username" type="text" required spellcheck="false" autocomplete="off" data-login="host registry" data-auth="basic bearer">
+      <label for="server-password" data-login="host registry" data-auth="basic">password</label>
+      <input id="server-password" name="password" type="password" autocomplete="new-password" data-login="host registry" data-auth="basic">
+      <label for="server-token" data-login="token registry" data-auth="bearer" hidden>token</label>
+      <input id="server-token" name="token" type="password" autocomplete="new-password" placeholder="sent as Authorization: Bearer" data-login="token registry" data-auth="bearer" hidden disabled>
+      <span class="label" data-login="registry" hidden>client certificate</span>
+      <div class="key" data-login="registry" data-material="clientCert" data-kind="certificate" hidden>
+        <p class="summary"></p>
+        <div class="buttons">
+          <input type="file" hidden accept=".pem,.crt,.cer,.cert">
+          <button class="plain" type="button" value="upload">Upload…</button>
+          <button class="plain" type="button" value="clear">Clear</button>
+        </div>
+      </div>
+      <span class="label" data-login="registry" hidden>client key</span>
+      <div class="key" data-login="registry" data-material="clientKey" data-kind="tlskey" hidden>
+        <p class="summary"></p>
+        <div class="buttons">
+          <input type="file" hidden accept=".pem,.key,.p8">
+          <button class="plain" type="button" value="upload">Upload…</button>
+          <button class="plain" type="button" value="clear">Clear</button>
+        </div>
+      </div>
+      <span class="label" data-login="registry" hidden>CA certificate</span>
+      <div class="key" data-login="registry" data-material="caCert" data-kind="cacertificate" hidden>
+        <p class="summary"></p>
+        <div class="buttons">
+          <input type="file" hidden accept=".pem,.crt,.cer,.cert">
+          <button class="plain" type="button" value="upload">Upload…</button>
+          <button class="plain" type="button" value="clear">Clear</button>
+        </div>
+      </div>
+      <label for="server-verify" data-login="registry" hidden>validate connection</label>
+      <input id="server-verify" name="verify" type="checkbox" data-login="registry" hidden disabled title="check the certificate of the registry; untick for a self-signed one">
       <label for="server-vault-path" data-vault>vault folder</label>
       <input id="server-vault-path" data-vault name="vaultPath" type="text" spellcheck="false" autocomplete="off" placeholder="empty for none; a Cryptomator vault on the server">
       <label for="server-vault-password" data-vault>vault password</label>

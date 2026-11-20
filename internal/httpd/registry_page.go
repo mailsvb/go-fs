@@ -20,6 +20,7 @@ import (
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/mailsvb/go-fs/internal/imagesig"
+	"github.com/mailsvb/go-fs/internal/ociauth"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -52,6 +53,8 @@ const (
 	// the checks the dialogs make before a pull or a push may start
 	actionRegistryPullCheck = "registry-pull-check"
 	actionRegistryPushCheck = "registry-push-check"
+	// a folder of a stored registry, which the Pull image dialog browses
+	actionRegistryBrowse = "registry-browse"
 	// importing an image archive is in registry_import.go
 )
 
@@ -65,6 +68,7 @@ var registryPageMethods = map[string]string{
 	actionRegistryCleanup:   "POST",
 	actionRegistryPullCheck: "POST",
 	actionRegistryPushCheck: "POST",
+	actionRegistryBrowse:    "POST",
 
 	actionRegistryImportUpload:  "POST, PUT, DELETE",
 	actionRegistryImport:        "POST",
@@ -76,7 +80,7 @@ var registryPageMethods = map[string]string{
 func registryPageAction(r *http.Request) string {
 	switch action := r.URL.Query().Get(sessionParam); action {
 	case actionRegistry, actionRegistryImage, actionRegistryPull, actionRegistryPush, actionRegistryJob,
-		actionRegistryPullCheck, actionRegistryPushCheck, actionRegistryCleanup,
+		actionRegistryPullCheck, actionRegistryPushCheck, actionRegistryCleanup, actionRegistryBrowse,
 		actionRegistryImportUpload, actionRegistryImport, actionRegistryImportConfirm:
 		return action
 	default:
@@ -216,6 +220,11 @@ func (s *Server) handleRegistryPage(set *settings, w http.ResponseWriter, r *htt
 			return
 		}
 		s.registryPushCheck(set, w, r, user)
+	case action == actionRegistryBrowse && r.Method == http.MethodPost:
+		if !s.sameSite(set, w, r) {
+			return
+		}
+		s.registryBrowse(set, w, r, user)
 	case action == actionRegistryJob && read:
 		s.registryJobStatus(w, r, user)
 	case action == actionRegistryJob && r.Method == http.MethodDelete:
@@ -788,6 +797,9 @@ type registryData struct {
 	// Write says the account may delete tags, pull images from another
 	// registry and push tags to one.
 	Write bool
+	// Registries are the stored container registries the Pull image dialog
+	// offers to browse, by name.
+	Registries []string
 	// Import is the archive of the folder the Import dialog opens with,
 	// which the listing's Import into registry asks for.
 	Import  string
@@ -879,6 +891,9 @@ func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Requ
 		Nonce:   nonce,
 		Style:   listingStyle,
 		Script:  registryScript,
+	}
+	if user != nil {
+		data.Registries = registrySources(set, user)
 	}
 	if view.tree && view.path != "" {
 		data.Title = view.path + " · Registry"
@@ -1433,6 +1448,11 @@ type transferBody struct {
 	Platforms string `json:"platforms"`
 	Username  string `json:"username"`
 	Password  string `json:"password"`
+	// Token is a Bearer token, which a login has in place of a password.
+	Token string `json:"token"`
+	// Server is a stored registry the image is of, by its name. Reference
+	// is then repository:tag on it, and the login is the server's.
+	Server string `json:"server"`
 	// SkipVerify takes whatever certificate the other registry shows: the
 	// dialog's Validate Connection, unticked.
 	SkipVerify bool `json:"skipVerify"`
@@ -1440,7 +1460,12 @@ type transferBody struct {
 
 // login is how the request reaches the other registry, as the client takes it.
 func (t transferBody) login() remoteLogin {
-	return remoteLogin{username: strings.TrimSpace(t.Username), password: t.Password, skipVerify: t.SkipVerify}
+	credentials := ociauth.Credentials{Username: strings.TrimSpace(t.Username), Password: t.Password,
+		Token: strings.TrimSpace(t.Token)}
+	if credentials.Token != "" {
+		credentials.Password = ""
+	}
+	return remoteLogin{credentials: credentials, tls: ociauth.TLS{SkipVerify: t.SkipVerify}}
 }
 
 // pullReference reads what a pull fetches: an image under a tag, since that
@@ -1495,18 +1520,18 @@ func (s *Server) registryPullCheck(set *settings, w http.ResponseWriter, r *http
 	if !s.readTransferRequest(set, w, r, user, &body) {
 		return
 	}
-	ref, err := pullReference(body.Reference)
+	ref, login, status, err := pullSource(set, user, body)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, err.Error(), status)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	image, err := s.inspectRemote(ctx, ref, body.login())
+	image, err := s.inspectRemote(ctx, ref, login)
 	if err != nil {
 		// the other registry's refusal is not this one's: a 401 would read
 		// as the session having ended
-		s.logFor(r).Info("registry pull check failed", "source", ref.String(), "user", user.name,
+		s.logFor(r).Info("registry pull check failed", "source", ref.String(), "server", body.Server, "user", user.name,
 			"address", clientAddress(set, r), "error", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -1563,8 +1588,10 @@ func (s *Server) registryPushCheck(set *settings, w http.ResponseWriter, r *http
 
 	ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 	defer cancel()
-	client := newRemoteClient(ref, body.login(), "pull,push", s.logFor(r))
-	err = client.authenticate(ctx)
+	client, err := newRemoteClient(ref, body.login(), "pull,push", s.logFor(r))
+	if err == nil {
+		err = client.authenticate(ctx)
+	}
 	if err == nil {
 		err = client.canPush(ctx)
 	}
@@ -1588,8 +1615,12 @@ func (s *Server) registryPull(set *settings, w http.ResponseWriter, r *http.Requ
 	if !s.readTransferRequest(set, w, r, user, &body) {
 		return
 	}
-	ref, err := pullReference(body.Reference)
-	if err == nil && body.Digest != "" && ref.digest == "" {
+	ref, login, status, err := pullSource(set, user, body)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	if body.Digest != "" && ref.digest == "" {
 		d, ok := parseBlobDigest(body.Digest)
 		if !ok {
 			err = fmt.Errorf("%q is not a digest", body.Digest)
@@ -1607,7 +1638,7 @@ func (s *Server) registryPull(set *settings, w http.ResponseWriter, r *http.Requ
 	what := ref.String() + " → " + ref.repository + ":" + ref.tag
 	address := clientAddress(set, r)
 	job, err := s.startJob(jobPull, user.name, what, func(ctx context.Context, job *registryJob) (string, error) {
-		message, err := s.pullImage(ctx, set, job, ref, filter, body.login(), user)
+		message, err := s.pullImage(ctx, set, job, ref, filter, login, user)
 		if err != nil && ctx.Err() == nil {
 			s.logFor(r).Warn("registry pull failed", "source", ref.String(), "user", user.name,
 				"address", address, "error", err)
@@ -1615,8 +1646,8 @@ func (s *Server) registryPull(set *settings, w http.ResponseWriter, r *http.Requ
 		return message, err
 	})
 	if err == nil {
-		s.logFor(r).Info("registry pull started", "source", ref.String(), "platforms", strings.Join(filter, ","),
-			"login", body.Username != "", "verify", !body.SkipVerify, "user", user.name, "address", address, "job", job.id)
+		s.logFor(r).Info("registry pull started", "source", ref.String(), "server", body.Server,
+			"platforms", strings.Join(filter, ","), "login", !login.credentials.Empty(), "verify", !login.tls.SkipVerify, "user", user.name, "address", address, "job", job.id)
 	}
 	s.answerStarted(w, job, err)
 }

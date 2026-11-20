@@ -305,7 +305,13 @@ type sendView struct {
 
 // sendViewOf is the dialog for the stored servers.
 func sendViewOf(servers []config.Server) sendView {
-	view := sendView{Protocols: config.ServerTypes, Manual: config.ManualServer}
+	view := sendView{Manual: config.ManualServer}
+	for _, protocol := range config.ServerTypes {
+		// a container registry is pulled from, never sent to
+		if !protocol.Registry {
+			view.Protocols = append(view.Protocols, protocol)
+		}
+	}
 	for _, server := range servers {
 		// a server only takes a file it allows uploads of
 		if !server.Rights().Upload {
@@ -444,7 +450,10 @@ type listingData struct {
 	Query  string
 	// Error is a problem the page opens with in its banner: a stored server
 	// that could not be reached shows its listing empty, and why.
-	Error  string
+	Error string
+	// ByName is the registry a repository is opened in by its name; see
+	// listingPlace.
+	ByName string
 	Nonce  string
 	Style  template.CSS
 	Script template.JS
@@ -490,6 +499,10 @@ type listingPlace struct {
 	// Error is why the folder could not be read, which the page shows over
 	// an empty listing.
 	Error string
+	// ByName is the stored container registry whose page offers to open a
+	// repository by its name, which one that lists no catalog needs; "" for
+	// any other page.
+	ByName string
 	// link is where a row leads.
 	link func(item entry) string
 	// view is what the link of a file is given to show it rather than
@@ -532,6 +545,10 @@ func listingPage(place listingPlace, entries []entry, order sortOrder, allowed r
 			Size:     readableSize(item.Size),
 			Modified: item.ModTime.Format("2006-01-02 15:04"),
 		}
+		if item.ModTime.IsZero() {
+			// a host that does not say when, as a registry for its tags
+			row.Modified = "—"
+		}
 		if item.isFolder() {
 			row.Group = "1"
 			// a folder has no size worth showing, but it does have a date, and
@@ -571,6 +588,7 @@ func listingPage(place listingPlace, entries []entry, order sortOrder, allowed r
 		Remote:  place.Remote,
 		Query:   place.Query,
 		Error:   place.Error,
+		ByName:  place.ByName,
 		Nonce:   nonce,
 		Style:   listingStyle,
 		Script:  listingScript,

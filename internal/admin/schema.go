@@ -319,6 +319,9 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 		// and is set here as an account's rights are
 		if isServer && inner.Name != "Name" && !strings.HasPrefix(inner.Name, "Allow") {
 			field.ReadOnly = true
+			// a server is summed up by its name alone, not by a switch of
+			// its login
+			field.Summary = false
 		}
 		if isRepository {
 			switch inner.Name {
@@ -397,7 +400,7 @@ func kindOf(fieldType reflect.Type) (string, bool) {
 // the key itself. A certificate is public and is not one of them.
 func secret(name string) bool {
 	if strings.Contains(strings.ToLower(name), "password") || strings.EqualFold(name, "shareLinkSecret") ||
-		strings.EqualFold(name, "token") {
+		strings.EqualFold(name, "token") || strings.EqualFold(name, "clientKey") {
 		return true
 	}
 	kind := material(name)

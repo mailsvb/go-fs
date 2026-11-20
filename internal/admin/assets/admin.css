@@ -492,6 +492,7 @@ dialog .dialog-fields select { width: auto; justify-self: start; font-family: in
 dialog .dialog-fields [hidden] { display: none; }
 dialog input:disabled, dialog select:disabled { opacity: 0.6; }
 dialog .hostkey { display: flex; flex-direction: column; gap: 0.35rem; }
+dialog .hostkey[hidden] { display: none; }
 dialog .hostkey .note.bad { color: var(--bad); }
 dialog .hostkey .host { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 dialog .fingerprint { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.6rem; color: var(--ink); }

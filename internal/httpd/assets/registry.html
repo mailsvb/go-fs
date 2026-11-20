@@ -110,14 +110,45 @@
     <h2 id="remote-pull-title">Pull image</h2>
     <p>Copies an image from another registry into this one.</p>
     <div class="fields">
-      <label for="pull-reference">Image</label>
-      <input id="pull-reference" name="reference" type="text" required placeholder="docker.io/library/nginx:latest" autocomplete="off" spellcheck="false">
-      <label for="pull-username">Username <span class="hint">optional</span></label>
-      <input id="pull-username" name="username" type="text" autocomplete="off" spellcheck="false">
-      <label for="pull-password">Password or token <span class="hint">optional</span></label>
-      <input id="pull-password" name="password" type="password" autocomplete="new-password">
-      <label class="toggle"><input name="verify" type="checkbox" checked> Validate Connection</label>
+      {{- if .Registries}}
+      <label for="pull-source">From</label>
+      <select id="pull-source" name="source">
+        <option value="" selected>Image address</option>
+        {{- range .Registries}}
+        <option value="{{.}}">{{.}}</option>
+        {{- end}}
+      </select>
+      {{- end}}
+      <fieldset class="manual">
+        <label for="pull-reference">Image</label>
+        <input id="pull-reference" name="reference" type="text" required placeholder="docker.io/library/nginx:latest" autocomplete="off" spellcheck="false">
+        <label for="pull-auth">Login</label>
+        <select id="pull-auth" name="auth">
+          <option value="basic" selected>Username and password</option>
+          <option value="bearer">Bearer token</option>
+        </select>
+        <label for="pull-username">Username <span class="hint">optional</span></label>
+        <input id="pull-username" name="username" type="text" autocomplete="off" spellcheck="false">
+        <label for="pull-password" data-auth="basic">Password or token <span class="hint">optional</span></label>
+        <input id="pull-password" name="password" type="password" autocomplete="new-password" data-auth="basic">
+        <label for="pull-token" data-auth="bearer" hidden>Token</label>
+        <input id="pull-token" name="token" type="password" autocomplete="new-password" placeholder="sent as Authorization: Bearer" data-auth="bearer" hidden>
+        <label class="toggle"><input name="verify" type="checkbox" checked> Validate Connection</label>
+      </fieldset>
     </div>
+    {{- if .Registries}}
+    <div class="remote" hidden>
+      <div class="remote-head">
+        <nav class="remote-path" aria-label="Registry folder"></nav>
+        <span class="spinner" role="status" aria-label="Reading the registry" hidden></span>
+      </div>
+      <ul class="remote-list"></ul>
+      <div class="by-name">
+        <input name="repository" type="text" placeholder="open a repository by its name: library/alpine" aria-label="Repository" autocomplete="off" spellcheck="false">
+        <button class="plain" type="button" value="open">Open</button>
+      </div>
+    </div>
+    {{- end}}
     <p class="where"></p>
     <fieldset class="platforms" hidden>
       <legend>Architectures to pull</legend>

@@ -129,6 +129,10 @@ var protocols = map[string]protocol{
 		open: func(ctx context.Context, l Login, _ config.SSH) (FS, error) {
 			return openArtifactory(ctx, l), nil
 		}},
+	config.ServerTypeRegistry: {id: config.ServerTypeRegistry,
+		open: func(ctx context.Context, l Login, _ config.SSH) (FS, error) {
+			return openRegistry(ctx, l)
+		}},
 }
 
 // registerProtocol adds an optional protocol.

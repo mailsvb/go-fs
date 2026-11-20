@@ -42,6 +42,11 @@ type Login struct {
 	// token logs in with, in place of the host, the port and the login.
 	URL   string
 	Token string
+	// Auth, ClientCert, ClientKey, CACert and SkipVerify are how a
+	// container registry is logged in to, as config.Server has them.
+	Auth                          string
+	ClientCert, ClientKey, CACert string
+	SkipVerify                    bool
 	// VaultPath is the folder of the host that is a vault of Cryptomator,
 	// "" for none, and VaultPassword what unlocks it: once logged in, what
 	// is done on the host is done in the vault, encrypted (see vaultFS).
@@ -57,6 +62,7 @@ type Login struct {
 func FromServer(s config.Server) Login {
 	return Login{Type: s.Type, Host: s.Host, Port: s.Port, Username: s.Username,
 		Password: s.Password, HostKey: s.HostKeyFingerprint, URL: s.URL, Token: s.Token,
+		Auth: s.Auth, ClientCert: s.ClientCert, ClientKey: s.ClientKey, CACert: s.CACert, SkipVerify: s.SkipVerify,
 		VaultPath: s.VaultPath, VaultPassword: s.VaultPassword, Server: s.Name}
 }
 
@@ -65,6 +71,7 @@ func FromServer(s config.Server) Login {
 func (l Login) ConfigServer(name string) config.Server {
 	return config.Server{Name: name, Type: l.Type, Host: l.Host, Port: l.Port, Username: l.Username,
 		Password: l.Password, HostKeyFingerprint: l.HostKey, URL: l.URL, Token: l.Token,
+		Auth: l.Auth, ClientCert: l.ClientCert, ClientKey: l.ClientKey, CACert: l.CACert, SkipVerify: l.SkipVerify,
 		VaultPath: l.VaultPath, VaultPassword: l.VaultPassword}
 }
 
@@ -83,6 +90,10 @@ func (l Login) Checked(keyOnly bool) (Login, error) {
 	if !ok {
 		return Login{}, fmt.Errorf("%q is not a protocol go-fs knows", l.Type)
 	}
+	if kind.Registry {
+		return l.checkedRegistry(keyOnly)
+	}
+	l.Auth, l.ClientCert, l.ClientKey, l.CACert, l.SkipVerify = "", "", "", "", false
 	if kind.Token {
 		return l.checkedToken(kind, keyOnly)
 	}
@@ -153,15 +164,25 @@ func (l Login) checkedToken(kind config.ServerType, keyOnly bool) (Login, error)
 	return l.checkedVault()
 }
 
-// byToken reports a login by an address and a token.
+// byToken reports a login by an address: by a token, or to a container
+// registry.
 func (l Login) byToken() bool {
 	kind, ok := config.ServerTypeOf(l.Type)
-	return ok && kind.Token
+	return ok && (kind.Token || kind.Registry)
 }
 
 // Who is who the host knows the login as, in what a page says it may not do:
 // the user, or the token.
 func (l Login) Who() string {
+	if kind, ok := config.ServerTypeOf(l.Type); ok && kind.Registry {
+		switch {
+		case l.Auth == config.RegistryAuthBasic:
+			return l.Username
+		case l.Auth == config.RegistryAuthBearer:
+			return "the token"
+		}
+		return "an anonymous login"
+	}
 	if l.byToken() {
 		return "the token"
 	}

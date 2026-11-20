@@ -309,6 +309,8 @@ func sortFolderEntries(entries []sendEntryJSON) {
 // remoteFolderFailure says why a folder of a host could not be read.
 func remoteFolderFailure(req sendRequest, folder string, err error) error {
 	switch {
+	case errors.Is(err, remote.ErrNoCatalog):
+		return fmt.Errorf("%s: %w", req.Shown(), remote.ErrNoCatalog)
 	case errors.Is(err, fs.ErrNotExist):
 		return fmt.Errorf("there is no folder %s on %s", folder, req.Shown())
 	case errors.Is(err, fs.ErrPermission):

@@ -817,7 +817,32 @@
   if (pullDialog && pullButton) {
     var pullField = fieldOf(pullDialog);
     var pullWhere = pullDialog.querySelector(".where");
+    var pullSource = pullDialog.querySelector("select[name='source']");
+    var pullAuth = pullDialog.querySelector("select[name='auth']");
+    var pullManual = pullDialog.querySelector("fieldset.manual");
+    var browser = pullDialog.querySelector(".remote");
+    // stored is the stored registry chosen, "" for an image typed in;
+    // selected is the repository:tag chosen of it, "" for none yet
+    var stored = function () {
+      return pullSource ? pullSource.value : "";
+    };
+    var selected = "";
+    var lastSource = "";
+
+    var showAuth = function () {
+      var auth = pullAuth.value;
+      Array.prototype.forEach.call(pullManual.querySelectorAll("[data-auth]"), function (element) {
+        element.hidden = element.dataset.auth !== auth;
+      });
+      pullField("username").placeholder = auth === "bearer" ? "where the registry exchanges the token" : "";
+    };
+    pullAuth.addEventListener("change", showAuth);
+
     var showLocal = function () {
+      if (stored()) {
+        pullWhere.textContent = selected ? "Stored here as " + selected : "Choose a tag of an image.";
+        return;
+      }
       var name = localName(pullField("reference").value);
       if (name === null) {
         pullWhere.textContent = "Name a tag along with the digest: the image is stored under it.";
@@ -826,14 +851,190 @@
       }
     };
     pullField("reference").addEventListener("input", showLocal);
+
     var pullLogin = function () {
+      if (stored()) {
+        return { server: stored(), reference: selected };
+      }
+      var bearer = pullAuth.value === "bearer";
       return {
         reference: pullField("reference").value.trim(),
         username: pullField("username").value.trim(),
-        password: pullField("password").value,
+        password: bearer ? "" : pullField("password").value,
+        token: bearer ? pullField("token").value.trim() : "",
         skipVerify: !pullField("verify").checked
       };
     };
+
+    // --- browsing a stored registry -----------------------------------
+    var crumbs = browser ? browser.querySelector(".remote-path") : null;
+    var list = browser ? browser.querySelector(".remote-list") : null;
+    var spinner = browser ? browser.querySelector(".spinner") : null;
+    var byName = browser ? browser.querySelector(".by-name") : null;
+    // asked counts the folders asked for, so that the answer to one that was
+    // overtaken is dropped
+    var asked = 0;
+
+    var icon = function (href) {
+      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("class", "ic");
+      var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+      use.setAttribute("href", href);
+      svg.appendChild(use);
+      return svg;
+    };
+    var entryButton = function (label, data, href) {
+      var button = el("button");
+      button.type = "button";
+      Object.keys(data).forEach(function (key) {
+        button.dataset[key] = data[key];
+      });
+      button.appendChild(icon(href));
+      button.appendChild(el("span", "label", label));
+      return button;
+    };
+    var joined = function (folder, name) {
+      return (folder === "/" ? "" : folder) + "/" + name;
+    };
+    var note = function (text) {
+      var item = el("li", "note", text);
+      list.appendChild(item);
+    };
+
+    // choose marks the tag chosen, which a Validate is then for
+    var choose = function (reference) {
+      selected = reference;
+      Array.prototype.forEach.call(list.querySelectorAll("button[data-tag]"), function (button) {
+        button.setAttribute("aria-pressed", String(button.dataset.tag === reference));
+      });
+      // what was checked was another image
+      pullSource.dispatchEvent(new Event("input", { bubbles: true }));
+      showLocal();
+    };
+
+    var render = function (view) {
+      crumbs.textContent = "";
+      var parts = view.path.split("/").filter(Boolean);
+      var root = el("button", "", view.server);
+      root.type = "button";
+      root.dataset.path = "/";
+      if (parts.length === 0) {
+        root.setAttribute("aria-current", "location");
+      }
+      crumbs.appendChild(root);
+      parts.forEach(function (part, i) {
+        crumbs.appendChild(el("span", "sep", "/"));
+        var button = el("button", "", part);
+        button.type = "button";
+        button.dataset.path = "/" + parts.slice(0, i + 1).join("/");
+        if (i === parts.length - 1) {
+          button.setAttribute("aria-current", "location");
+        }
+        crumbs.appendChild(button);
+      });
+
+      list.textContent = "";
+      if (view.parent) {
+        var up = el("li");
+        up.appendChild(entryButton("..", { path: view.parent }, "#i-up"));
+        list.appendChild(up);
+      }
+      var repository = view.path.replace(/^\//, "");
+      view.entries.forEach(function (entry) {
+        var item = el("li");
+        if (entry.dir) {
+          item.appendChild(entryButton(entry.name, { path: joined(view.path, entry.name) }, "#i-folder"));
+        } else {
+          var tag = repository + ":" + entry.name;
+          var button = entryButton(entry.name, { tag: tag }, "#i-tag");
+          button.setAttribute("aria-pressed", String(tag === selected));
+          item.appendChild(button);
+        }
+        list.appendChild(item);
+      });
+      if (view.noCatalog) {
+        note("This registry does not list its repositories: open one by its name below.");
+      } else if (view.entries.length === 0) {
+        note(view.path === "/" ? "The registry holds no repositories." : "Nothing here.");
+      }
+      if (view.truncated) {
+        note("There are more than are listed here: open a repository by its name below.");
+      }
+      byName.classList.toggle("wanted", view.noCatalog === true);
+    };
+
+    var browse = function (folder) {
+      var ticket = ++asked;
+      spinner.hidden = false;
+      request("POST", base + "?go-fs=registry-browse", { server: stored(), path: folder }).then(function (res) {
+        return res.json();
+      }).then(function (view) {
+        if (ticket !== asked) {
+          return;
+        }
+        spinner.hidden = true;
+        render(view);
+      }).catch(function (err) {
+        if (ticket !== asked) {
+          return;
+        }
+        spinner.hidden = true;
+        list.textContent = "";
+        var item = el("li", "note bad", err.message);
+        list.appendChild(item);
+      });
+    };
+
+    if (browser) {
+      browser.addEventListener("click", function (event) {
+        var button = event.target.closest("button");
+        if (!button || button.disabled) {
+          return;
+        }
+        if (button.value === "open") {
+          var name = byName.querySelector("input").value.trim().replace(/^\/+|\/+$/g, "");
+          if (name) {
+            browse("/" + name);
+          }
+        } else if (button.dataset.tag) {
+          choose(button.dataset.tag);
+        } else if (button.dataset.path) {
+          browse(button.dataset.path);
+        }
+      });
+      byName.querySelector("input").addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          // Enter opens the repository rather than submitting the dialog
+          event.preventDefault();
+          byName.querySelector("button").click();
+        }
+      });
+    }
+
+    // showSource shows what the source chosen asks for: the address and the
+    // login of an image typed in, or the folders of a stored registry
+    var showSource = function () {
+      var from = stored();
+      pullManual.hidden = from !== "";
+      pullManual.disabled = from !== "";
+      if (browser) {
+        browser.hidden = from === "";
+      }
+      selected = "";
+      if (from) {
+        list.textContent = "";
+        crumbs.textContent = "";
+        browse("/");
+      }
+      showLocal();
+    };
+    if (pullSource) {
+      pullSource.addEventListener("change", function () {
+        lastSource = pullSource.value;
+        showSource();
+      });
+    }
+
     var pulling = transfer(pullDialog, {
       check: function () {
         return { url: base + "?go-fs=registry-pull-check", body: pullLogin() };
@@ -858,8 +1059,20 @@
     pullButton.addEventListener("click", function () {
       clear();
       if (pulling.open()) {
-        showLocal();
-        pullField("reference").focus();
+        // a fresh dialog comes back to the source last chosen
+        if (pullSource) {
+          pullSource.value = lastSource;
+          if (pullSource.value !== lastSource) {
+            pullSource.value = "";
+          }
+        }
+        showAuth();
+        showSource();
+        if (stored()) {
+          pullSource.focus();
+        } else {
+          pullField("reference").focus();
+        }
       }
     });
   }

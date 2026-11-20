@@ -3,15 +3,11 @@ package httpd
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"mime"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -21,6 +17,7 @@ import (
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/mailsvb/go-fs/internal/logging"
+	"github.com/mailsvb/go-fs/internal/ociauth"
 )
 
 // The registry page can copy an image from another registry into this one,
@@ -151,51 +148,6 @@ func parseRemoteReference(value string) (remoteRef, error) {
 	return ref, nil
 }
 
-// remoteTransport is what every client shares. Nothing bounds how long a
-// request may take, since a layer can be gigabytes; what is bounded is how
-// long each step of it may wait, and the idle reader watches the rest.
-var remoteTransport http.RoundTripper = &http.Transport{
-	Proxy:                 http.ProxyFromEnvironment,
-	DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-	ForceAttemptHTTP2:     true,
-	TLSHandshakeTimeout:   30 * time.Second,
-	ResponseHeaderTimeout: 2 * time.Minute,
-	ExpectContinueTimeout: time.Second,
-	MaxIdleConns:          16,
-	IdleConnTimeout:       90 * time.Second,
-}
-
-// insecureRemoteTransport is remoteTransport for a transfer that was told not
-// to validate the connection: it takes whatever certificate it is shown, as
-// a self-signed or an internal one. It is a transport of its own, so that a
-// connection it opened is never reused by a transfer that does validate.
-var insecureRemoteTransport = withoutVerification(remoteTransport)
-
-func withoutVerification(base http.RoundTripper) http.RoundTripper {
-	transport := base.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	return transport
-}
-
-// remoteTransportFor is the transport of a transfer, by whether it validates
-// the connection.
-func remoteTransportFor(skipVerify bool) http.RoundTripper {
-	if skipVerify {
-		return insecureRemoteTransport
-	}
-	return remoteTransport
-}
-
-// withCertificateHint says, of a certificate that was not trusted, how to
-// accept it all the same.
-func withCertificateHint(err error) error {
-	var untrusted *tls.CertificateVerificationError
-	if errors.As(err, &untrusted) {
-		return fmt.Errorf("%w; untick Validate Connection to accept this certificate", err)
-	}
-	return err
-}
-
 // remoteIdleTimeout is how long a blob may go without a byte arriving or
 // leaving before the transfer is given up.
 var remoteIdleTimeout = 2 * time.Minute
@@ -211,176 +163,53 @@ type remoteClient struct {
 	host       string
 	repository string
 	// actions are what the token is asked for: pull, or pull,push.
-	actions            string
-	username, password string
-	// authorization is the header every request carries once the registry
-	// has said what it wants.
-	authorization string
+	actions string
+	// auth is the login, and the header every request carries once the
+	// registry has said what it wants.
+	auth *ociauth.Authorizer
 }
 
-// remoteLogin is how a transfer reaches the other registry: the username and
-// password it was given, and whether it validates the connection.
+// remoteLogin is how a transfer reaches the other registry: the credentials
+// it was given, and what its connection trusts and shows.
 type remoteLogin struct {
-	username, password string
-	skipVerify         bool
+	credentials ociauth.Credentials
+	tls         ociauth.TLS
 }
 
-// log takes the trace of every request the client sends.
-func newRemoteClient(ref remoteRef, login remoteLogin, actions string, log *slog.Logger) *remoteClient {
+// newRemoteClient is a client of the repository of ref. log takes the trace
+// of every request the client sends.
+func newRemoteClient(ref remoteRef, login remoteLogin, actions string, log *slog.Logger) (*remoteClient, error) {
+	transport, err := login.tls.Transport()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", ref.host, err)
+	}
+	client := &http.Client{Transport: logging.Transport(log, "registry", transport),
+		CheckRedirect: ociauth.KeepCredentialsHome}
 	return &remoteClient{
-		http: &http.Client{Transport: logging.Transport(log, "registry", remoteTransportFor(login.skipVerify)),
-			CheckRedirect: keepCredentialsHome},
+		http:       client,
 		base:       ref.scheme + "://" + ref.api,
 		host:       ref.host,
 		repository: ref.repository,
 		actions:    actions,
-		username:   login.username,
-		password:   login.password,
-	}
+		auth:       ociauth.NewAuthorizer(client, ref.host, login.credentials),
+	}, nil
 }
 
 // do sends a request to the other registry.
 func (c *remoteClient) do(req *http.Request) (*http.Response, error) {
-	res, err := c.http.Do(req)
-	return res, withCertificateHint(err)
+	return c.auth.Do(req)
 }
 
-// keepCredentialsHome drops the Authorization header on a redirect to any
-// other host or port. net/http only drops it for another host name, and a
-// bucket on the same host behind another port is someone else all the same.
-func keepCredentialsHome(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return errors.New("stopped after 10 redirects")
-	}
-	if req.URL.Host != via[0].URL.Host || req.URL.Scheme != via[0].URL.Scheme {
-		req.Header.Del("Authorization")
-	}
-	return nil
-}
-
-func (c *remoteClient) basic() string {
-	return "Basic " + base64.StdEncoding.EncodeToString([]byte(c.username+":"+c.password))
+// scope is what a token is asked for.
+func (c *remoteClient) scope() string {
+	return "repository:" + c.repository + ":" + c.actions
 }
 
 // authenticate asks /v2/ what the registry wants, and gets it: a token for
 // the repository, or the Basic credentials on every request. It is done before
 // anything is sent, since a body that is streamed cannot be sent again.
 func (c *remoteClient) authenticate(ctx context.Context) error {
-	res, err := c.send(ctx, http.MethodGet, c.base+"/v2/", nil, nil, false)
-	if err != nil {
-		return err
-	}
-	drain(res)
-	switch res.StatusCode {
-	case http.StatusOK:
-		return nil
-	case http.StatusUnauthorized:
-		return c.answer(ctx, res.Header.Get("WWW-Authenticate"))
-	default:
-		return fmt.Errorf("%s answered %d at /v2/; is it a container registry?", c.host, res.StatusCode)
-	}
-}
-
-// answer meets a challenge of the registry.
-func (c *remoteClient) answer(ctx context.Context, challenge string) error {
-	scheme, params := parseChallenge(challenge)
-	switch strings.ToLower(scheme) {
-	case "basic":
-		if c.username == "" {
-			return fmt.Errorf("%s needs a username and password", c.host)
-		}
-		c.authorization = c.basic()
-		return nil
-	case "bearer":
-		return c.fetchToken(ctx, params)
-	default:
-		return fmt.Errorf("%s asks for a login this server does not know: %q", c.host, challenge)
-	}
-}
-
-// fetchToken gets a token for the repository from where the challenge says,
-// with the credentials if there are any, anonymously if not.
-func (c *remoteClient) fetchToken(ctx context.Context, params map[string]string) error {
-	realm, err := url.Parse(params["realm"])
-	if err != nil || realm.Host == "" || (realm.Scheme != "https" && realm.Scheme != "http") {
-		return fmt.Errorf("%s sends to a token service that is not a URL: %q", c.host, params["realm"])
-	}
-	query := realm.Query()
-	if service := params["service"]; service != "" {
-		query.Set("service", service)
-	}
-	query.Set("scope", "repository:"+c.repository+":"+c.actions)
-	realm.RawQuery = query.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, realm.String(), nil)
-	if err != nil {
-		return err
-	}
-	if c.username != "" {
-		req.Header.Set("Authorization", c.basic())
-	}
-	res, err := c.do(req)
-	if err != nil {
-		return fmt.Errorf("the token service of %s: %w", c.host, err)
-	}
-	defer drain(res)
-	switch {
-	case res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden:
-		if c.username == "" {
-			return fmt.Errorf("%s needs a username and password", c.host)
-		}
-		return fmt.Errorf("%s refused the username and password", c.host)
-	case res.StatusCode != http.StatusOK:
-		return fmt.Errorf("the token service of %s: %w", c.host, remoteFailure(res))
-	}
-	var answer struct {
-		Token       string `json:"token"`
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&answer); err != nil {
-		return fmt.Errorf("the token service of %s answered no token: %w", c.host, err)
-	}
-	token := answer.Token
-	if token == "" {
-		token = answer.AccessToken
-	}
-	if token == "" {
-		return fmt.Errorf("the token service of %s answered no token", c.host)
-	}
-	c.authorization = "Bearer " + token
-	return nil
-}
-
-// parseChallenge reads a WWW-Authenticate header: its scheme and the
-// parameters after it, whose quoted values may hold commas.
-func parseChallenge(header string) (string, map[string]string) {
-	scheme, rest, _ := strings.Cut(strings.TrimSpace(header), " ")
-	params := map[string]string{}
-	for rest = strings.TrimSpace(rest); rest != ""; {
-		key, after, found := strings.Cut(rest, "=")
-		if !found {
-			break
-		}
-		key = strings.ToLower(strings.TrimSpace(key))
-		var value string
-		if strings.HasPrefix(after, `"`) {
-			var b strings.Builder
-			i := 1
-			for ; i < len(after) && after[i] != '"'; i++ {
-				if after[i] == '\\' && i+1 < len(after) {
-					i++
-				}
-				b.WriteByte(after[i])
-			}
-			value, rest = b.String(), after[min(i+1, len(after)):]
-		} else {
-			value, rest, _ = strings.Cut(after, ",")
-			value = strings.TrimSpace(value)
-			rest = "," + rest
-		}
-		params[key] = value
-		rest = strings.TrimLeft(rest, ", ")
-	}
-	return scheme, params
+	return c.auth.Authenticate(ctx, c.base, c.scope())
 }
 
 // send makes one request with the authorization there is. A request that
@@ -400,8 +229,8 @@ func (c *remoteClient) send(ctx context.Context, method, target string, header h
 		for key, values := range header {
 			req.Header[key] = values
 		}
-		if c.authorization != "" {
-			req.Header.Set("Authorization", c.authorization)
+		if c.auth.Header != "" {
+			req.Header.Set("Authorization", c.auth.Header)
 		}
 		res, err := c.do(req)
 		if err != nil {
@@ -412,7 +241,7 @@ func (c *remoteClient) send(ctx context.Context, method, target string, header h
 			return res, nil
 		}
 		drain(res)
-		if err := c.answer(ctx, challenge); err != nil {
+		if err := c.auth.Answer(ctx, challenge, c.scope()); err != nil {
 			return nil, err
 		}
 	}
@@ -564,8 +393,8 @@ func (c *remoteClient) pushBlob(ctx context.Context, d digest.Digest, size int64
 	}
 	req.ContentLength = size
 	req.Header.Set("Content-Type", "application/octet-stream")
-	if c.authorization != "" {
-		req.Header.Set("Authorization", c.authorization)
+	if c.auth.Header != "" {
+		req.Header.Set("Authorization", c.auth.Header)
 	}
 	res, err = c.do(req)
 	if err != nil {
@@ -630,7 +459,7 @@ func (c *remoteClient) putManifest(ctx context.Context, ref, mediaType string, b
 func (c *remoteClient) failure(res *http.Response, what string) error {
 	switch res.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		if c.username == "" {
+		if c.auth.Credentials.Empty() {
 			return fmt.Errorf("%s refused access to %s: it does not exist, or it needs a username and password (%w)",
 				c.host, what, remoteFailure(res))
 		}
@@ -643,38 +472,8 @@ func (c *remoteClient) failure(res *http.Response, what string) error {
 
 // remoteFailure reads the errors of an answer as the specification writes
 // them, or whatever else the body says.
-func remoteFailure(res *http.Response) error {
-	data, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
-	var answer struct {
-		Errors []struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	if json.Unmarshal(data, &answer) == nil && len(answer.Errors) > 0 {
-		var parts []string
-		for _, entry := range answer.Errors {
-			part := entry.Code
-			if entry.Message != "" {
-				part += ": " + entry.Message
-			}
-			parts = append(parts, part)
-		}
-		return fmt.Errorf("%d %s", res.StatusCode, strings.Join(parts, "; "))
-	}
-	text := strings.TrimSpace(string(data))
-	if len(text) > 200 || strings.HasPrefix(text, "<") {
-		text = ""
-	}
-	if text == "" {
-		text = http.StatusText(res.StatusCode)
-	}
-	return fmt.Errorf("%d %s", res.StatusCode, text)
-}
+func remoteFailure(res *http.Response) error { return ociauth.Failure(res) }
 
 // drain reads what is left of a body and closes it, so the connection can be
 // used again.
-func drain(res *http.Response) {
-	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 64<<10))
-	_ = res.Body.Close()
-}
+func drain(res *http.Response) { ociauth.Drain(res) }

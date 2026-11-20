@@ -249,6 +249,12 @@ func (s *Server) remoteGet(set *settings, w http.ResponseWriter, r *http.Request
 	}
 	q.path = p
 	archive := info.IsDir() && r.URL.Query().Get(remoteArchiveParam) != ""
+	if archive && isRegistryServer(q.server) {
+		// a folder of a registry is its tags, each an image
+		http.Error(w, "a folder of a container registry is not packed; pull its images on the registry page",
+			http.StatusBadRequest)
+		return
+	}
 	if (archive || !info.IsDir()) && !q.server.Rights().Download {
 		s.remoteRefused(w, q, "download")
 		return
@@ -309,8 +315,8 @@ func remoteRights(cred credential, server config.Server) rights {
 		DeleteFile:        allowed.Delete && granted(perms, actDeleteFile),
 		DeleteFolder:      allowed.Delete && granted(perms, actDeleteFolder),
 		Downloads:         mayFollowFetches(cred),
-		RemoteFetch:       allowed.Download && granted(perms, actCreate),
-		RemoteFetchFolder: allowed.Download && granted(perms, actCreate) && granted(perms, actMkdir),
+		RemoteFetch:       allowed.Download && granted(perms, actCreate) && !isRegistryServer(server),
+		RemoteFetchFolder: allowed.Download && granted(perms, actCreate) && granted(perms, actMkdir) && !isRegistryServer(server),
 		MP3Tags: mp3edit.Compiled && allowed.Download && allowed.Upload &&
 			granted(perms, actOverwrite),
 	}
@@ -372,11 +378,18 @@ func (s *Server) remotePage(set *settings, w http.ResponseWriter, r *http.Reques
 		folder = "/"
 	}
 	place := remotePlace(q.server.Name, folder)
+	if isRegistryServer(q.server) {
+		place.ByName = q.server.Name
+	}
 	status := http.StatusOK
 	if failure != nil {
 		entries = nil
 		place.Error = failure.Error()
 		status = http.StatusBadGateway
+		if errors.Is(failure, remote.ErrNoCatalog) {
+			// nothing went wrong: the registry wants a repository named
+			status = http.StatusOK
+		}
 		s.logFor(r).Info("http remote folder cannot be listed", "server", q.server.Name, "path", folder,
 			"user", cred.user.name, "address", q.address, "error", failure)
 	}

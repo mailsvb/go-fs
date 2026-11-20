@@ -342,7 +342,8 @@ isAdmin = true
 # What the Send File dialog lists the server as. Unique, whatever its case.
 # name = "backup host"
 # The protocol the server is reached with: sftp, smb for a Windows file
-# server or a Samba, or artifactory for the REST API of a JFrog Artifactory.
+# server or a Samba, artifactory for the REST API of a JFrog Artifactory, or
+# registry for a container registry the registry page pulls images from.
 # type = "sftp"
 # The name or address of the server, without a scheme or a port. An
 # artifactory server names its url and token instead of this, the port and
@@ -396,6 +397,33 @@ isAdmin = true
 # type = "artifactory"
 # url = "https://acme.jfrog.io/artifactory"
 # token = "…"
+#
+# A container registry is reached by its address, where /v2/ is appended for
+# the distribution API of OCI, and browsed in the Pull image dialog of the
+# registry page: its repositories by the catalog where it lists one, any
+# repository by its name where it does not, and the tags of each. The address
+# may hold a path, as that of the Docker API of one repository of an
+# Artifactory, https://acme.jfrog.io/artifactory/api/docker/docker-local. auth
+# is none, basic with the username and the password, or bearer with the
+# token, which a registry that wants a token of its own has exchanged as the
+# password of the username where one is given. A registry is only pulled
+# from, so allowUpload, allowCreate, allowDelete and allowRename stay off.
+# [[servers]]
+# name = "jfrog"
+# type = "registry"
+# url = "https://acme.jfrog.io"
+# auth = "bearer"
+# token = "…"
+# The certificate and key shown to a registry that asks for one, for mutual
+# TLS, as base64 of their PEM; the admin interface uploads them. The key is
+# kept as it is, as a password is.
+# clientCert = "LS0tLS1CRUdJTi…"
+# clientKey = "LS0tLS1CRUdJTi…"
+# The certificates of the CA the registry's is checked against, in place of
+# the roots of the system, as base64 of their PEM.
+# caCert = "LS0tLS1CRUdJTi…"
+# Take whatever certificate the registry shows. False when not set.
+# skipVerify = true
 #
 # An SMB server is reached by SMB 2 or 3 and logged in to by NTLM. A username
 # of DOMAIN\user logs in to that domain. Its shares are the folders at the top

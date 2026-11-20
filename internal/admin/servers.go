@@ -39,6 +39,13 @@ type serverJSON struct {
 	Password string `json:"password"`
 	URL      string `json:"url"`
 	Token    string `json:"token"`
+	// Auth, the certificates, the key and SkipVerify are of a container
+	// registry.
+	Auth       string `json:"auth"`
+	ClientCert string `json:"clientCert"`
+	ClientKey  string `json:"clientKey"`
+	CACert     string `json:"caCert"`
+	SkipVerify bool   `json:"skipVerify"`
 	// VaultPath and VaultPassword are the vault of Cryptomator on the server,
 	// and CreateVault makes a new one there rather than opening one.
 	VaultPath     string `json:"vaultPath"`
@@ -49,6 +56,8 @@ type serverJSON struct {
 func (s serverJSON) login() remote.Login {
 	return remote.Login{Type: strings.TrimSpace(s.Type), Host: s.Host, Port: s.Port,
 		Username: s.Username, Password: s.Password, URL: s.URL, Token: s.Token,
+		Auth: strings.TrimSpace(s.Auth), ClientCert: strings.TrimSpace(s.ClientCert),
+		ClientKey: strings.TrimSpace(s.ClientKey), CACert: strings.TrimSpace(s.CACert), SkipVerify: s.SkipVerify,
 		VaultPath: s.VaultPath, VaultPassword: s.VaultPassword}
 }
 
@@ -153,6 +162,10 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 	if index >= 0 && strings.TrimSpace(login.Token) == "" {
 		login.Token = cfg.Servers[index].Token
 	}
+	// and so is the key of the client certificate, as long as there is one
+	if index >= 0 && login.ClientKey == "" && login.ClientCert != "" {
+		login.ClientKey = cfg.Servers[index].ClientKey
+	}
 	// as is the password of the vault, unless the vault is a new one, whose
 	// password is the one it is made with
 	if index >= 0 && login.VaultPassword == "" && !body.Server.CreateVault {
@@ -222,6 +235,8 @@ func (h *Handler) handleServerSave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
+	// a registry whose login changed may list other repositories
+	remote.ForgetCatalogs()
 	h.log.Info("the admin interface stored a server", "server", name, "type", login.Type,
 		"host", login.Shown(), "username", login.Who(), "path", h.path, "backup", backup,
 		"address", addressOf(r))

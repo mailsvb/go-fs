@@ -224,9 +224,10 @@ func TestStateOffersTheProtocols(t *testing.T) {
 	skipWithout(t, features.SFTPRemote, features.SMB)
 	_, front := testServer(t, testConfig(t))
 	body := get(t, front)
-	if len(body.Protocols) != 3 || body.Protocols[0].ID != config.ServerTypeSFTP ||
+	if len(body.Protocols) != 4 || body.Protocols[0].ID != config.ServerTypeSFTP ||
 		body.Protocols[1].ID != config.ServerTypeArtifactory || !body.Protocols[1].Token ||
-		body.Protocols[2].ID != config.ServerTypeSMB || body.Protocols[2].HostKey || body.Protocols[2].DefaultPort != 445 {
+		body.Protocols[2].ID != config.ServerTypeSMB || body.Protocols[2].HostKey || body.Protocols[2].DefaultPort != 445 ||
+		body.Protocols[3].ID != config.ServerTypeRegistry || !body.Protocols[3].Registry {
 		t.Errorf("the state offers %+v", body.Protocols)
 	}
 }

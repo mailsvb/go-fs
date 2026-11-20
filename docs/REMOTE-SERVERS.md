@@ -220,6 +220,72 @@ size or time. A rename is the Move API, also of Pro; without it a rename fails
 with what Artifactory says. A folder is deleted only when there is nothing in
 it, as on an SFTP server, although Artifactory would remove all of it.
 
+### Container registries
+
+A container registry is a server of `type = "registry"`, reached by the
+distribution API of OCI under `/v2/` of its address. It is only pulled from:
+the **Pull image** dialog of the registry page browses it for an image and
+copies it into the registry of go-fs (see [REGISTRY.md](REGISTRY.md)). Send
+File, Fetch and the syncs leave it out, and `allowUpload`, `allowCreate`,
+`allowDelete` and `allowRename` stay off.
+
+```toml
+[[servers]]
+name = "jfrog"
+type = "registry"
+url = "https://acme.jfrog.io"
+auth = "bearer"
+token = "…"
+allowedUsers = ["ci"]
+```
+
+The address may hold a path. A JFrog Artifactory serves its Docker
+repositories at the root of its host, or under the repository's own
+subdomain. For the Docker API of a single repository, use
+`https://acme.jfrog.io/artifactory/api/docker/docker-local`. A `/v2` at the
+end is dropped, and so is a slash. An address without a scheme is reached
+over HTTPS.
+
+`auth` is how go-fs logs in:
+
+- `none` (or no key) logs in anonymously.
+- `basic` sends `username` and `password` as Basic. It does that to the
+  registry, or to its token service when the registry answers with a
+  challenge for a token of its own, as docker's registries do.
+- `bearer` sends `token` as `Authorization: Bearer <token>`. A registry that
+  turns it down with a challenge has it exchanged at its token service. If a
+  `username` is given, the token is sent as that user's password; if not, it
+  is sent as a Bearer token. An access token of Artifactory works either way.
+  A personal access token of GitHub is exchanged as the password of any
+  username.
+
+A registry that asks for a client certificate is shown `clientCert` and
+`clientKey`, which are base64 of their PEM and are given together; the key is
+kept in plain text, as a password is. `caCert` holds the certificates of an
+internal CA, which the registry's certificate is checked against in place of
+the roots of the system. `skipVerify = true` takes whatever certificate the
+registry shows. In the admin dialog these are **client certificate**,
+**client key** and **CA certificate**, each with Upload, and **validate
+connection**. An edit that uploads no new key keeps the stored one, unless
+the certificate is cleared, which takes its key with it.
+
+The admin dialog checks the login with `GET /v2/`, which a registry with no
+catalog answers too.
+
+The top of the server lists the repositories of its catalog
+(`GET /v2/_catalog`), a page of 1000 at a time, up to 20 000. They are listed
+as folders, one per component of their names: `team/app` is the folder `app`
+in `team`. A repository's folder holds its tags as files, read from
+`tags/list`, and the folders of the repositories below it. A tag reads as its
+manifest. A tag that has the name of such a folder is left to the folder. The
+catalog is kept for a minute, since every page logs in again, and is dropped
+when a server is stored.
+
+Docker Hub and the GitHub Container Registry list no catalog. The top of
+such a registry says so, and the page and the dialog offer to open a
+repository by its name instead, `library/alpine` for instance, whose tags are
+then listed.
+
 ### SMB
 
 A Windows file server, a NAS or a Samba is a server of `type = "smb"`,

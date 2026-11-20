@@ -860,6 +860,75 @@ const serverDialog = (() => {
 
   const protocol = () => protocols.find((p) => p.id === field("type").value) || null;
 
+  // shape is how the protocol chosen is logged in to: a host and a login, an
+  // address and a token, or a container registry
+  const shape = () => {
+    const chosen = protocol();
+    if (chosen && chosen.registry) return "registry";
+    if (chosen && chosen.token) return "token";
+    return "host";
+  };
+
+  // materials are the certificates and the key of a registry, base64 of
+  // their PEM as the file holds them; a key left "" keeps the one stored
+  const materials = { clientCert: "", clientKey: "", caCert: "" };
+  let storedKey = false;
+  const materialBoxes = Array.from(form.querySelectorAll("[data-material]"));
+
+  function describeMaterials() {
+    materialBoxes.forEach((box) => {
+      const name = box.dataset.material;
+      const summary = box.querySelector(".summary");
+      if (box.dataset.summary) {
+        summary.textContent = box.dataset.summary;
+      } else if (name === "clientKey") {
+        summary.textContent = storedKey && materials.clientCert
+          ? "stored; kept unless another is uploaded" : "none";
+      } else {
+        summary.textContent = materials[name] ? "stored" : "none";
+      }
+      summary.classList.toggle("none", summary.textContent === "none");
+      const clear = box.querySelector("button[value='clear']");
+      clear.hidden = name === "clientKey";
+    });
+  }
+
+  materialBoxes.forEach((box) => {
+    const name = box.dataset.material;
+    const picker = box.querySelector("input[type='file']");
+    box.querySelector("button[value='upload']").addEventListener("click", () => picker.click());
+    box.querySelector("button[value='clear']").addEventListener("click", () => {
+      materials[name] = "";
+      delete box.dataset.summary;
+      if (name === "clientCert") {
+        // the key goes with its certificate
+        materials.clientKey = "";
+        storedKey = false;
+        delete form.querySelector("[data-material='clientKey']").dataset.summary;
+      }
+      describeMaterials();
+      forget();
+    });
+    picker.addEventListener("change", async () => {
+      const file = picker.files[0];
+      picker.value = "";
+      if (!file) return;
+      try {
+        const result = await post("?go-fs=admin-upload", {
+          kind: box.dataset.kind,
+          filename: file.name,
+          content: await base64Of(file),
+        });
+        materials[name] = result.value;
+        box.dataset.summary = result.summary || "uploaded";
+        describeMaterials();
+        forget();
+      } catch (error) {
+        tell(String(error.message || error), true);
+      }
+    });
+  });
+
   function tell(text, bad) {
     progress.textContent = text;
     progress.classList.toggle("bad", bad === true);
@@ -879,20 +948,31 @@ const serverDialog = (() => {
   function working(on) {
     Array.from(form.elements).forEach((element) => {
       if (element.value === "cancel") return;
-      element.disabled = on || (element.tagName !== "BUTTON" && element.hidden);
+      // a file picker is hidden behind its button, which is what is shown
+      element.disabled = on || (element.tagName !== "BUTTON" && element.type !== "file" && element.hidden);
     });
   }
 
   // fields shows the fields of the login the protocol chosen asks for, and
   // those of the vault when the binary has vaults
   function fields() {
-    const byToken = protocol() !== null && protocol().token === true;
+    const now = shape();
+    const auth = field("auth").value;
     form.querySelectorAll("[data-login]").forEach((element) => {
-      element.hidden = (element.dataset.login === "token") !== byToken;
-      if (element.tagName !== "LABEL") element.disabled = element.hidden;
+      let shown = element.dataset.login.split(" ").includes(now);
+      // a registry asks for what its way of logging in takes
+      if (shown && now === "registry" && element.dataset.auth) {
+        shown = element.dataset.auth.split(" ").includes(auth);
+      }
+      element.hidden = !shown;
+      if (element.tagName === "INPUT" || element.tagName === "SELECT") element.disabled = element.hidden;
     });
+    // a registry may log in by a token with no username
+    field("username").required = !(now === "registry" && auth !== "basic");
+    field("username").placeholder = now === "registry" && auth === "bearer"
+      ? "optional: where the token is exchanged with it" : "";
     form.querySelectorAll("[data-vault]").forEach((element) => {
-      element.hidden = !vaults;
+      element.hidden = !vaults || now === "registry";
       if (element.tagName !== "LABEL") element.disabled = element.hidden;
     });
   }
@@ -915,9 +995,14 @@ const serverDialog = (() => {
       password: field("password").value,
       url: field("url").value.trim(),
       token: field("token").value.trim(),
-      vaultPath: vaults ? field("vaultPath").value.trim() : "",
-      vaultPassword: vaults ? field("vaultPassword").value : "",
-      createVault: vaults && field("createVault").checked,
+      auth: shape() === "registry" ? field("auth").value : "",
+      clientCert: shape() === "registry" ? materials.clientCert : "",
+      clientKey: shape() === "registry" ? materials.clientKey : "",
+      caCert: shape() === "registry" ? materials.caCert : "",
+      skipVerify: shape() === "registry" && !field("verify").checked,
+      vaultPath: vaults && shape() !== "registry" ? field("vaultPath").value.trim() : "",
+      vaultPassword: vaults && shape() !== "registry" ? field("vaultPassword").value : "",
+      createVault: vaults && shape() !== "registry" && field("createVault").checked,
     };
   }
 
@@ -1010,8 +1095,12 @@ const serverDialog = (() => {
   field("type").addEventListener("change", () => {
     const chosen = protocol();
     if (chosen && chosen.defaultPort) field("port").value = String(chosen.defaultPort);
+    field("url").placeholder = shape() === "registry"
+      ? "https://acme.jfrog.io, or …/artifactory/api/docker/<repository>" : "https://acme.jfrog.io";
     fields();
   });
+
+  field("auth").addEventListener("change", fields);
 
   // Enter presses whichever button acts first in the form, so what is done
   // is decided by the step rather than by the button.
@@ -1053,6 +1142,16 @@ const serverDialog = (() => {
     field("password").value = "";
     field("url").value = from.url || "";
     field("token").value = "";
+    field("auth").value = from.auth || "none";
+    field("verify").checked = !from.skipVerify;
+    materials.clientCert = from.clientCert || "";
+    materials.caCert = from.caCert || "";
+    materials.clientKey = "";
+    storedKey = Boolean(from.clientKey);
+    materialBoxes.forEach((box) => delete box.dataset.summary);
+    describeMaterials();
+    field("url").placeholder = shape() === "registry"
+      ? "https://acme.jfrog.io, or …/artifactory/api/docker/<repository>" : "https://acme.jfrog.io";
     field("vaultPath").value = from.vaultPath || "";
     field("vaultPassword").value = "";
     field("createVault").checked = false;
@@ -1065,7 +1164,7 @@ const serverDialog = (() => {
     forget();
     working(false);
     dialog.showModal();
-    const first = protocol() && protocol().token ? "url" : "host";
+    const first = shape() === "host" ? "host" : "url";
     field(edited ? first : "name").focus();
   }
 
