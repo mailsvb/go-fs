@@ -280,8 +280,8 @@ type User struct {
 	// Registry lets the account push to and delete from the container
 	// registry of the HTTP server (see General.BaseFolderRegistry), logging in
 	// with its username and password, and pull from it where
-	// RegistryAnonymousRead is off. It is independent of HTTP; Paths and the
-	// rights below do not apply to it.
+	// http.registry.anonymousRead is off. It is independent of HTTP; Paths
+	// and the rights below do not apply to it.
 	Registry bool `toml:"registry,omitempty"`
 
 	// Basefolder is the folder this account sees on FTP and SFTP instead of
@@ -1006,8 +1006,11 @@ type HTTP struct {
 	// guessing passwords.
 	HTTPAuth `toml:"auth"`
 	// HTTPServices is [http.services]: what the server answers besides files,
-	// S3, the registry, WebDAV, Jellyfin and Sonos.
+	// S3, WebDAV, Jellyfin and Sonos.
 	HTTPServices `toml:"services"`
+	// HTTPRegistry is [http.registry]: anonymous pulls from the container
+	// registry and the signers whose signatures it checks.
+	HTTPRegistry `toml:"registry"`
 
 	// Basefolder is general.baseFolderFiles, which Resolved hands the server.
 	// It is no key of the section.
@@ -1168,17 +1171,6 @@ type HTTPServices struct {
 	// found by its name ignoring case, in the one region, S3Region, and only
 	// the accounts that set s3 may use it.
 	EnableS3 bool `toml:"enableS3"`
-	// RegistryAnonymousRead lets anyone pull from the registry without
-	// credentials. With it off, pulling takes an account that sets registry,
-	// as pushing and deleting always do.
-	RegistryAnonymousRead bool `toml:"registryAnonymousRead"`
-	// RegistryTrust is [[http.services.registryTrust]]: the signers whose
-	// signatures the container registry verifies.
-	RegistryTrust []RegistryTrust `toml:"registryTrust"`
-	// ImageSign is [[http.services.imagesign]]: the signers whose
-	// signatures in the labels of an image the container registry checks,
-	// and what it refuses for them.
-	ImageSign []ImageSign `toml:"imagesign"`
 	// WebDAV answers WebDAV on the paths of the served folder, on both
 	// listeners, so that Explorer and Finder mount it as a drive. To a WebDAV
 	// client DELETE then removes a folder with everything in it and MOVE moves
@@ -1206,6 +1198,22 @@ type HTTPServices struct {
 	// are asked directly besides those a search finds: for speakers on a
 	// network the search does not reach.
 	SonosSpeakers []string `toml:"sonosSpeakers" feature:"sonos"`
+}
+
+// HTTPRegistry is [http.registry]: who may pull from the container registry,
+// and the signers whose signatures it checks.
+type HTTPRegistry struct {
+	// RegistryAnonymousRead lets anyone pull from the registry without
+	// credentials. With it off, pulling takes an account that sets registry,
+	// as pushing and deleting always do.
+	RegistryAnonymousRead bool `toml:"anonymousRead"`
+	// RegistryTrust is [[http.registry.trust]]: the signers whose
+	// signatures the container registry verifies.
+	RegistryTrust []RegistryTrust `toml:"trust"`
+	// ImageSign is [[http.registry.imagesign]]: the signers whose
+	// signatures in the labels of an image the container registry checks,
+	// and what it refuses for them.
+	ImageSign []ImageSign `toml:"imagesign"`
 }
 
 // S3Region is the one region the S3 API of the HTTP server answers for. It is
@@ -1378,10 +1386,12 @@ func Default() Config {
 				LoginLockout:         60,
 			},
 			HTTPServices: HTTPServices{
-				Files:                 true,
-				EnableS3:              true,
+				Files:         true,
+				EnableS3:      true,
+				WebDAVClients: DefaultWebDAVClients(),
+			},
+			HTTPRegistry: HTTPRegistry{
 				RegistryAnonymousRead: true,
-				WebDAVClients:         DefaultWebDAVClients(),
 			},
 		},
 		HTTPS: HTTPS{
@@ -1462,8 +1472,8 @@ var httpKeys = func() []httpKey {
 		for j := range table.Type.NumField() {
 			field := table.Type.Field(j)
 			key, _, _ := strings.Cut(field.Tag.Get("toml"), ",")
-			// a list of tables, [[http.services.registryTrust]], came
-			// after the tables and was never a key of [http]
+			// a list of tables, [[http.registry.trust]], came after the
+			// tables and was never a key of [http]
 			repeated := field.Type.Kind() == reflect.Slice && field.Type.Elem().Kind() == reflect.Struct
 			if key != "" && key != "-" && !repeated {
 				keys = append(keys, httpKey{tableName, key, field.Name})
@@ -1481,6 +1491,7 @@ type flatHTTP struct {
 		HTTPConnection
 		HTTPAuth
 		HTTPServices
+		HTTPRegistry
 	} `toml:"http"`
 }
 

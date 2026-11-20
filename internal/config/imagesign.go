@@ -10,7 +10,7 @@ import (
 )
 
 // ImageSign is a signer of container images that signs them in their labels,
-// [[http.services.imagesign]]: the image's configuration carries an Ed25519
+// [[http.registry.imagesign]]: the image's configuration carries an Ed25519
 // signature over its layers and the certificate it was made with, under
 // <prefix>.signature and <prefix>.certchain, as image-sign.sh of
 // container-image-validation writes them. The registry checks such an image
@@ -32,8 +32,20 @@ type ImageSign struct {
 	// intermediate, that the signing certificate has to chain to, and
 	// Ed25519 public keys, PUBLIC KEY blocks, that are trusted as they are,
 	// whoever issued the certificate that carries them and whenever it
-	// expires. Base64 of the PEM works too.
+	// expires. Base64 of the PEM works too. Required while VerifyChain is
+	// on; without it the CA certificates play no part, and the public keys,
+	// where there are any, are the keys a signature has to be made with.
 	Certificates string `toml:"certificates"`
+	// VerifyChain builds the chain of trust from the signing certificate the
+	// image carries under <prefix>.certchain to one of the CA certificates,
+	// and is on unless it is set to false. Off, only the signature itself is
+	// checked, in every mode: with the key of the signing certificate where
+	// the image carries one, which has to be one of the public keys where
+	// Certificates lists any, and with those keys where it carries none.
+	// Who issued the certificate and when it expires play no part then, and
+	// with no public key listed any signature that matches the layers is
+	// taken, which proves the layers unchanged but not who signed them.
+	VerifyChain *bool `toml:"verifyChain,omitempty" default:"true"`
 	// Mode is what the registry refuses. optional refuses nothing and only
 	// shows whether an image is signed. mandatory refuses to take or hand
 	// out an image whose signature is there but does not verify, and lets an
@@ -46,7 +58,7 @@ type ImageSign struct {
 	Repositories []string `toml:"repositories,omitempty"`
 }
 
-// The modes of [[http.services.imagesign]].
+// The modes of [[http.registry.imagesign]].
 const (
 	ImageSignOptional  = "optional"
 	ImageSignMandatory = "mandatory"
@@ -63,7 +75,13 @@ func (s ImageSign) ImageSignMode() string {
 	return mode
 }
 
-// KindImageSignTrust is the key material of http.services.imagesign's
+// ChainVerified is whether the registry builds the chain of trust for the
+// entry: on unless VerifyChain is set to false.
+func (s ImageSign) ChainVerified() bool {
+	return s.VerifyChain == nil || *s.VerifyChain
+}
+
+// KindImageSignTrust is the key material of http.registry.imagesign's
 // certificates: CA certificates and Ed25519 public keys, in PEM.
 const KindImageSignTrust = "imagesigntrust"
 
@@ -72,11 +90,15 @@ var labelPrefixPattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-
 
 // LoadImageSign reads an entry into what the registry checks against.
 func LoadImageSign(s ImageSign) (*imagesig.LabelTrust, error) {
-	material, err := DecodeImageSignTrust(s.Certificates)
-	if err != nil {
-		return nil, fmt.Errorf("certificates %w", err)
+	var material []byte
+	if s.ChainVerified() || strings.TrimSpace(s.Certificates) != "" {
+		decoded, err := DecodeImageSignTrust(s.Certificates)
+		if err != nil {
+			return nil, fmt.Errorf("certificates %w", err)
+		}
+		material = decoded
 	}
-	return imagesig.NewLabelTrust(s.Name, s.LabelPrefix, material)
+	return imagesig.NewLabelTrust(s.Name, s.LabelPrefix, material, s.ChainVerified())
 }
 
 // DecodeImageSignTrust checks the certificates of an entry and returns their
@@ -117,13 +139,13 @@ func describeImageSignTrust(value string) string {
 	return strings.Join(parts, "; ")
 }
 
-// validateImageSign checks [[http.services.imagesign]], reading the
+// validateImageSign checks [[http.registry.imagesign]], reading the
 // certificates, so that a signer the registry cannot use is refused with the
 // rest of the file.
 func (c Config) validateImageSign() error {
 	names := map[string]bool{}
 	for i, entry := range c.HTTP.ImageSign {
-		where := fmt.Sprintf("http.services.imagesign[%d]", i)
+		where := fmt.Sprintf("http.registry.imagesign[%d]", i)
 		if entry.Name == "" {
 			return fmt.Errorf("%s has no name", where)
 		}
@@ -149,11 +171,14 @@ func (c Config) validateImageSign() error {
 			}
 			prefixes[strings.ToLower(prefix)] = true
 		}
-		if strings.TrimSpace(entry.Certificates) == "" {
-			return fmt.Errorf("%s needs certificates: the PEM of the CA certificates or Ed25519 public keys signatures are checked against", where)
-		}
-		if _, err := DecodeImageSignTrust(entry.Certificates); err != nil {
-			return fmt.Errorf("%s: certificates %w", where, err)
+		switch {
+		case strings.TrimSpace(entry.Certificates) != "":
+			if _, err := DecodeImageSignTrust(entry.Certificates); err != nil {
+				return fmt.Errorf("%s: certificates %w", where, err)
+			}
+		case entry.ChainVerified():
+			return fmt.Errorf("%s needs certificates: the PEM of the CA certificates or Ed25519 public keys signatures are checked against, "+
+				"or verifyChain = false to check the signature alone", where)
 		}
 		switch entry.ImageSignMode() {
 		case ImageSignOptional, ImageSignMandatory, ImageSignEnforced:

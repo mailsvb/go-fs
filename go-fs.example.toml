@@ -219,8 +219,8 @@ isAdmin = true
 # Let this account push images to and delete them from the container registry
 # of the http server (see general.baseFolderRegistry), logging in with its
 # username and password as docker login does, and pull from it when
-# http.services.registryAnonymousRead is off. It is independent of http; the paths and
-# rights below do not apply to it.
+# http.registry.anonymousRead is off. It is independent of http; the paths
+# and rights below do not apply to it.
 # registry = true
 # Let a client certificate whose common name is this username attach the disk
 # images of the nbd server: read-only with allowUserFileRetrieve, read-write
@@ -642,7 +642,7 @@ loginFailureDelay = 1
 # writes of WebDAV) and every WebDAV listing (PROPFIND) always needs one. Such
 # a request has to be answered by one of the [[users]] entries that set
 # http = true, whose own paths and rights then decide what it may do. Its keys
-# are in the four tables below.
+# are in the five tables below.
 [http]
 
 # Where the server listens, the admin interface, self update, the key share
@@ -752,7 +752,7 @@ loginAttempts = 5
 loginLockout = 60
 
 # What the server answers besides the files themselves, on both listeners: S3,
-# the container registry, WebDAV, Jellyfin discovery and Play on Sonos.
+# WebDAV, Jellyfin discovery and Play on Sonos.
 [http.services]
 # Serve the files of general.baseFolderFiles on both listeners: the listing,
 # downloads and uploads, WebDAV, S3, share links and Play on Sonos. With it
@@ -771,11 +771,6 @@ files = true
 # https://host:8443/docs/key. A request without such a signature is served as
 # it always was.
 enableS3 = true
-
-# Let anyone pull from the container registry (see
-# general.baseFolderRegistry) without credentials. With it off, pulling
-# takes an account that sets registry = true, as pushing always does.
-registryAnonymousRead = true
 
 # Answer WebDAV on the paths of the served folder, on both listeners, so that
 # Windows Explorer (Map network drive) and macOS Finder (Connect to Server)
@@ -815,13 +810,21 @@ sonos = false
 # 1400 on the addresses of the private networks it is on.
 sonosSpeakers = []
 
+# The container registry of general.baseFolderRegistry: who may pull from it,
+# and the signers whose signatures it checks.
+[http.registry]
+# Let anyone pull from the container registry without credentials. With it
+# off, pulling takes an account that sets registry = true, as pushing always
+# does.
+anonymousRead = true
+
 # The signers whose signatures the container registry verifies, one table per
 # signer. Every signature and attestation pushed next to an image, by cosign,
 # notation or GitHub's actions/attest-build-provenance, is checked against
 # them, and the registry page says which signer verified an image, or that
 # none did. Nothing is refused for these: a client that relies on a
 # signature still verifies it itself.
-# [[http.services.registryTrust]]
+# [[http.registry.trust]]
 # Names the signer on the registry page: letters, digits, dots, dashes and
 # underscores. Unique, whatever its case.
 # name = "release"
@@ -852,9 +855,9 @@ sonosSpeakers = []
 # certificate it was made with under <prefix>.certchain. The signature covers
 # the layers only, not the entrypoint, the environment or the name of the
 # image. Each image is checked as it is pushed and as it is pulled, and the
-# registry page says whether it is signed. Unlike registryTrust, these can
-# refuse an image: see mode.
-# [[http.services.imagesign]]
+# registry page says whether it is signed. Unlike trust, these can refuse an
+# image: see mode.
+# [[http.registry.imagesign]]
 # Names the signer on the registry page and in the log: letters, digits, dots,
 # dashes and underscores. Unique, whatever its case.
 # name = "mitel"
@@ -866,8 +869,18 @@ sonosSpeakers = []
 # one after the other, in a multi-line string between three quotes in this
 # file. CA certificates are what the signing certificate has to chain to;
 # Ed25519 public keys, PUBLIC KEY blocks, are trusted as they are, whoever
-# issued the certificate that carries them.
+# issued the certificate that carries them. Required unless verifyChain is
+# false.
 # certificates = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n"
+# Build the chain of trust from the signing certificate in <prefix>.certchain
+# to one of the CA certificates. With false, in every mode, only the signature
+# itself is checked: with the key of the signing certificate the image
+# carries, which has to be one of the public keys in certificates where it
+# lists any, or with those keys for an image that carries no certchain. Who
+# issued the certificate and when it expires play no part, and with no public
+# key listed any signature that matches the layers is taken: that proves the
+# layers unchanged, not who signed them.
+# verifyChain = true
 # optional shows whether an image is signed and refuses nothing. mandatory
 # also refuses to take or hand out an image whose signature does not verify,
 # and lets an unsigned one through. enforced refuses every image without a

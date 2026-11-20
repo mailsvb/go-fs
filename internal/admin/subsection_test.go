@@ -155,7 +155,7 @@ func TestHTTPIsMadeOfItsTables(t *testing.T) {
 			}
 		}
 	}
-	if strings.Join(keys, ",") != "main,connection,auth,services" {
+	if strings.Join(keys, ",") != "main,connection,auth,services,registry" {
 		t.Errorf("http has the subsections %v", keys)
 	}
 }

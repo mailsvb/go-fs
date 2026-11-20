@@ -188,11 +188,11 @@ type settings struct {
 	// disks is the folder of the Disks page, nil while it is off or the
 	// binary was built without it.
 	disks diskFolder
-	// registryTrusts are [[http.services.registryTrust]], read, and
+	// registryTrusts are [[http.registry.trust]], read, and
 	// verifications what checking signatures against them came to.
 	registryTrusts []registryTrust
 	verifications  *verificationCache
-	// imageSigns are [[http.services.imagesign]], read, and
+	// imageSigns are [[http.registry.imagesign]], read, and
 	// imageSignChecks what checking images against them came to.
 	imageSigns      []imageSign
 	imageSignChecks *imageSignCache

@@ -104,6 +104,21 @@ enabled = false
 	}
 }
 
+// The registry keys moved from [http.services] to [http.registry] and are not
+// migrated: where an older file still sets them, they are not read, and the
+// defaults hold.
+func TestRegistryKeysOfHTTPServicesAreNotRead(t *testing.T) {
+	cfg, err := Parse([]byte("[http.services]\nregistryAnonymousRead = false\n\n" +
+		"[[http.services.imagesign]]\nname = \"mitel\"\nlabelPrefix = [\"a.b\"]\nmode = \"enforced\"\n\n" +
+		"[[http.services.registryTrust]]\nname = \"release\"\npublicKey = \"/k.pub\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.HTTP.RegistryAnonymousRead || len(cfg.HTTP.ImageSign) != 0 || len(cfg.HTTP.RegistryTrust) != 0 {
+		t.Errorf("an old key was read: %+v", cfg.HTTP.HTTPRegistry)
+	}
+}
+
 // A file that names no server starts the http server alone, on 127.0.0.1 and
 // on ports that need no privileges, so a fresh install exposes nothing.
 func TestTheDefaultsServeHTTPOnLocalhostOnly(t *testing.T) {

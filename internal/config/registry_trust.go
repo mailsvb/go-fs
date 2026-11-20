@@ -10,7 +10,7 @@ import (
 )
 
 // RegistryTrust is a signer of container images whose signatures the registry
-// checks, [[http.services.registryTrust]]. The registry verifies every signature and
+// checks, [[http.registry.trust]]. The registry verifies every signature and
 // attestation pushed next to an image against these, and its page says which
 // trust an image's signature was verified by, or that none verified it. It
 // refuses nothing: a client that cares about a signature still verifies it
@@ -53,13 +53,13 @@ type RegistryTrust struct {
 	Repositories []string `toml:"repositories,omitempty"`
 }
 
-// validateRegistryTrust checks [[http.services.registryTrust]], and reads the
+// validateRegistryTrust checks [[http.registry.trust]], and reads the
 // files, so that a key or a root the registry cannot use is refused with the
 // rest of the file rather than found out when a signature is checked.
 func (c Config) validateRegistryTrust() error {
 	names := map[string]bool{}
 	for i, trust := range c.HTTP.RegistryTrust {
-		where := fmt.Sprintf("http.services.registryTrust[%d]", i)
+		where := fmt.Sprintf("http.registry.trust[%d]", i)
 		if trust.Name == "" {
 			return fmt.Errorf("%s has no name", where)
 		}

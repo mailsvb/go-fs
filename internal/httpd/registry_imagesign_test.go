@@ -208,6 +208,33 @@ func TestImageSignModesOnPush(t *testing.T) {
 	}
 }
 
+// With verifyChain off an enforced entry needs no certificates: an image
+// signed under a CA nobody configured is taken, as long as its signature
+// matches its layers, and one that does not is still refused.
+func TestImageSignWithoutChainOnPush(t *testing.T) {
+	by := newLabelSigner(t)
+	off := false
+	server := newRegistryServer(t, func(cfg *httpConfig) {
+		cfg.ImageSign = []config.ImageSign{{Name: "mitel", LabelPrefix: []string{signPrefix},
+			Mode: config.ImageSignEnforced, VerifyChain: &off}}
+	})
+	_, res, body := server.pushSigned(t, "prod/app", "signed", "linux/amd64", "1", by, signedImage)
+	expectStatus(t, res, body, http.StatusCreated)
+	if server.logs.find("registry image signature verified") == nil {
+		t.Error("the signature was not logged as verified")
+	}
+	_, res, body = server.pushSigned(t, "prod/app", "tampered", "linux/amd64", "2", by, tampered)
+	expectDenied(t, "a tampered push", res, body, "does not match the layers")
+	_, res, body = server.pushSigned(t, "prod/app", "unsigned", "linux/amd64", "3", by, unsigned)
+	expectDenied(t, "an unsigned push", res, body, "the image is not signed for linux/amd64")
+
+	// the same entry with the chain verified refuses a signer of another CA
+	other := newLabelSigner(t)
+	reloadImageSign(t, server, imageSignEntry(other, config.ImageSignEnforced))
+	_, res, body = server.pushSigned(t, "prod/app", "chained", "linux/amd64", "4", by, signedImage)
+	expectDenied(t, "a push signed under another CA", res, body, "unknown authority")
+}
+
 func TestImageSignModesOnPull(t *testing.T) {
 	by := newLabelSigner(t)
 	server := newRegistryServer(t, func(cfg *httpConfig) {

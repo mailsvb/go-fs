@@ -104,14 +104,14 @@ the file as it was beside it as `go-fs.toml.bak`. A `basefolder` in `[ftp]`,
 `[sftp]`, `[http]` or `[tftp]` is no longer read: it is reported at startup and
 removed by the same rename.
 
-The keys of `[http]` live in four tables: `[http.main]` (`enabled`, `port`,
+The keys of `[http]` live in five tables: `[http.main]` (`enabled`, `port`,
 `address`, `enableAdminInterface`, `enableSelfUpdate`, `shareLinkSecret`,
 `trustedProxies`), `[http.connection]` (`maxConnections`, the timeouts,
 `maxUploadSize`, `maxChunkSize`, `pathsWithoutAuth`), `[http.auth]` (the
-`httpSession…` keys and the `login…` keys) and `[http.services]` (`files`, `enableS3`,
-`registryAnonymousRead`, `webdav`, `webdavClients`, `jellyfinDiscovery`,
-`sonos`, `sonosSpeakers`, and the lists `[[http.services.registryTrust]]` and
-`[[http.services.imagesign]]`). A file written for an older version sets them
+`httpSession…` keys and the `login…` keys), `[http.services]` (`files`,
+`enableS3`, `webdav`, `webdavClients`, `jellyfinDiscovery`, `sonos`,
+`sonosSpeakers`) and `[http.registry]` (`anonymousRead` and the lists
+`[[http.registry.trust]]` and `[[http.registry.imagesign]]`). A file written for an older version sets them
 directly in `[http]`. go-fs reads them from there, and at its first start moves
 each into its table with its value and the comments around it, writes
 `[http.main]` and the others where `[http]` was, and keeps the file as it was
@@ -119,6 +119,14 @@ beside it as `go-fs.toml.bak`. A key its table already sets keeps the value of
 the table, and the old line is dropped. The share links handed out and the
 browsers logged in survive the upgrade, since `shareLinkSecret` and
 `httpSessionTokenSecret` are moved like every other key.
+
+The registry keys were in `[http.services]` before they had a table of their
+own, as `registryAnonymousRead`, `[[http.services.registryTrust]]` and
+`[[http.services.imagesign]]`. They are not moved: there they are no longer
+read, so the registry takes the defaults, anonymous pulls and no signer, until
+they are written into `[http.registry]` as `anonymousRead`,
+`[[http.registry.trust]]` and `[[http.registry.imagesign]]`. An `imagesign`
+entry left behind refuses nothing, whatever its `mode`.
 
 `[[general.cleanup]]` keeps a folder from growing without bound: once an hour
 everything but the newest `keep` files in it is removed. Paths are relative to
@@ -252,7 +260,7 @@ further than its name says:
 | S3 `DeleteObject` | `allowUserFileDelete`, or `allowUserFolderDelete` for a key ending in `/` |
 | S3 `CopyObject`, `UploadPartCopy` | `allowUserFileRetrieve` on the source, and create or overwrite on the target |
 | Registry push, tag and delete | `registry`; the rights above do not apply |
-| Registry pull | nothing while `http.services.registryAnonymousRead` is on, `registry` when it is off |
+| Registry pull | nothing while `http.registry.anonymousRead` is on, `registry` when it is off |
 
 Anonymous access is not a setting of its own, just an account that takes no
 password:

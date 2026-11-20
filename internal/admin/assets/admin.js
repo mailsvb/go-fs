@@ -1980,12 +1980,13 @@ function span(text, className) {
   return element;
 }
 
-// blank is a new record with every key at its zero value, which is what an
-// unset key means in the file.
+// blank is a new record with every key at what an unset key means in the
+// file: its zero value, or the default of a switch that is on unless it is
+// turned off.
 function blank(fields) {
   const record = {};
   fields.forEach((field) => {
-    if (field.kind === "bool") record[field.key] = false;
+    if (field.kind === "bool") record[field.key] = field.default === true;
     else if (field.kind === "int") record[field.key] = 0;
     else if (field.kind === "lines") record[field.key] = [];
     else record[field.key] = "";

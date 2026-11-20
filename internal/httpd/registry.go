@@ -311,7 +311,7 @@ func registryRead(method string) bool {
 // token that sets allowRegistry is taken where a registry account is, as the
 // password or as a bearer of its own.
 //
-// A pull is public while http.services.registryAnonymousRead is on; everything else,
+// A pull is public while http.registry.anonymousRead is on; everything else,
 // the status of an upload included, takes an account that sets registry.
 // /v2/ itself challenges every request
 // that carries nothing, public or not: that answer is where a client learns to

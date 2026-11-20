@@ -107,11 +107,22 @@ func imageConfig(t *testing.T, diffIDs []string, labels map[string]string) []byt
 
 func labelTrust(t *testing.T, name string, prefixes []string, material ...[]byte) *LabelTrust {
 	t.Helper()
+	return newTestLabelTrust(t, name, prefixes, true, material...)
+}
+
+// signatureOnly is a trust that builds no chain.
+func signatureOnly(t *testing.T, name string, prefixes []string, material ...[]byte) *LabelTrust {
+	t.Helper()
+	return newTestLabelTrust(t, name, prefixes, false, material...)
+}
+
+func newTestLabelTrust(t *testing.T, name string, prefixes []string, verifyChain bool, material ...[]byte) *LabelTrust {
+	t.Helper()
 	var all []byte
 	for _, m := range material {
 		all = append(all, m...)
 	}
-	trust, err := NewLabelTrust(name, prefixes, all)
+	trust, err := NewLabelTrust(name, prefixes, all, verifyChain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +229,87 @@ func TestVerifyLabelsExpiredLeaf(t *testing.T) {
 	}
 }
 
+func TestVerifyLabelsWithoutChain(t *testing.T) {
+	const prefix = "org.mitel.imagesign"
+	diffIDs := []string{"sha256:" + strings.Repeat("a", 64), "sha256:" + strings.Repeat("b", 64)}
+	tampered := append([]string{"sha256:" + strings.Repeat("c", 64)}, diffIDs...)
+	// signed by a certificate that expired yesterday, under a CA nobody
+	// configured
+	pki := newLabelPKI(t, time.Now().Add(-time.Minute))
+	other := newLabelPKI(t, time.Now().Add(24*time.Hour))
+	signed := pki.labels(prefix, diffIDs)
+	bare := map[string]string{}
+	for k, v := range signed {
+		if k != prefix+".certchain" {
+			bare[k] = v
+		}
+	}
+
+	anyKey := signatureOnly(t, "any", []string{prefix})
+	byKey := signatureOnly(t, "pinned", []string{prefix}, pubPEM(t, pki.leaf.PublicKey))
+	byOtherKey := signatureOnly(t, "other", []string{prefix}, pubPEM(t, other.leaf.PublicKey))
+	// a CA plays no part: the image is not issued by it, and is taken
+	byOtherCA := signatureOnly(t, "ca", []string{prefix}, certPEM(other.root.cert))
+
+	cases := []struct {
+		name    string
+		diffIDs []string
+		labels  map[string]string
+		trust   *LabelTrust
+		want    LabelOutcome
+		signer  string
+		err     string
+	}{
+		{"no certificates, certchain", diffIDs, signed, anyKey, LabelValid, "image-signer sha256:", ""},
+		{"a CA that did not issue it", diffIDs, signed, byOtherCA, LabelValid, "image-signer sha256:", ""},
+		{"pinned key, certchain", diffIDs, signed, byKey, LabelValid, "image-signer sha256:", ""},
+		{"pinned key, no certchain", diffIDs, bare, byKey, LabelValid, "Ed25519 key sha256:", ""},
+		{"another key, certchain", diffIDs, signed, byOtherKey, LabelInvalid, "", "none of the trusted keys"},
+		{"another key, no certchain", diffIDs, bare, byOtherKey, LabelInvalid, "", "under none of the trusted keys"},
+		{"no key, no certchain", diffIDs, bare, anyKey, LabelInvalid, "", "no Ed25519 public key is configured"},
+		{"tampered, certchain", tampered, signed, anyKey, LabelInvalid, "", "does not match the layers"},
+		{"tampered, pinned key, certchain", tampered, signed, byKey, LabelInvalid, "", "does not match the layers"},
+		{"tampered, pinned key, no certchain", tampered, bare, byKey, LabelInvalid, "", "under none of the trusted keys"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := VerifyLabels(imageConfig(t, c.diffIDs, c.labels), []*LabelTrust{c.trust})
+			if got.Outcome != c.want {
+				t.Fatalf("outcome %v (%s), want %v", got.Outcome, got.Err, c.want)
+			}
+			if c.signer != "" && !strings.HasPrefix(got.Signer, c.signer) {
+				t.Fatalf("signer %q, want it to start with %q", got.Signer, c.signer)
+			}
+			if c.err != "" && !strings.Contains(got.Err, c.err) {
+				t.Fatalf("error %q, want it to say %q", got.Err, c.err)
+			}
+		})
+	}
+
+	// the same image with the chain verified is refused for its expired
+	// certificate, and for its missing certchain
+	if got := VerifyLabels(imageConfig(t, diffIDs, signed), []*LabelTrust{labelTrust(t, "ca", []string{prefix}, certPEM(pki.root.cert))}); got.Outcome != LabelInvalid {
+		t.Fatalf("an expired certificate with the chain verified: %v", got.Outcome)
+	}
+	if got := VerifyLabels(imageConfig(t, diffIDs, bare), []*LabelTrust{labelTrust(t, "key", []string{prefix}, pubPEM(t, pki.leaf.PublicKey))}); got.Outcome != LabelInvalid ||
+		!strings.Contains(got.Err, "certchain is missing") {
+		t.Fatalf("no certchain with the chain verified: %v %s", got.Outcome, got.Err)
+	}
+}
+
+func TestNewLabelTrustEmptyMaterial(t *testing.T) {
+	if _, err := NewLabelTrust("x", []string{"a.b"}, nil, true); err == nil {
+		t.Fatal("no material with the chain verified is taken")
+	}
+	trust, err := NewLabelTrust("x", []string{"a.b"}, []byte("  \n"), false)
+	if err != nil || trust.Roots != nil || len(trust.Keys) != 0 || trust.VerifyChain {
+		t.Fatalf("no material without the chain: %+v %v", trust, err)
+	}
+	if _, err := NewLabelTrust("x", []string{"a.b"}, []byte("junk"), false); err == nil {
+		t.Fatal("material that is no PEM is taken without the chain")
+	}
+}
+
 func TestVerifyLabelsNonEd25519Leaf(t *testing.T) {
 	const prefix = "org.mitel.imagesign"
 	pki := newLabelPKI(t, time.Now().Add(24*time.Hour))
@@ -237,11 +329,14 @@ func TestVerifyLabelsNonEd25519Leaf(t *testing.T) {
 }
 
 func TestVerifyLabelsHostileConfig(t *testing.T) {
-	trust := &LabelTrust{Name: "x", Prefixes: []string{"a.b"}}
-	for _, config := range []string{"", "null", "[]", `{"config":{"Labels":{"a.b.signature":"x"}}}`, `{"rootfs":7}`} {
-		got := VerifyLabels([]byte(config), []*LabelTrust{trust})
-		if got.Outcome == LabelValid {
-			t.Fatalf("%q verified", config)
+	for _, verifyChain := range []bool{true, false} {
+		trust := &LabelTrust{Name: "x", Prefixes: []string{"a.b"}, VerifyChain: verifyChain}
+		for _, config := range []string{"", "null", "[]", `{"config":{"Labels":{"a.b.signature":"x"}}}`,
+			`{"config":{"Labels":{"a.b.signature":"AAAA","a.b.certchain":"AAAA"}}}`, `{"rootfs":7}`} {
+			got := VerifyLabels([]byte(config), []*LabelTrust{trust})
+			if got.Outcome == LabelValid {
+				t.Fatalf("%q verified, verifyChain %v", config, verifyChain)
+			}
 		}
 	}
 }

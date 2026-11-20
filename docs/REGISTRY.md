@@ -15,8 +15,8 @@ baseFolderRegistry = "/var/lib/go-fs/registry"
 [http.main]
 enabled = true
 
-[http.services]
-registryAnonymousRead = true
+[http.registry]
+anonymousRead = true
 
 [[users]]
 username = "ci"
@@ -35,7 +35,7 @@ docker pull host:8443/team/app:1.0
 |---|---|
 | Endpoint | `host:8443` (or the plain port), under `/v2/` |
 | Storage | `general.baseFolderRegistry`, which nothing else may serve |
-| Pulling | anyone while `http.services.registryAnonymousRead = true` (the default), otherwise an account that sets `registry` or a `[[tokens]]` entry that sets `allowRegistry` |
+| Pulling | anyone while `http.registry.anonymousRead = true` (the default), otherwise an account that sets `registry` or a `[[tokens]]` entry that sets `allowRegistry` |
 | Pushing, tagging, deleting | an account that sets `registry`, or a token that sets `allowRegistry` |
 | Credentials | a token from `/v2/_token`, fetched with the account's username and password as `docker login` does, or HTTP Basic on every request; a go-fs bearer token goes where the password goes, or as `Authorization: Bearer` on every request |
 
@@ -224,7 +224,7 @@ read are kept under `baseFolderRegistry/_uploads` while the import runs and
 removed when it ends.
 
 Who may see the page follows who may pull. With
-`http.services.registryAnonymousRead = false` a visitor is sent to the login page
+`http.registry.anonymousRead = false` a visitor is sent to the login page
 first. The form accepts accounts that set only `registry` wherever it is
 reached, also on a server where no account sets `http`. Such an account lands
 on the registry page after logging in, and its session reaches nothing in the
@@ -305,21 +305,21 @@ elsewhere with `COSIGN_REPOSITORY`. Removing one artifact can leave another
 dangling, a signature of an SBOM say, which goes in the same run. An
 untagged image that is still there keeps its artifacts, as it keeps its blobs.
 
-**Verifying signatures.** Each `[[http.services.registryTrust]]` table names a
+**Verifying signatures.** Each `[[http.registry.trust]]` table names a
 signer the registry checks signatures against, for every repository or for
 those its `repositories` patterns name (`*` stands for anything, slashes
 included):
 
 ```toml
-[[http.services.registryTrust]]
+[[http.registry.trust]]
 name = "release"
 publicKey = "/var/lib/go-fs/cosign.pub"           # cosign sign --key, cosign attest --key
 
-[[http.services.registryTrust]]
+[[http.registry.trust]]
 name = "notary"
 certificates = "/var/lib/go-fs/notation-ca.pem"   # notation sign
 
-[[http.services.registryTrust]]
+[[http.registry.trust]]
 name = "github"
 trustedRoot = "/var/lib/go-fs/trusted_root.json"  # keyless: cosign 3, GitHub attestations
 identity = "https://github.com/acme/app/.github/workflows/release.yml@refs/tags/*"
@@ -377,11 +377,11 @@ with `umoci config`, which adds no layer:
 
 `LAYER_HASH` is the SHA-256 of the image's `rootfs.diff_ids`, one per line
 with a newline after the last, as 64 hex digits, and that string is what is
-signed. Each `[[http.services.imagesign]]` table names a signer of such
+signed. Each `[[http.registry.imagesign]]` table names a signer of such
 images:
 
 ```toml
-[[http.services.imagesign]]
+[[http.registry.imagesign]]
 name = "mitel"
 labelPrefix = ["org.mitel.imagesign"]
 certificates = """
@@ -410,9 +410,20 @@ repositories = ["prod/*"]
   `PUBLIC KEY` is an Ed25519 key that is trusted as it is: a signing
   certificate that carries it is taken whoever issued it and whenever it
   expires. Base64 of the PEM works too, and the admin page has a box to paste
-  it into, or a file to upload, and says what it holds.
+  it into, or a file to upload, and says what it holds. It is required
+  unless `verifyChain = false`.
+- **`verifyChain`**, on unless it is set to `false`, builds the chain of
+  trust from the certificate in `<prefix>.certchain` to a CA of
+  `certificates`. With `false`, in every mode, only the signature itself is
+  checked, and both `certificates` and the `.certchain` label become
+  optional: an image that carries a certificate is checked with its key,
+  which has to be one of the `PUBLIC KEY`s of `certificates` where it lists
+  any, whoever issued the certificate and whenever it expires; an image that
+  carries none is checked with those keys. CA certificates play no part
+  then. With no public key listed, any signature that matches the layers is
+  taken, which proves the layers unchanged but not who signed them.
 - **`repositories`** limits the signer to the repositories it names, as for
-  `registryTrust`.
+  `trust`.
 - **`mode`** says what the registry refuses:
 
 | mode | signature verifies | no signature | signature does not verify |

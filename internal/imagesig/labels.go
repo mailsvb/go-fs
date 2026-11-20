@@ -36,9 +36,17 @@ import (
 // signature is looked for under, the root certificates its certificate has
 // to chain to, and the Ed25519 keys that are trusted as they are, whatever
 // certificate carries them.
+//
+// Without VerifyChain no chain is built: the signature alone is checked, with
+// the key of the signing certificate the image carries, which has to be one
+// of Keys where there are any, or, for an image that carries no certificate,
+// with Keys themselves. Roots play no part then.
 type LabelTrust struct {
 	Name     string
 	Prefixes []string
+	// VerifyChain builds the chain of trust from the signing certificate
+	// the image carries to one of Roots, unless its key is one of Keys.
+	VerifyChain bool
 	// Roots are the CAs a signing certificate has to chain to, through
 	// the intermediates the image carries. Nil trusts no CA.
 	Roots *x509.CertPool
@@ -145,13 +153,18 @@ func ParseLabelTrustMaterial(b []byte) ([]*x509.Certificate, []ed25519.PublicKey
 }
 
 // NewLabelTrust builds a LabelTrust from its PEM material, as
-// ParseLabelTrustMaterial reads it.
-func NewLabelTrust(name string, prefixes []string, material []byte) (*LabelTrust, error) {
+// ParseLabelTrustMaterial reads it. Without verifyChain the material may be
+// empty, which trusts every key whose signature matches the layers.
+func NewLabelTrust(name string, prefixes []string, material []byte, verifyChain bool) (*LabelTrust, error) {
+	t := &LabelTrust{Name: name, Prefixes: prefixes, VerifyChain: verifyChain}
+	if !verifyChain && strings.TrimSpace(string(material)) == "" {
+		return t, nil
+	}
 	roots, keys, err := ParseLabelTrustMaterial(material)
 	if err != nil {
 		return nil, err
 	}
-	t := &LabelTrust{Name: name, Prefixes: prefixes, Keys: keys}
+	t.Keys = keys
 	if len(roots) > 0 {
 		t.Roots = x509.NewCertPool()
 		for _, c := range roots {
@@ -273,11 +286,18 @@ func verifyLabelSignature(diffIDs []string, labels map[string]string, prefix str
 	switch {
 	case sigB64 == "":
 		return "", fmt.Errorf("the label %s.signature is missing", prefix)
-	case chainB64 == "":
+	case chainB64 == "" && trust.VerifyChain:
 		return "", fmt.Errorf("the label %s.certchain is missing", prefix)
 	}
 	if alg := labels[prefix+".alg"]; alg != "" && !strings.EqualFold(alg, "ed25519") {
 		return "", fmt.Errorf("the signature is made with %q, not ed25519", alg)
+	}
+	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(sigB64))
+	if err != nil {
+		return "", fmt.Errorf("the label %s.signature is not base64", prefix)
+	}
+	if !trust.VerifyChain {
+		return verifySignatureOnly(diffIDs, sig, chainB64, prefix, trust)
 	}
 	leaf, intermediates, err := parseLabelChain(chainB64)
 	if err != nil {
@@ -301,14 +321,45 @@ func verifyLabelSignature(diffIDs []string, labels map[string]string, prefix str
 			return "", fmt.Errorf("the signing certificate %q: %w", certName(leaf), err)
 		}
 	}
-	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(sigB64))
-	if err != nil {
-		return "", fmt.Errorf("the label %s.signature is not base64", prefix)
-	}
 	if !ed25519.Verify(pub, []byte(LayerHash(diffIDs)), sig) {
 		return "", errors.New("the signature does not match the layers of the image")
 	}
 	return signer, nil
+}
+
+// verifySignatureOnly checks a signature without building a chain: with the
+// key of the signing certificate where the image carries one, which has to be
+// one of the trusted keys where there are any, and with the trusted keys
+// themselves where it carries none. Who issued the certificate and when it
+// expires play no part.
+func verifySignatureOnly(diffIDs []string, sig []byte, chainB64, prefix string, trust *LabelTrust) (string, error) {
+	hash := []byte(LayerHash(diffIDs))
+	if chainB64 == "" {
+		if len(trust.Keys) == 0 {
+			return "", fmt.Errorf("the label %s.certchain is missing, and no Ed25519 public key is configured to check the signature with", prefix)
+		}
+		for _, key := range trust.Keys {
+			if ed25519.Verify(key, hash, sig) {
+				return "Ed25519 key " + keyFingerprint(key), nil
+			}
+		}
+		return "", errors.New("the signature matches the layers of the image under none of the trusted keys")
+	}
+	leaf, _, err := parseLabelChain(chainB64)
+	if err != nil {
+		return "", err
+	}
+	pub, ok := leaf.PublicKey.(ed25519.PublicKey)
+	if !ok {
+		return "", fmt.Errorf("the signing certificate %q holds %s, not an Ed25519 key", certName(leaf), keyType(leaf.PublicKey))
+	}
+	if len(trust.Keys) > 0 && !pinned(trust.Keys, pub) {
+		return "", fmt.Errorf("the signing key of %q is none of the trusted keys", certName(leaf))
+	}
+	if !ed25519.Verify(pub, hash, sig) {
+		return "", errors.New("the signature does not match the layers of the image")
+	}
+	return certName(leaf) + " " + keyFingerprint(pub), nil
 }
 
 func pinned(keys []ed25519.PublicKey, pub ed25519.PublicKey) bool {

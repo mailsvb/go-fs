@@ -109,7 +109,7 @@ func TestSchemaMarksTheKeyMaterial(t *testing.T) {
 		for _, table := range sec.Tables {
 			for _, field := range table.Fields {
 				path := sec.Key + "." + table.Key + "." + field.Key
-				if path == "http.services.imagesign.certificates" {
+				if path == "http.registry.imagesign.certificates" {
 					if field.Upload != config.KindImageSignTrust || !field.NoGenerate || field.Kind != kindText {
 						t.Errorf("%s is %+v", path, field)
 					}

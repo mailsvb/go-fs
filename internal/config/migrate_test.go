@@ -27,7 +27,7 @@ reloadConfig = true
 [http]
 enabled = true
 registryBaseFolder = "/srv/registry"
-registryAnonymousRead = true
+enableS3 = true
 `,
 			want: `# the files
 [general]
@@ -39,13 +39,13 @@ reloadConfig = true
 enabled = true
 
 [http.services]
-registryAnonymousRead = true
+enableS3 = true
 `,
 			changes: []string{
 				"general.basefolder renamed to general.baseFolderFiles",
 				"http.registryBaseFolder moved to general.baseFolderRegistry",
 				"http.enabled moved to http.main.enabled",
-				"http.registryAnonymousRead moved to http.services.registryAnonymousRead",
+				"http.enableS3 moved to http.services.enableS3",
 			},
 		},
 		{
@@ -614,8 +614,10 @@ func TestMigrateMovesTheHTTPKeysOfTheLastRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// keys that came after the tables were never directly in [http]
-	newer := map[string]bool{"files": true}
+	// keys that came after the tables were never directly in [http], and
+	// registryAnonymousRead is not moved to http.registry.anonymousRead: it
+	// stays in [http], where nothing reads it
+	newer := map[string]bool{"files": true, "anonymousRead": true}
 	moved := 0
 	for _, key := range httpKeys {
 		if !newer[key.key] {
@@ -650,9 +652,9 @@ func TestMigrateMovesTheHTTPKeysOfTheLastRelease(t *testing.T) {
 	if setsOldKeys(data) || len(RetiredKeys(data)) != 0 {
 		t.Errorf("old keys are left: %q", RetiredKeys(data))
 	}
-	for _, table := range []string{"[http]", "[http.main]", "[http.connection]", "[http.auth]", "[http.services]"} {
+	for _, table := range []string{"[http]", "[http.main]", "[http.connection]", "[http.auth]", "[http.services]", "[http.registry]"} {
 		want := 1
-		if table == "[http]" {
+		if table == "[http.registry]" {
 			want = 0
 		}
 		if got := strings.Count(string(data), "\n"+table+"\n"); got != want {

@@ -12,7 +12,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/imagesig"
 )
 
-// registryTrust is a [[http.services.registryTrust]] entry, read: what it
+// registryTrust is a [[http.registry.trust]] entry, read: what it
 // verifies signatures with, and the repositories it is trusted for.
 type registryTrust struct {
 	trust *imagesig.Trust
@@ -29,7 +29,7 @@ func loadRegistryTrusts(entries []config.RegistryTrust) ([]registryTrust, error)
 		trust, err := imagesig.LoadTrust(entry.Name, entry.PublicKey, entry.Certificates, entry.TrustedRoot,
 			entry.Identity, entry.Issuer)
 		if err != nil {
-			return nil, fmt.Errorf("http.services.registryTrust[%d] %q: %w", i, entry.Name, err)
+			return nil, fmt.Errorf("http.registry.trust[%d] %q: %w", i, entry.Name, err)
 		}
 		loaded := registryTrust{trust: trust}
 		for _, pattern := range entry.Repositories {

@@ -30,7 +30,7 @@ import (
 // is served on whatever folder its button was pressed in, which is where its
 // Files button leads back to.
 //
-// Who may look is what may pull: anyone while registryAnonymousRead is on,
+// Who may look is what may pull: anyone while http.registry.anonymousRead is on,
 // and otherwise a session of an account that sets registry. Deleting a tag
 // takes that session whatever the setting says, since it is what pushing
 // takes. A session is the only credential it reads, as for the admin
@@ -487,7 +487,7 @@ type registryTag struct {
 	// and of each of its platforms
 	artifacts []registryArtifact
 	// signs are what checking the label signatures of the image, or of
-	// each of its platforms, against [[http.services.imagesign]] came to
+	// each of its platforms, against [[http.registry.imagesign]] came to
 	signs []imageSignCheck
 }
 

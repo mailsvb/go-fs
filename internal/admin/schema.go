@@ -91,6 +91,11 @@ type Field struct {
 	// anyone type into, because it is made by the server, a token's hash, or
 	// changed in a dialog of its own, the login of a remote server.
 	ReadOnly bool `json:"readOnly,omitempty"`
+	// Default is what a switch that is not set in the file means, from the
+	// default tag of its field: false for every right, which is denied
+	// unless it is granted, true for verifyChain. A new record starts with
+	// it.
+	Default bool `json:"default,omitempty"`
 	// Choices are the values a text key may take, from the choices tag of
 	// its field, which the page offers as a list to pick from rather than a
 	// box to type into.
@@ -367,6 +372,9 @@ func newField(inner reflect.StructField, name, kind string, index int, path, sou
 		made.NoGenerate = true
 		made.Placeholder = placeholder
 	}
+	if kind == kindBool && inner.Type.Kind() == reflect.Pointer {
+		made.Default = inner.Tag.Get("default") == "true"
+	}
 	if choices := inner.Tag.Get("choices"); choices != "" && kind == kindText {
 		made.Choices = strings.Split(choices, ",")
 	}
@@ -436,9 +444,9 @@ func material(name string) string {
 
 // materialAt is key material that its name alone does not give away, by its
 // path in the file: the certificates of an imagesign signer, where the
-// certificates of a registryTrust are a path to a file.
+// certificates of a trust are a path to a file.
 var materialAt = map[string]string{
-	"http.services.imagesign.certificates": config.KindImageSignTrust,
+	"http.registry.imagesign.certificates": config.KindImageSignTrust,
 }
 
 // uploadOnly is the key material go-fs must not make up, by its path in the
@@ -450,8 +458,8 @@ var uploadOnly = map[string]string{
 	"nbd.key":       "required: the private key of that certificate",
 	"nbd.clientCA":  "required: the certificate of the CA client certificates are issued by",
 	"nbd.clientCRL": "empty: no client certificate is revoked",
-	"http.services.imagesign.certificates": "required: paste the PEM of the CA certificates and Ed25519 " +
-		"public keys signatures are checked against, or upload a file",
+	"http.registry.imagesign.certificates": "required unless verifyChain is off: paste the PEM of the CA " +
+		"certificates and Ed25519 public keys signatures are checked against, or upload a file",
 }
 
 // pairUp gives every certificate in a section the name of its private key, so
@@ -549,7 +557,7 @@ func (s Section) summaries(path string, held map[string]any, into map[string]str
 }
 
 // summaries adds the descriptions of the key material in the records of a
-// list, keyed by the record's place in it: "http.services.imagesign.0.certificates".
+// list, keyed by the record's place in it: "http.registry.imagesign.0.certificates".
 func (t Table) summaries(path string, records []any, into map[string]string) {
 	for i, raw := range records {
 		record, ok := raw.(map[string]any)
@@ -578,7 +586,7 @@ func (s Section) values(from reflect.Value) map[string]any {
 			values[field.Key] = field.fixed
 			continue
 		}
-		values[field.Key] = read(from.Field(field.index))
+		values[field.Key] = field.read(from.Field(field.index))
 	}
 	for _, table := range s.Tables {
 		values[table.Key] = table.records(from.Field(table.index))
@@ -592,7 +600,7 @@ func (t Table) records(slice reflect.Value) []any {
 	for i := range slice.Len() {
 		record := make(map[string]any, len(t.Fields))
 		for _, field := range t.Fields {
-			record[field.Key] = read(slice.Index(i).Field(field.index))
+			record[field.Key] = field.read(slice.Index(i).Field(field.index))
 		}
 		records = append(records, record)
 	}
@@ -600,12 +608,15 @@ func (t Table) records(slice reflect.Value) []any {
 }
 
 // read turns one field into a value the browser can hold. A pointer to a bool
-// that is unset reads as false: unset and false mean the same thing for every
-// one of them, because a permission is denied unless it is granted.
-func read(value reflect.Value) any {
+// that is unset reads as its Default: false for a permission, which is denied
+// unless it is granted, true for a switch that is on unless it is turned off.
+func (f Field) read(value reflect.Value) any {
 	switch value.Kind() {
 	case reflect.Pointer:
-		return !value.IsNil() && value.Elem().Bool()
+		if value.IsNil() {
+			return f.Default
+		}
+		return value.Elem().Bool()
 	case reflect.Slice:
 		lines := make([]string, 0, value.Len())
 		for i := range value.Len() {

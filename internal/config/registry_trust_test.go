@@ -67,7 +67,7 @@ func TestRegistryTrust(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("error %v, want %q", err, c.want)
 			}
-			if err != nil && !strings.Contains(err.Error(), "http.services.registryTrust[") {
+			if err != nil && !strings.Contains(err.Error(), "http.registry.trust[") {
 				t.Errorf("the error does not say where: %v", err)
 			}
 		})
@@ -75,8 +75,8 @@ func TestRegistryTrust(t *testing.T) {
 }
 
 func TestRegistryTrustRoundTrips(t *testing.T) {
-	file := []byte("[general]\nbaseFolderFiles = \"/x\"\n\n[http.services]\nregistryAnonymousRead = true\n\n" +
-		"[[http.services.registryTrust]]\nname = \"release\"\npublicKey = \"/var/lib/go-fs/cosign.pub\"\n" +
+	file := []byte("[general]\nbaseFolderFiles = \"/x\"\n\n[http.registry]\nanonymousRead = true\n\n" +
+		"[[http.registry.trust]]\nname = \"release\"\npublicKey = \"/var/lib/go-fs/cosign.pub\"\n" +
 		"repositories = [\"acme/*\"]\n")
 	cfg, err := Parse(file)
 	if err != nil {

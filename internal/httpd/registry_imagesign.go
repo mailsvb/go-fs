@@ -15,7 +15,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/imagesig"
 )
 
-// imageSign is a [[http.services.imagesign]] entry, read: who may sign an
+// imageSign is a [[http.registry.imagesign]] entry, read: who may sign an
 // image in its labels, what the registry refuses for it, and the
 // repositories it is for.
 type imageSign struct {
@@ -33,7 +33,7 @@ func loadImageSigns(entries []config.ImageSign) ([]imageSign, error) {
 	for i, entry := range entries {
 		trust, err := config.LoadImageSign(entry)
 		if err != nil {
-			return nil, fmt.Errorf("http.services.imagesign[%d] %q: %w", i, entry.Name, err)
+			return nil, fmt.Errorf("http.registry.imagesign[%d] %q: %w", i, entry.Name, err)
 		}
 		loaded := imageSign{trust: trust, mode: entry.ImageSignMode()}
 		for _, pattern := range entry.Repositories {

@@ -65,6 +65,8 @@ func TestImageSign(t *testing.T) {
 		{"a prefix with a space", func(s *ImageSign) { s.LabelPrefix = []string{"org.mitel image"} }, "no reverse-DNS name"},
 		{"a prefix twice", func(s *ImageSign) { s.LabelPrefix = []string{"a.b", "A.B"} }, "listed twice"},
 		{"no certificates", func(s *ImageSign) { s.Certificates = " " }, "needs certificates"},
+		{"no certificates, the chain verified", func(s *ImageSign) { s.Certificates, s.VerifyChain = "", ptr(true) }, "needs certificates"},
+		{"garbage certificates without the chain", func(s *ImageSign) { s.Certificates, s.VerifyChain = "junk", ptr(false) }, "certificates"},
 		{"garbage certificates", func(s *ImageSign) { s.Certificates = "not a certificate" }, "certificates"},
 		{"a leaf for a CA", func(s *ImageSign) { s.Certificates = string(ca.Server(t, "x").CertPEM) }, "not a CA's"},
 		{"an unknown mode", func(s *ImageSign) { s.Mode = "strict" }, "none of optional, mandatory and enforced"},
@@ -80,23 +82,63 @@ func TestImageSign(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Errorf("error %v, want %q", err, c.want)
 			}
-			if err != nil && !strings.Contains(err.Error(), "http.services.imagesign[") {
+			if err != nil && !strings.Contains(err.Error(), "http.registry.imagesign[") {
 				t.Errorf("the error does not say where: %v", err)
 			}
 		})
 	}
 }
 
+func ptr[T any](v T) *T { return &v }
+
+func TestImageSignWithoutChain(t *testing.T) {
+	folder := t.TempDir()
+	key := ed25519PEM(t)
+	ca := testpki.NewCA(t, "oci-signing-ca")
+	for _, entry := range []ImageSign{
+		{Name: "any", LabelPrefix: []string{"org.mitel.imagesign"}, VerifyChain: ptr(false), Mode: "enforced"},
+		{Name: "keyed", LabelPrefix: []string{"org.mitel.imagesign"}, VerifyChain: ptr(false), Certificates: key + string(ca.CertPEM)},
+	} {
+		cfg := servingConfig(folder)
+		cfg.HTTP.ImageSign = []ImageSign{entry}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("%s: %v", entry.Name, err)
+		}
+		trust, err := LoadImageSign(entry)
+		if err != nil || trust.VerifyChain || entry.ChainVerified() {
+			t.Fatalf("%s: load = %+v, %v", entry.Name, trust, err)
+		}
+		if entry.Certificates != "" && len(trust.Keys) != 1 {
+			t.Errorf("%s: keys = %d", entry.Name, len(trust.Keys))
+		}
+	}
+	if !(ImageSign{}).ChainVerified() || !(ImageSign{VerifyChain: ptr(true)}).ChainVerified() {
+		t.Error("the chain is verified unless verifyChain is false")
+	}
+	trust, err := LoadImageSign(ImageSign{Name: "x", LabelPrefix: []string{"a.b"}, Certificates: key})
+	if err != nil || !trust.VerifyChain {
+		t.Errorf("unset verifyChain: %+v, %v", trust, err)
+	}
+}
+
 func TestImageSignRoundTrips(t *testing.T) {
 	ca := testpki.NewCA(t, "oci-signing-ca")
-	file := []byte("[general]\nbaseFolderFiles = \"/x\"\n\n[http.services]\nregistryAnonymousRead = true\n\n" +
-		"[[http.services.imagesign]]\nname = \"mitel\"\nlabelPrefix = [\"org.mitel.imagesign\"]\n" +
-		"certificates = '''\n" + string(ca.CertPEM) + "'''\nmode = \"mandatory\"\nrepositories = [\"prod/*\"]\n")
+	file := []byte("[general]\nbaseFolderFiles = \"/x\"\n\n[http.registry]\nanonymousRead = false\n\n" +
+		"[[http.registry.imagesign]]\nname = \"mitel\"\nlabelPrefix = [\"org.mitel.imagesign\"]\n" +
+		"certificates = '''\n" + string(ca.CertPEM) + "'''\nmode = \"mandatory\"\nrepositories = [\"prod/*\"]\n" +
+		"\n[[http.registry.imagesign]]\nname = \"bare\"\nlabelPrefix = [\"org.example.sign\"]\nverifyChain = false\n")
 	cfg, err := Parse(file)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cfg.HTTP.RegistryAnonymousRead {
+		t.Error("http.registry.anonymousRead = false is not read")
+	}
 	signers := cfg.HTTP.ImageSign
+	if len(signers) != 2 || signers[1].ChainVerified() || !signers[0].ChainVerified() {
+		t.Fatalf("verifyChain = %+v", signers)
+	}
+	signers = signers[:1]
 	if len(signers) != 1 || signers[0].Name != "mitel" || signers[0].ImageSignMode() != ImageSignMandatory ||
 		!strings.HasPrefix(signers[0].Certificates, "-----BEGIN CERTIFICATE-----") || len(signers[0].Repositories) != 1 {
 		t.Fatalf("imagesign = %+v", signers)
