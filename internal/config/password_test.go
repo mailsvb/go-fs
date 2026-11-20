@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,8 @@ func setPasswordIn(t *testing.T, body, name, password string) (string, error) {
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	if info, _ := os.Stat(path); err == nil && info.Mode().Perm() != 0o640 {
+	// Windows has no such bits to keep: the mode it reports is synthesised
+	if info, _ := os.Stat(path); err == nil && runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 {
 		t.Errorf("mode = %v, want 0640", info.Mode().Perm())
 	}
 	return string(written), err
