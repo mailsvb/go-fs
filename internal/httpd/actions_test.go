@@ -330,6 +330,60 @@ func TestListingOffersDeletePerRow(t *testing.T) {
 	}
 }
 
+// The box that ticks a row for deleting several at once is on the rows the
+// account may delete and on no other, and the heading and the header carry
+// what acts on them only where the account may delete something.
+func TestListingOffersPickingPerRow(t *testing.T) {
+	server := newServer(t, func(cfg *httpConfig) {
+		files := fullUser("files", "pw")
+		files.AllowUserFolderDelete = new(false)
+		folders := fullUser("folders", "pw")
+		folders.AllowUserFileDelete = new(false)
+		neither := fullUser("neither", "pw")
+		neither.AllowUserFileDelete = new(false)
+		neither.AllowUserFolderDelete = new(false)
+		cfg.Users = []config.User{files, folders, neither}
+		cfg.PathsWithoutAuth = nil
+	})
+	server.write(t, "one.txt", "x")
+	server.mkdir(t, "sub")
+
+	box := func(body, name string) bool {
+		row := regexp.MustCompile(`(?s)<tr data-name="` + regexp.QuoteMeta(name) + `"[^>]*>.*?</tr>`).FindString(body)
+		if row == "" {
+			t.Fatalf("no row for %q in:\n%s", name, body)
+		}
+		return strings.Contains(row, `class="pick"`)
+	}
+	tools := []string{`id="pick-all"`, `id="delete-picked"`, `id="clear-picked"`}
+	for _, c := range []struct {
+		user         string
+		file, folder bool
+	}{
+		{"files", true, false},
+		{"folders", false, true},
+		{"neither", false, false},
+	} {
+		body := bodyOf(t, basic(t, server, http.MethodGet, "/", c.user, "pw", nil))
+		if box(body, "one.txt") != c.file || box(body, "sub") != c.folder {
+			t.Errorf("%s: the file has a box %v, the folder %v; want %v and %v",
+				c.user, box(body, "one.txt"), box(body, "sub"), c.file, c.folder)
+		}
+		for _, tool := range tools {
+			if strings.Contains(body, tool) != (c.file || c.folder) {
+				t.Errorf("%s: %q present = %v", c.user, tool, !(c.file || c.folder))
+			}
+		}
+		// every row has as many cells as the heading, picked or not
+		heads := strings.Count(regexp.MustCompile(`(?s)<thead>.*?</thead>`).FindString(body), "<th ")
+		for _, row := range regexp.MustCompile(`(?s)<tr data-name=.*?</tr>`).FindAllString(body, -1) {
+			if cells := strings.Count(row, "<td"); cells != heads {
+				t.Errorf("%s: a row has %d cells under %d headings:\n%s", c.user, cells, heads, row)
+			}
+		}
+	}
+}
+
 // A public listing offers what a public request may do, which is to read: the
 // writes need an account however public the folder is.
 func TestListingFollowsWhatAPublicRequestMayDo(t *testing.T) {
@@ -337,7 +391,7 @@ func TestListingFollowsWhatAPublicRequestMayDo(t *testing.T) {
 	server.write(t, "one.txt", "x")
 
 	_, body := get(t, server, "/")
-	for _, gone := range []string{`id="new-folder"`, `data-do="rename"`, `data-do="delete"`} {
+	for _, gone := range []string{`id="new-folder"`, `data-do="rename"`, `data-do="delete"`, `id="pick-all"`, `class="pick"`, `id="delete-picked"`} {
 		if strings.Contains(body, gone) {
 			t.Errorf("a request that could not write is offered %q", gone)
 		}

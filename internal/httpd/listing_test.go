@@ -202,6 +202,16 @@ func TestScriptRemembersTheOrder(t *testing.T) {
 	}
 }
 
+// Deleting several at once is the script's: the boxes and the button the page
+// renders do nothing without it.
+func TestScriptDeletesWhatIsPicked(t *testing.T) {
+	for _, want := range []string{`"delete-picked"`, `"pick-all"`, "input.pick", "unpickHidden()"} {
+		if !strings.Contains(string(listingScript), want) {
+			t.Errorf("listing.js does not use %q", want)
+		}
+	}
+}
+
 // The style and the script are carried by the page, so that no URL this server
 // answers is anything but a path in the served folder.
 func TestListingCarriesItsOwnAssets(t *testing.T) {

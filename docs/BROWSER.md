@@ -145,6 +145,21 @@ in to the account is signed out, as for any password change. Without a
 configuration file to write to there is nothing to change, and neither the menu
 item nor the tile is offered.
 
+## Deleting several entries at once
+
+Where the account may delete, each file or folder it may delete has a box in
+front of its name. Tick a few, or shift-click a second box to tick everything
+between the two, and a bar at the bottom of the window says **N selected**
+beside a **Delete** button; the box in the heading ticks every row the filter
+shows. A row the
+filter hides is unticked, so nothing is deleted that is not on screen.
+**Delete**, or the Delete or Backspace key, asks first and then deletes the
+entries one after the other with the same `DELETE` the row menu sends, so they
+go to the trash as one deleted from the menu does. As there, only an empty
+folder is removed: when some of the entries cannot be deleted, those that were
+are taken out of the listing, the others stay ticked, and the banner says for
+each why it is still there. Escape clears the selection.
+
 ## The trash
 
 What is deleted over HTTP or HTTPS is not removed but moved to

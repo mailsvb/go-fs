@@ -53,6 +53,7 @@
 <table id="listing" data-folder="{{.Folder}}" data-sort="{{.Sort}}" data-dir="{{.Dir}}" data-max-chunk-size="{{.MaxChunkSize}}"{{if .Rights.Trash}} data-trash="1"{{end}}{{if .Remote}} data-remote="{{.Remote}}" data-query="{{.Query}}" data-path="{{.Path}}"{{end}}>
   <thead>
     <tr>
+      {{if or .Rights.DeleteFile .Rights.DeleteFolder}}<th class="c-pick needs-js"><input type="checkbox" id="pick-all" title="Select all" aria-label="Select all"></th>{{end}}
       {{range .Columns}}
       <th class="{{.Class}}"{{if .Active}} aria-sort="{{.Order}}"{{end}} data-key="{{.Key}}"><a href="{{.Link}}">{{.Label}} <span class="caret">{{.Caret}}</span></a></th>
       {{end}}
@@ -62,6 +63,7 @@
   <tbody>
     {{if .Parent}}
     <tr>
+      {{if or .Rights.DeleteFile .Rights.DeleteFolder}}<td class="c-pick needs-js"></td>{{end}}
       <td><span class="name"><svg class="ic dir"><use href="#i-up"/></svg><a href="{{.Parent}}">..</a></span></td>
       <td class="meta c-mod">&#8212;</td>
       <td class="meta c-kind">&#8212;</td>
@@ -71,6 +73,7 @@
     {{end}}
     {{range .Entries}}
     <tr data-name="{{.Name}}" data-dir="{{.Group}}" data-size="{{.Bytes}}" data-time="{{.Unix}}" data-kind="{{.Kind}}"{{if .EditSrc}} data-edit="{{.EditSrc}}"{{end}}{{if (or (and .IsDir $.Rights.DeleteFolder) (and (not .IsDir) $.Rights.DeleteFile))}} data-delete="1"{{end}}>
+      {{if or $.Rights.DeleteFile $.Rights.DeleteFolder}}<td class="c-pick needs-js">{{if (or (and .IsDir $.Rights.DeleteFolder) (and (not .IsDir) $.Rights.DeleteFile))}}<input type="checkbox" class="pick" aria-label="Select {{.Name}}">{{end}}</td>{{end}}
       <td><span class="name"><svg class="ic{{if .IsDir}} dir{{end}}"><use href="{{if .IsDir}}#i-folder{{else}}#i-file{{end}}"/></svg>{{if or .IsDir $.Rights.Download}}<a href="{{.Link}}"{{if .View}} target="_blank" rel="noopener"{{end}}{{if and $.Viewer .Viewer}} data-viewer="{{.Viewer}}" data-viewer-src="{{.ViewerSrc}}"{{if .ViewerType}} data-viewer-type="{{.ViewerType}}"{{end}}{{end}}>{{.Label}}</a>{{else}}<span>{{.Label}}</span>{{end}}</span></td>
       <td class="meta c-mod">{{.Modified}}</td>
       <td class="meta c-kind">{{.Kind}}</td>
@@ -93,6 +96,10 @@
 <ul id="queue" class="queue" hidden></ul>
 {{end}}
 </main>
+
+{{if or .Rights.DeleteFile .Rights.DeleteFolder}}
+<div id="picked" class="pick-bar needs-js" role="region" aria-label="Selected entries" hidden><span class="count" aria-live="polite"></span><button id="delete-picked" class="plain danger" type="button" title="Delete the selected entries"><svg class="ic"><use href="#i-trash"/></svg><span class="label">Delete</span></button><button id="clear-picked" class="plain" type="button" title="Clear the selection" aria-label="Clear the selection"><svg class="ic"><use href="#i-close"/></svg></button></div>
+{{end}}
 
 <div id="menu" class="menu" role="menu" hidden>
   {{if .Rights.Download}}<a role="menuitem" data-do="download" download><svg class="ic"><use href="#i-download"/></svg><span>Download</span></a>{{end}}

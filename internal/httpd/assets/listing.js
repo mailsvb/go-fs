@@ -432,6 +432,7 @@
         row.classList.toggle("gone",
           needle !== "" && row.dataset.name.toLowerCase().indexOf(needle) === -1);
       });
+      unpickHidden();
     });
   }
 
@@ -1117,6 +1118,252 @@
       send(isFolder ? "folder" : "file", "DELETE", segment(name)).then(done).catch(failed);
     };
     checking.showModal();
+  }
+
+  // --- selecting several -----------------------------------------------
+  //
+  // A row the account may delete has a box in front of it; ticking a few
+  // and pressing Delete in the header removes them together. They are
+  // deleted one after the other with the same request the menu sends, so
+  // what the server allows and where a deleted file goes is the same. What
+  // is ticked is what is on screen: the box in the heading ticks the rows
+  // the filter shows, and a row the filter hides is unticked, so that
+  // nothing is deleted that cannot be seen.
+
+  var pickBar = document.getElementById("picked");
+  var pickAll = document.getElementById("pick-all");
+  var pickCount = pickBar ? pickBar.querySelector(".count") : null;
+  var deletePicked = document.getElementById("delete-picked");
+  var clearPicked = document.getElementById("clear-picked");
+  // anchor is the box last clicked, where a shift-click's range starts
+  var anchor = null;
+  var deleting = false;
+
+  function boxOf(row) {
+    return row.querySelector("input.pick");
+  }
+
+  // pickable is the rows with a box that the filter shows, in the order
+  // they are shown in now
+  function pickable() {
+    return rows().filter(function (row) {
+      return boxOf(row) && !row.classList.contains("gone");
+    });
+  }
+
+  function picked() {
+    return rows().filter(function (row) {
+      var box = boxOf(row);
+      return box && box.checked;
+    });
+  }
+
+  function plural(count, one, many) {
+    return count + " " + (count === 1 ? one : many);
+  }
+
+  function syncPicked() {
+    if (!pickBar) {
+      return;
+    }
+    rows().forEach(function (row) {
+      var box = boxOf(row);
+      row.classList.toggle("chosen", !!(box && box.checked));
+    });
+    var chosen = picked().length;
+    var visible = pickable();
+    var visibleChosen = visible.filter(function (row) {
+      return boxOf(row).checked;
+    }).length;
+    pickBar.hidden = chosen === 0;
+    pickCount.textContent = chosen + " selected";
+    if (pickAll) {
+      pickAll.disabled = visible.length === 0 || deleting;
+      pickAll.checked = visible.length > 0 && visibleChosen === visible.length;
+      pickAll.indeterminate = visibleChosen > 0 && visibleChosen < visible.length;
+    }
+  }
+
+  function unpick() {
+    rows().forEach(function (row) {
+      var box = boxOf(row);
+      if (box) {
+        box.checked = false;
+      }
+    });
+    anchor = null;
+    syncPicked();
+  }
+
+  // unpickHidden is what the filter calls once it has hidden rows
+  function unpickHidden() {
+    if (!pickBar) {
+      return;
+    }
+    rows().forEach(function (row) {
+      var box = boxOf(row);
+      if (box && row.classList.contains("gone")) {
+        box.checked = false;
+      }
+    });
+    syncPicked();
+  }
+
+  // confirmPicked asks before deleting what is ticked; one row is asked
+  // about as the menu asks, by its name
+  function confirmPicked() {
+    var chosen = picked();
+    if (deleting || chosen.length === 0) {
+      return;
+    }
+    clear();
+    if (chosen.length === 1) {
+      deleteEntry(chosen[0]);
+      return;
+    }
+    var names = chosen.map(function (row) {
+      return row.dataset.name;
+    });
+    var listed = names.slice(0, 5).join(", ");
+    if (names.length > 5) {
+      listed += " and " + (names.length - 5) + " more";
+    }
+    var folders = chosen.some(function (row) {
+      return row.dataset.dir === "1";
+    });
+    var trashed = table.dataset.trash === "1";
+    checking.querySelector("h2").textContent = "Delete " + plural(chosen.length, "entry", "entries");
+    checking.querySelector("p").textContent = "Delete " + listed + " from " + shown + "?" +
+      (folders ? " Only an empty folder can be removed." : "") +
+      (trashed ? " They are moved to the trash." : " This cannot be undone.");
+    onAgree = function () {
+      removeAll(chosen);
+    };
+    checking.showModal();
+  }
+
+  // removeAll deletes the rows one at a time. When all of them are gone the
+  // folder is shown again; when some are left, the rows that went are taken
+  // out, the rest stay ticked, and each one says why it is still there.
+  function removeAll(chosen) {
+    deleting = true;
+    setBusy(true);
+    var problems = [];
+    var gone = [];
+    var at = 0;
+    function step() {
+      if (at === chosen.length) {
+        finish();
+        return;
+      }
+      var row = chosen[at];
+      at++;
+      say("Deleting " + at + " of " + chosen.length + "…", true);
+      var isFolder = row.dataset.dir === "1";
+      send(isFolder ? "folder" : "file", "DELETE", segment(row.dataset.name)).then(function () {
+        gone.push(row);
+      }, function (err) {
+        problems.push(row.dataset.name + ": " + err.message);
+      }).then(step);
+    }
+    function finish() {
+      deleting = false;
+      if (problems.length === 0) {
+        sayAfterReload("Deleted " + plural(gone.length, "entry", "entries") + ".");
+        return;
+      }
+      gone.forEach(function (row) {
+        row.remove();
+      });
+      setBusy(false);
+      syncPicked();
+      say("Deleted " + gone.length + " of " + chosen.length + ". Not deleted: " + problems.join(" · "));
+    }
+    step();
+  }
+
+  function setBusy(busy) {
+    deletePicked.disabled = busy;
+    clearPicked.disabled = busy;
+    rows().forEach(function (row) {
+      var box = boxOf(row);
+      if (box) {
+        box.disabled = busy;
+      }
+    });
+    syncPicked();
+  }
+
+  if (pickBar) {
+    if (pickAll) {
+      pickAll.addEventListener("change", function () {
+        var on = pickAll.checked;
+        pickable().forEach(function (row) {
+          boxOf(row).checked = on;
+        });
+        anchor = null;
+        syncPicked();
+      });
+    }
+
+    body.addEventListener("click", function (event) {
+      var cell = event.target.closest("td.c-pick");
+      if (!cell) {
+        return;
+      }
+      var box = cell.querySelector("input.pick");
+      if (!box || box.disabled) {
+        return;
+      }
+      // the cell around the box is a larger target for the same thing
+      if (event.target !== box) {
+        box.checked = !box.checked;
+      }
+      var row = box.closest("tr");
+      var list = pickable();
+      if (event.shiftKey && anchor && anchor !== row && list.indexOf(anchor) !== -1) {
+        var from = list.indexOf(anchor);
+        var to = list.indexOf(row);
+        var low = Math.min(from, to);
+        var high = Math.max(from, to);
+        for (var i = low; i <= high; i++) {
+          boxOf(list[i]).checked = box.checked;
+        }
+      }
+      anchor = row;
+      syncPicked();
+    });
+
+    deletePicked.addEventListener("click", confirmPicked);
+    clearPicked.addEventListener("click", unpick);
+
+    // Escape lets go of what is ticked, and Delete or Backspace asks to
+    // delete it, but not while something else has the key: a dialog, the
+    // menu, or a field being typed in
+    document.addEventListener("keydown", function (event) {
+      if (event.defaultPrevented || deleting || picked().length === 0 ||
+        document.querySelector("dialog[open]") || opener) {
+        return;
+      }
+      var target = event.target;
+      if (target && (target.isContentEditable ||
+        (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) && target.type !== "checkbox"))) {
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        unpick();
+      } else if ((event.key === "Delete" || event.key === "Backspace") &&
+        !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        confirmPicked();
+      }
+    });
+
+    // a reload that the browser fills from its cache can bring back boxes
+    // ticked before; what the page shows has to say so
+    window.addEventListener("pageshow", syncPicked);
+    syncPicked();
   }
 
   // --- sharing a file --------------------------------------------------

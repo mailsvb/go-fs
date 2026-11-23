@@ -134,6 +134,33 @@ input[type="search"] {
 .downloads.bad .ic { color: var(--bad); }
 .js .downloads[hidden] { display: none; }
 
+/* What is ticked in the listing: how many, and what can be done with them.
+   It floats at the bottom rather than joining the header, so that ticking the
+   first box does not move the rows under the pointer; the bar that plays
+   audio is below it, and the listing leaves room for it at its end. */
+.pick-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  z-index: 15;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--ground);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+}
+.pick-bar[hidden] { display: none; }
+body.playing .pick-bar { bottom: calc(var(--player-height) + 1rem + env(safe-area-inset-bottom, 0px)); }
+body:has(.pick-bar:not([hidden])) main { padding-bottom: 4.5rem; }
+.pick-bar .count { color: var(--ink); font-size: 0.85rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plain.danger { border-color: var(--bad); color: var(--bad); }
+.plain.danger:hover { background: color-mix(in srgb, var(--bad) 10%, var(--ground)); }
+.plain:disabled { opacity: 0.5; cursor: default; }
+
 /* The form that holds the Log out button: a form is a block, and this one
    sits in a row of controls. */
 .inline { display: contents; }
@@ -202,6 +229,11 @@ th[aria-sort] .caret { visibility: visible; }
 .num a, .num span.head { justify-content: flex-end; }
 /* one button a row, which opens the options menu */
 th.c-acts { width: 2.75rem; }
+/* the boxes that tick rows for deleting several at once */
+th.c-pick { width: 2.25rem; }
+th.c-pick, td.c-pick { padding: 0 0 0 0.55rem; text-align: left; cursor: pointer; }
+th.c-pick input, td.c-pick input { margin: 0; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+td.c-pick input:disabled, th.c-pick input:disabled { cursor: default; }
 th.c-mod { width: 12rem; }
 th.c-kind { width: 7.5rem; }
 th.c-size { width: 6.5rem; }
@@ -214,6 +246,7 @@ td {
   white-space: nowrap;
 }
 tbody tr:hover { background: var(--raised); }
+tbody tr.chosen { background: color-mix(in srgb, var(--accent) 12%, var(--ground)); }
 tr.gone { display: none; }
 
 .name { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
