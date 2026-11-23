@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mailsvb/go-tag/mp3gain"
@@ -100,17 +101,50 @@ func PlanAlbum(srcs []Source) (Album, error) {
 	if len(srcs) == 0 {
 		return Album{}, errors.New("an album needs at least one file")
 	}
-	results := make([]mp3gain.Result, 0, len(srcs))
+	results, err := analyses(srcs)
+	if err != nil {
+		return Album{}, err
+	}
 	up, down := math.MaxInt, math.MaxInt
-	for _, src := range srcs {
-		res, err := analysis(src)
-		if err != nil {
-			return Album{}, fmt.Errorf("%s: %w", src.Key, err)
-		}
-		results = append(results, res)
+	for _, res := range results {
 		up, down = min(up, res.MaxUp()), min(down, res.MaxDown())
 	}
 	return Album{Change: changeOf(mp3gain.PlanAlbum(results)), MaxUp: up, MaxDown: down}, nil
+}
+
+// analyses measures files on as many cores as the process may use, in the
+// order of the files. The error is that of the first file in that order that
+// failed: once one failed, no file after it is started, and every file before
+// it was measured already.
+func analyses(srcs []Source) ([]mp3gain.Result, error) {
+	results := make([]mp3gain.Result, len(srcs))
+	errs := make([]error, len(srcs))
+	var failed atomic.Bool
+	work := make(chan int)
+	var wg sync.WaitGroup
+	for range min(runtime.GOMAXPROCS(0), len(srcs)) {
+		wg.Go(func() {
+			for i := range work {
+				if failed.Load() {
+					continue
+				}
+				if results[i], errs[i] = analysis(srcs[i]); errs[i] != nil {
+					failed.Store(true)
+				}
+			}
+		})
+	}
+	for i := range srcs {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", srcs[i].Key, err)
+		}
+	}
+	return results, nil
 }
 
 func changeOf(c mp3gain.Change) Change {
@@ -288,11 +322,14 @@ func analysisFrom(src Source, r io.ReaderAt) (mp3gain.Result, error) {
 	if src.Size > MaxAudio {
 		return mp3gain.Result{}, ErrTooLarge
 	}
+	// the place is taken before the audio is read, so that the files
+	// waiting for one hold no audio in memory
+	decoding <- struct{}{}
 	audio, err := mp3tags.ReadAudioFrom(r, src.Size)
 	if err != nil {
+		<-decoding
 		return mp3gain.Result{}, err
 	}
-	decoding <- struct{}{}
 	res, err := mp3gain.Analyze(audio)
 	<-decoding
 	switch {
@@ -306,8 +343,10 @@ func analysisFrom(src Source, r io.ReaderAt) (mp3gain.Result, error) {
 }
 
 // decoding holds a place for every file decoded at once: a decode keeps a
-// core busy for as long as it takes.
-var decoding = make(chan struct{}, max(1, runtime.NumCPU()))
+// core busy for as long as it takes, and holds the whole audio of its file.
+// GOMAXPROCS, unlike the number of CPUs, follows the CPU limit of a
+// container.
+var decoding = make(chan struct{}, max(1, runtime.GOMAXPROCS(0)))
 
 // The analyses of the files measured last, by the file and its version, so
 // that planning an album and saving it do not decode its files again. Behind

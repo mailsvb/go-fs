@@ -3654,6 +3654,25 @@
       }, Promise.resolve());
     }
 
+    // inParallel runs work on each item, at most limit of them at once, until
+    // the dialog it was started for is closed; it settles once the items
+    // started settled. work is given the item and its index.
+    function inParallel(list, work, alive, limit) {
+      var next = 0;
+      function lane() {
+        if (next >= list.length || !alive()) {
+          return Promise.resolve();
+        }
+        var i = next++;
+        return Promise.resolve(work(list[i], i)).then(lane);
+      }
+      var lanes = [];
+      for (var n = 0; n < Math.min(limit, list.length); n++) {
+        lanes.push(lane());
+      }
+      return Promise.all(lanes);
+    }
+
     // --- one file ---
 
     var one = (function () {
@@ -4156,18 +4175,25 @@
         progress.hidden = false;
         bar.max = Math.max(1, todo.length);
         bar.value = 0;
-        inOrder(todo, function (file, i) {
-          tell("Measuring " + (i + 1) + " of " + todo.length + ": " + file.name);
+        // several files at once, which the server measures on as many cores
+        // as it has; it holds back what it has no core for
+        var done = 0;
+        tell("Measuring " + todo.length + (todo.length === 1 ? " file…" : " files…"));
+        inParallel(todo, function (file) {
           return analyze(file.name).then(function (analysis) {
             file.analysis = analysis;
           }).catch(function (err) {
             failures++;
             file.problem = err.message;
           }).then(function () {
-            bar.value = i + 1;
+            done++;
+            bar.value = done;
+            if (alive()) {
+              tell("Measured " + done + " of " + todo.length + ": " + file.name);
+            }
             showVolume(file);
           });
-        }, alive).then(function () {
+        }, alive, 4).then(function () {
           album = null;
           var names = files.filter(function (file) {
             return file.analysis;

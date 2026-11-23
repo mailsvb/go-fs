@@ -424,8 +424,14 @@ after the change (`REPLAYGAIN_TRACK_GAIN` and `_PEAK`, and for an album
 removes the album values, which no longer apply.
 
 Measuring decodes the whole file, which takes a core for about as long as the
-decoder needs; go-fs measures at most as many files at once as the machine has
-cores, and refuses files larger than 512 MiB. A Jellyfin or an OpenSubsonic
+decoder needs and holds the file's audio in memory; go-fs refuses files larger
+than 512 MiB. Analyze all asks for four files at once, and planning an album
+measures the files not measured yet on every core. Across all users, go-fs
+decodes at most as many files at once as it may use cores, which Go's
+`GOMAXPROCS` sets: every core of the machine, or in a container the CPU limit
+it was given (`docker run --cpus 2`, `cpus:` in Compose), rounded up and at
+least 2. The startup line of
+the log names both, as `cpus` and `gomaxprocs`. A Jellyfin or an OpenSubsonic
 library reads a file again once it was saved, as it does any changed file.
 
 What a measurement found is kept in the
