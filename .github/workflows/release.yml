@@ -371,7 +371,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
       pages: write
       id-token: write
     environment:
@@ -403,20 +402,36 @@ jobs:
           path: site
           name: github-pages-${{ github.run_attempt }}
 
-      # the run's artifact list lags a finalized upload, and deploy-pages
-      # looks only once, right away: wait until the list shows the artifact
+      # deploy-pages looks the artifact up once, right after the upload, in
+      # the results service's list (not the REST API's), and that list lags
+      # a finalized upload: ask it the same question until it shows the
+      # artifact. The runtime token is only handed to actions, hence a script
       - name: wait for the artifact to be listed
+        uses: actions/github-script@v9
         env:
-          GH_TOKEN: ${{ github.token }}
           NAME: github-pages-${{ github.run_attempt }}
-        run: |
-          for i in $(seq 60); do
-            n=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$NAME" --jq .total_count)
-            [ "$n" -gt 0 ] && exit 0
-            sleep 5
-          done
-          echo "::error::$NAME is still not listed after 5 minutes"
-          exit 1
+        with:
+          script: |
+            const {ACTIONS_RUNTIME_TOKEN: token, ACTIONS_RESULTS_URL: base, NAME: name} = process.env
+            const {scp} = JSON.parse(Buffer.from(token.split('.')[1], 'base64url'))
+            const [, run, job] = scp.split(' ').find(s => s.startsWith('Actions.Results:')).split(':')
+            const url = new URL('/twirp/github.actions.results.api.v1.ArtifactService/ListArtifacts', base)
+            for (let i = 0; i < 60; i++) {
+              if (i > 0) await new Promise(r => setTimeout(r, 5000))
+              const res = await fetch(url, {
+                method: 'POST',
+                headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'},
+                body: JSON.stringify({workflow_run_backend_id: run, workflow_job_run_backend_id: job})
+              })
+              if (!res.ok) {
+                core.warning(`ListArtifacts: ${res.status} ${await res.text()}`)
+                continue
+              }
+              const {artifacts = []} = await res.json()
+              if (artifacts.some(a => a.name === name)) return
+              core.info(`${name} is not listed yet among ${artifacts.length} artifact(s)`)
+            }
+            core.setFailed(`${name} is still not listed after 5 minutes`)
 
       - id: deploy
         uses: actions/deploy-pages@v5
