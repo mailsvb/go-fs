@@ -374,7 +374,7 @@ jobs:
             | jq -e '[.SPDX.packages[].name] | index("ffmpeg") and index("deno")' >/dev/null
 
   # The zypper/dnf repository on GitHub Pages, rebuilt from the rpms of the
-  # five newest releases, so older versions drop out. Pages must be set to
+  # newest release alone, so older versions drop out. Pages must be set to
   # deploy from GitHub Actions.
   repo:
     needs: publish
@@ -403,7 +403,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GPG_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
-          KEEP: 5
+          KEEP: 1
         run: bash packaging/repo/build.sh site
 
       # artifacts outlive an attempt, so a re-run of this job would find the

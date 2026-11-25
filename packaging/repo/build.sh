@@ -7,9 +7,9 @@
 #   go-fs.asc           the public key, armored
 #
 # It is rebuilt whole from the rpm assets of the KEEP newest GitHub releases,
-# so older versions drop out as new ones are released. An rpm that is not
-# signed with the key, as those of the releases before the repository existed,
-# is left out: zypper and dnf would refuse it.
+# the newest alone by default, so older versions drop out as new ones are
+# released. An rpm that is not signed with the key, as those of the releases
+# before the repository existed, is left out: zypper and dnf would refuse it.
 #
 # Needs gh (GH_TOKEN), createrepo_c, rpmkeys and gpg with the signing key
 # imported: GPG_KEY_ID names it, GPG_PASSPHRASE unlocks it if it has one.
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 out=${1:?usage: build.sh OUT}
-keep=${KEEP:-5}
+keep=${KEEP:-1}
 key=${GPG_KEY_ID:?GPG_KEY_ID names the signing key}
 repo=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is owner/name}
 owner=${repo%%/*}
@@ -30,6 +30,8 @@ sign() {
 
 rm -rf "$out"
 mkdir -p "$out/rpm" "$out/download"
+if [ "$keep" -eq 1 ]; then kept="Only the newest release is kept."
+else kept="The $keep newest releases are kept."; fi
 
 gpg --armor --export "$key" > "$out/go-fs.asc"
 
@@ -86,7 +88,7 @@ cat > "$out/index.html" <<EOF
 <title>go-fs packages</title>
 <style>body{font-family:system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;line-height:1.5}pre{background:#f4f4f4;padding:.75rem;overflow-x:auto}</style>
 <h1>go-fs packages</h1>
-<p>Signed with <a href="go-fs.asc">this key</a>. The $keep newest releases are kept.</p>
+<p>Signed with <a href="go-fs.asc">this key</a>. $kept</p>
 <p>The repository has two packages, which exclude each other: go-fs with every
 protocol, and go-fs-light with HTTP, HTTPS, the S3 API and the container
 registry alone. Install go-fs-light in place of go-fs below for the light one.</p>

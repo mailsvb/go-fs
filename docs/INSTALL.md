@@ -26,7 +26,7 @@ Every release is also a container image for linux/amd64,
 ### Linux: rpm
 
 The rpms are signed, and served as a zypper and dnf repository from GitHub
-Pages, which keeps the five newest releases:
+Pages, which keeps the newest release alone:
 <https://mailsvb.github.io/go-fs/>.
 
 ```shell
