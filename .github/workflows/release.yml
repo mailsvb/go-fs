@@ -381,6 +381,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
       pages: write
       id-token: write
     environment:
@@ -411,6 +412,21 @@ jobs:
         with:
           path: site
           name: github-pages-${{ github.run_attempt }}
+
+      # the run's artifact list lags a finalized upload, and deploy-pages
+      # looks only once, right away: wait until the list shows the artifact
+      - name: wait for the artifact to be listed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: github-pages-${{ github.run_attempt }}
+        run: |
+          for i in $(seq 60); do
+            n=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$NAME" --jq .total_count)
+            [ "$n" -gt 0 ] && exit 0
+            sleep 5
+          done
+          echo "::error::$NAME is still not listed after 5 minutes"
+          exit 1
 
       - id: deploy
         uses: actions/deploy-pages@v5
