@@ -657,10 +657,16 @@ dialog [hidden] { display: none; }
   font-weight: 600;
 }
 
-th.c-plat { width: 14rem; }
-td.c-plat { white-space: normal; }
+/* The badges keep to one line and the platforms column is as wide as the
+   widest row of them; the name takes what is left and ends in an ellipsis.
+   Pushed, size and the menu keep the widths set above. The zero max-width is
+   what lets a cell of an automatic table shrink below its text. */
+.registry { table-layout: auto; }
+.registry th.c-plat, .registry td.c-plat { width: 1%; white-space: nowrap; }
+.registry th.c-name, .registry td:first-child { width: 100%; max-width: 0; }
 .registry .name .label { overflow: hidden; text-overflow: ellipsis; }
 .badges { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.registry td.c-plat .badges { flex-wrap: nowrap; }
 .badge {
   display: inline-block;
   padding: 0 0.4rem;
@@ -913,6 +919,12 @@ dl.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
   .c-kind, .c-mod { display: none; }
   th.c-size { width: 5rem; }
   th.c-plat { width: 8rem; }
+  /* a phone keeps the fixed table, whose badges wrap in a narrow column */
+  .registry { table-layout: fixed; }
+  .registry th.c-name, .registry td:first-child { width: auto; max-width: none; }
+  .registry th.c-plat { width: 8rem; }
+  .registry td.c-plat { white-space: normal; }
+  .registry td.c-plat .badges { flex-wrap: wrap; }
   .registry td:first-child { white-space: normal; }
   .registry .name .label { overflow-wrap: break-word; }
   dl.facts { grid-template-columns: 1fr; }
