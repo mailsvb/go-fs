@@ -1831,6 +1831,9 @@
       "? Pulling it will stop working. The image itself stays while another tag points to it.",
       "Delete", function () {
         request("DELETE", tagURL("registry", row)).then(function () {
+          // gone at once, whether or not the reload comes through; the
+          // reload then brings the folder counts and sizes up to date
+          row.remove();
           window.location.reload();
         }).catch(failed);
       });

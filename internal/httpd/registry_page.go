@@ -815,6 +815,9 @@ var registryScript = withCredentialsScript(mustRead("assets/registry.js"))
 
 // registryPage renders the list or the folder view.
 func (s *Server) registryPage(set *settings, w http.ResponseWriter, r *http.Request, user *account) {
+	// The page reloads itself after a tag is deleted, pulled or imported, and
+	// a copy kept by the browser or a proxy would show the tags as they were.
+	w.Header().Set("Cache-Control", "no-store")
 	store := set.registry
 	view := parseRegistryView(r.URL.Query())
 	base := (&url.URL{Path: r.URL.Path}).EscapedPath()

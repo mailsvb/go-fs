@@ -411,6 +411,18 @@ func TestRegistryPageDeletesATag(t *testing.T) {
 	if res, _ := pageRequest(t, server, http.MethodDelete, path, ci); res.StatusCode != http.StatusNotFound {
 		t.Errorf("deleting the tag again answered %d", res.StatusCode)
 	}
+
+	// the page reloads after the delete, and must not come from a cache
+	res, body = pageRequest(t, server, http.MethodGet, "/?go-fs=registry", ci)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("the page answered %d", res.StatusCode)
+	}
+	if got := res.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+	if strings.Contains(body, `data-tag="1.0"`) || !strings.Contains(body, `data-tag="2.0"`) {
+		t.Errorf("the page after the delete lists the wrong tags")
+	}
 }
 
 func TestRegistryPageCleansUpNow(t *testing.T) {
