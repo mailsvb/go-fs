@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // FS is a host once it was logged in to, whatever the protocol: what the file
@@ -85,9 +84,6 @@ func CreateVault(ctx context.Context, l Login, sshCfg config.SSH) (string, error
 	if l.VaultPath == "" {
 		return "", errors.New("name the folder of the vault")
 	}
-	if !features.Has(features.Cryptomator) {
-		return "", errNoVaults
-	}
 	started := time.Now()
 	fsys, err := openHost(ctx, l, sshCfg)
 	traceLogin(ctx, "login", l, started, err)
@@ -121,9 +117,9 @@ type protocol struct {
 	hostKey func(ctx context.Context, l Login, sshCfg config.SSH) (string, string, error)
 }
 
-// protocols are the protocols the binary was built with, by their ID. Those
-// that are optional, SFTP and SMB, add themselves from their own file, which
-// a build tag leaves out together with the module it imports.
+// protocols are the protocols a stored server may be reached by, by their ID.
+// SFTP and SMB add themselves from their own file, beside the module it
+// imports.
 var protocols = map[string]protocol{
 	config.ServerTypeArtifactory: {id: config.ServerTypeArtifactory,
 		open: func(ctx context.Context, l Login, _ config.SSH) (FS, error) {
@@ -135,7 +131,7 @@ var protocols = map[string]protocol{
 		}},
 }
 
-// registerProtocol adds an optional protocol.
+// registerProtocol adds a protocol.
 func registerProtocol(p protocol) { protocols[p.id] = p }
 
 // linkInfo is what a link leads to, under the name of the link.

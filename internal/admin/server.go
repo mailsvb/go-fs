@@ -32,7 +32,6 @@ import (
 	"sync"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/webui"
 )
 
@@ -122,9 +121,6 @@ type state struct {
 	Placeholders map[string]string `json:"placeholders,omitempty"`
 	// Protocols are what the dialog of a remote server offers.
 	Protocols []config.ServerType `json:"protocols"`
-	// Vaults reports whether the dialog of a remote server offers a vault of
-	// Cryptomator, which a binary built without vaults does not.
-	Vaults bool `json:"vaults"`
 	// RepositoryTypes are what the dialog of a repository offers, and
 	// Repositories what the page shows of each stored one, by name.
 	RepositoryTypes []config.RepositoryType   `json:"repositoryTypes"`
@@ -325,7 +321,6 @@ func (h *Handler) handleState(w http.ResponseWriter) {
 		Summaries:    h.schema.Summaries(values),
 		Placeholders: toolPlaceholders(),
 		Protocols:    config.ServerTypes,
-		Vaults:       features.Has(features.Cryptomator),
 
 		RepositoryTypes: config.RepositoryTypes,
 		Repositories:    repositoryViews(cfg),
@@ -363,14 +358,8 @@ func (h *Handler) handleApply(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// the servers and the repositories of parts the binary was built
-	// without were not on the page, and stay in the file as they were, so
-	// that go-fs reads back what go-fs-light wrote
+	// the file as it was, for the keys the change log below names
 	current, readErr := h.read()
-	if readErr == nil {
-		cfg.Servers = append(cfg.Servers, current.AbsentServers()...)
-		cfg.Repositories = append(cfg.Repositories, current.AbsentRepositories()...)
-	}
 	// validated the way the file is validated when it is loaded, folders
 	// made included, so that the page reports what -check would report and a
 	// file that cannot work is never written

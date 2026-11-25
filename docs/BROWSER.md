@@ -443,9 +443,6 @@ that is. A save keeps the measurement of the file it changes, moved by the
 change of the volume, unless the louder audio would clip. A measurement nobody
 used for 180 days is dropped.
 
-The editor is left out of go-fs-light, and of a binary built with the tag
-`no_mp3tags`.
-
 ## Downloading a folder
 
 **Download** on a folder in the listing saves the whole folder as
@@ -633,9 +630,6 @@ folder: `session&id=<id>` answers `GET` with what the speakers do, and `skip`,
 with `{"session":"<id>","index":<n>}`, and `end`, with `{"session":"<id>"}`,
 take a `POST`. A queue is the account's own; another account is told it is not
 there.
-
-Playing on Sonos is left out of go-fs-light, and of a binary built with the
-tag `no_sonos`.
 
 ## Fetching a file from a URL
 

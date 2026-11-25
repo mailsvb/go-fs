@@ -1,5 +1,3 @@
-//go:build !light && !no_nbd
-
 // Package nbd is the NBD server: it serves the disk images of the Disks page
 // (see internal/disks) to QEMU and other NBD clients, one image to a
 // connection, the image's file name being the export name.

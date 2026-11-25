@@ -19,7 +19,6 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/logging"
-	"github.com/mailsvb/go-fs/internal/mp3edit"
 	"github.com/mailsvb/go-fs/internal/secrets"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -563,7 +562,7 @@ func (s *Server) rightsFor(set *settings, user *account, virtual string) rights 
 		DeleteFolder: s.permits(set, user, http.MethodDelete, virtual, actDeleteFolder),
 		Rename:       s.permits(set, user, methodMove, virtual, actRename),
 		Overwrite:    overwrite,
-		MP3Tags:      mp3edit.Compiled && overwrite,
+		MP3Tags:      overwrite,
 	}
 }
 

@@ -103,9 +103,7 @@ deviation from it that crosses a trust boundary as a finding.
 
 ## How to exercise it
 
-- The checkout is at `/src`. The binaries are `/usr/local/bin/go-fs` and
-  `/usr/local/bin/go-fs-light` (built with `-tags light`: HTTP, HTTPS, S3 and the
-  registry only, without Cryptomator vaults; see `internal/features`).
+- The checkout is at `/src`. The binary is `/usr/local/bin/go-fs`.
 - `go-fs -config FILE` writes the documented starter configuration to FILE
   when it is not there, and serves from it
   (`internal/config/template.toml`); `go-fs.example.toml` shows every key.

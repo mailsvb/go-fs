@@ -7,8 +7,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // Sync keeps a folder of general.baseFolderFiles and a folder of a stored
@@ -113,38 +111,19 @@ type SyncProtocol struct {
 	Label string `json:"label"`
 	// ServerTypes are the types of server the protocol reaches.
 	ServerTypes []string `json:"serverTypes"`
-
-	// feature is the part of go-fs the protocol is.
-	feature string
 }
 
 // SyncProtocolRsync compares the size and the modification time of each file
 // and copies those that differ whole, as rsync does without its delta.
 const SyncProtocolRsync = "rsync"
 
-// allSyncProtocols are the protocols a sync may name, whether the binary was
-// built with them or not. Another one is added here and given an
-// implementation in internal/syncer.
-var allSyncProtocols = []SyncProtocol{
-	{ID: SyncProtocolRsync, Label: "rsync (SFTP)", ServerTypes: []string{ServerTypeSFTP}, feature: features.SFTPRemote},
+// SyncProtocols are the protocols a sync may name. Another one is added here
+// and given an implementation in internal/syncer.
+var SyncProtocols = []SyncProtocol{
+	{ID: SyncProtocolRsync, Label: "rsync (SFTP)", ServerTypes: []string{ServerTypeSFTP}},
 }
 
-// SyncProtocols are the protocols a sync may name in this binary: those of
-// allSyncProtocols it was built with.
-var SyncProtocols = builtSyncProtocols()
-
-func builtSyncProtocols() []SyncProtocol {
-	var built []SyncProtocol
-	for _, p := range allSyncProtocols {
-		if features.Has(p.feature) {
-			built = append(built, p)
-		}
-	}
-	return built
-}
-
-// SyncProtocolOf looks a protocol up by its ID, among those the binary was
-// built with.
+// SyncProtocolOf looks a protocol up by its ID.
 func SyncProtocolOf(id string) (SyncProtocol, bool) {
 	for _, p := range SyncProtocols {
 		if p.ID == id {
@@ -154,19 +133,8 @@ func SyncProtocolOf(id string) (SyncProtocol, bool) {
 	return SyncProtocol{}, false
 }
 
-// absentSyncProtocol reports a protocol go-fs knows but this binary was built
-// without. A sync of one is kept in the file and otherwise ignored.
-func absentSyncProtocol(id string) bool {
-	for _, p := range allSyncProtocols {
-		if p.ID == id {
-			return !features.Has(p.feature)
-		}
-	}
-	return false
-}
-
 // UsableSyncs are the syncs of the file the binary runs: those that are
-// enabled, of a protocol it was built with, on a server it can reach.
+// enabled, of a protocol it knows, on a server it can reach.
 func (c Config) UsableSyncs() []Sync {
 	var usable []Sync
 	servers := c.UsableServers()
@@ -262,10 +230,6 @@ func (c Config) validateSyncs() error {
 		}
 		names[strings.ToLower(s.Name)] = true
 		where = fmt.Sprintf("%s %q", where, s.Name)
-		if absentSyncProtocol(s.Protocol) {
-			// what this binary cannot run it does not check either
-			continue
-		}
 		protocol, ok := SyncProtocolOf(s.Protocol)
 		if !ok {
 			known := make([]string, len(SyncProtocols))
@@ -277,9 +241,6 @@ func (c Config) validateSyncs() error {
 		server, ok := FindServer(c.Servers, s.Server)
 		if !ok {
 			return fmt.Errorf("%s: server %q is not a stored server", where, s.Server)
-		}
-		if absentServer(server) {
-			continue
 		}
 		if !slices.Contains(protocol.ServerTypes, server.Type) {
 			return fmt.Errorf("%s: server %q is %s, which %s does not reach", where, s.Server, server.Type, s.Protocol)

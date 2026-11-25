@@ -1,5 +1,3 @@
-//go:build !light && !no_nbd
-
 package supervisor
 
 import (
@@ -9,7 +7,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/service"
 )
 
-// The NBD server, left out by the tag no_nbd and by light.
+// The NBD server.
 func init() {
 	register(entry{
 		name:    "nbd",

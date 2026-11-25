@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/remote/remotetest"
 )
 
@@ -124,7 +123,6 @@ func TestLocalBrowseIsForASessionAndSaysWhereItMayStore(t *testing.T) {
 }
 
 func TestRemoteFetchStoresAFileOfTheServer(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "deep/report.txt", "0123456789")
 	server, session := remoteServer(t, host, nil)
@@ -159,7 +157,6 @@ func TestRemoteFetchStoresAFileOfAnArtifactory(t *testing.T) {
 }
 
 func TestRemoteFetchReplacesOnlyWithTheOverwriteRight(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "data.bin", "new")
 	host.Write(t, "folder/inside.txt", "in")
@@ -195,7 +192,6 @@ func TestRemoteFetchReplacesOnlyWithTheOverwriteRight(t *testing.T) {
 }
 
 func TestRemoteFetchKeepsToTheUploadLimit(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "big.bin", "01234567890123456789")
 	server, session := remoteServer(t, host, func(cfg *httpConfig) { cfg.MaxUploadSize = 10 })
@@ -207,7 +203,6 @@ func TestRemoteFetchKeepsToTheUploadLimit(t *testing.T) {
 }
 
 func TestRemoteFetchRefusesWhatIsNotAFetch(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "a.txt", "a")
 	server, session := remoteServer(t, host, func(cfg *httpConfig) {
@@ -251,7 +246,6 @@ func TestRemoteFetchRefusesWhatIsNotAFetch(t *testing.T) {
 }
 
 func TestRemotePageOffersFetchWhereTheAccountMayCreate(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "a.txt", "a")
 	server, session := remoteServer(t, host, func(cfg *httpConfig) {
@@ -298,7 +292,6 @@ func fullDisk(t *testing.T, free int64) {
 }
 
 func TestRemoteFetchStoresAFolderWithAllBelowIt(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "photos/a.jpg", "aaaa")
 	host.Write(t, "photos/2024/b.jpg", "bb")
@@ -350,7 +343,6 @@ func TestRemoteFetchStoresAFolderOfAnArtifactory(t *testing.T) {
 }
 
 func TestRemoteMeasureCountsWhatAFetchStores(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "photos/a.jpg", "aaaa")
 	host.Write(t, "photos/2024/b.jpg", "bb")
@@ -386,7 +378,6 @@ func TestRemoteMeasureCountsWhatAFetchStores(t *testing.T) {
 }
 
 func TestRemoteMeasureIsRefusedWhereTheServerDoesNotAllowDownloads(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "photos/a.jpg", "aaaa")
 	server, session := remoteServer(t, host, func(cfg *httpConfig) {
@@ -398,7 +389,6 @@ func TestRemoteMeasureIsRefusedWhereTheServerDoesNotAllowDownloads(t *testing.T)
 }
 
 func TestRemoteFetchMakesSureItFits(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "photos/a.jpg", "0123456789")
 	host.Write(t, "photos/b.jpg", "0123456789")
@@ -425,7 +415,6 @@ func TestRemoteFetchMakesSureItFits(t *testing.T) {
 }
 
 func TestRemoteFetchOfAFolderNeedsTheRightToCreateFolders(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "photos/a.jpg", "a")
 	server, _ := remoteServer(t, host, func(cfg *httpConfig) {
@@ -449,7 +438,6 @@ func TestRemoteFetchOfAFolderNeedsTheRightToCreateFolders(t *testing.T) {
 }
 
 func TestRemoteFetchLeavesOutAFolderItCannotRead(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("a folder cannot be made unreadable here")
 	}

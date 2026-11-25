@@ -1,9 +1,7 @@
-# The rpm packages of go-fs and go-fs-light, built by make rpm with nfpm,
-# which expands from its environment VERSION, the released version, ARCH, the
-# Go architecture, NAME, the product, CONFLICTS, the other product, and
-# SERVES, what the product serves. The files are relative to the repository
-# root, where make runs nfpm, and make puts them in build/pkg/linux for each
-# product and architecture in turn: the binary built with
+# The rpm package of go-fs, built by make rpm with nfpm, which expands from
+# its environment VERSION, the released version, and ARCH, the Go
+# architecture. The files are relative to the repository root, where make runs
+# nfpm, and make puts them in build/pkg/linux: the binary built with
 # -X main.packaging=rpm and the starter configuration, serving
 # /var/lib/go-fs/files.
 #
@@ -12,10 +10,7 @@
 # when there is none, and preinstall moves one an older package left in
 # /etc/go-fs. The file is not the package's, so an upgrade never touches it
 # and a removal keeps it.
-#
-# Both products install the same files, the service and the folders, so they
-# conflict: one is swapped for the other by removing it first.
-name: ${NAME}
+name: go-fs
 arch: ${ARCH}
 platform: linux
 version: ${VERSION}
@@ -27,12 +22,9 @@ homepage: https://github.com/mailsvb/go-fs
 license: Apache-2.0
 # the first line is the summary as well
 description: |
-  ${SERVES}
+  FTP, FTPS, SFTP, HTTP, HTTPS, an S3 compatible API, TFTP and NBD
   in a single binary, configured from one TOML file, with hot reload and a
   web interface for editing it. Runs as the go-fs systemd service.
-
-conflicts:
-  - ${CONFLICTS}
 
 contents:
   - src: build/pkg/linux/go-fs
@@ -102,8 +94,7 @@ contents:
       group: go-fs
 
   - src: LICENSE
-    dst: /usr/share/licenses/${NAME}/LICENSE
-    expand: true
+    dst: /usr/share/licenses/go-fs/LICENSE
     file_info:
       mode: 0644
 

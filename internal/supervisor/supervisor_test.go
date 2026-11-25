@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/httpd"
 	"github.com/mailsvb/go-fs/internal/store"
 )
@@ -144,7 +143,6 @@ func fetch(t *testing.T, port int, path, name, password string) *http.Response {
 }
 
 func TestApplyStartsStopsAndRestarts(t *testing.T) {
-	skipWithout(t, features.TFTP)
 	sup, logs, ctx := newSupervisor(t)
 	cfg := baseConfig(t)
 

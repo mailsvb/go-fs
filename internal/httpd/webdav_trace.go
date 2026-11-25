@@ -1,5 +1,3 @@
-//go:build !light && !no_webdav
-
 package httpd
 
 import (

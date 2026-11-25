@@ -1,5 +1,3 @@
-//go:build !light && !no_ftp && !no_sftpd && !no_sftp_remote
-
 package e2e
 
 import (
@@ -15,7 +13,6 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // ask sends a request of the listing's script, as JSON from the same site,
@@ -59,7 +56,6 @@ func (c *httpClient) ask(t *testing.T, method, path string, body, into any) int 
 // server of the same cluster, replacing the one that is there: the way the
 // listing's dialog does, step by step.
 func TestAFileIsSentToAnSFTPServer(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	c := newCluster(t, []config.User{account("alice", "pw", allRights...)}, nil)
 	c.write(t, share+"/report.txt", []byte("the new report"))
 	c.mkdir(t, share+"/inbox")
@@ -134,7 +130,6 @@ func TestAFileIsSentToAnSFTPServer(t *testing.T) {
 // server, the way the admin interface does once it has logged in to it, and
 // sends a file there by its name alone.
 func TestAFileIsSentToAStoredServer(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	c := newCluster(t, []config.User{account("alice", "pw", allRights...)}, nil)
 	c.write(t, share+"/report.txt", []byte("the report"))
 	c.mkdir(t, share+"/inbox")

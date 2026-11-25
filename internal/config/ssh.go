@@ -15,10 +15,7 @@ const (
 )
 
 // What [general.ssh] says of algorithms only golang.org/x/crypto/ssh knows to
-// check, and only a binary that speaks SSH imports it: ssh_algorithms.go, which
-// a build tag leaves out with the SFTP server and sending by SFTP, sets these.
-// Without it there is nothing to check, nothing insecure and no host key or
-// authorized key to read.
+// check: ssh_algorithms.go, which imports it, sets these.
 var (
 	// checkSSHAlgorithms reports an algorithm list that names something the
 	// library does not know, or names it twice.

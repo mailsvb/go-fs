@@ -48,17 +48,16 @@ type env struct {
 type entry struct {
 	name string
 	// order places the service among the others: they are started, reloaded
-	// and listed in it, whichever of them the binary was built with.
+	// and listed in it.
 	order   int
 	enabled func(env) bool
 	create  func(env, *slog.Logger) (service.Server, error)
 	reload  func(service.Server, env) error
 }
 
-// The places of the services in services. The servers that are optional,
-// and left out by a build tag, add themselves from a file of their own
-// (services_ftp.go and the like), so that a binary built without one does not
-// import its package.
+// The places of the services in services. The FTP, SFTP, TFTP and NBD
+// servers add themselves from a file of their own (services_ftp.go and the
+// like).
 const (
 	orderFTP = 10 * (iota + 1)
 	orderSFTP
@@ -70,12 +69,12 @@ const (
 	orderSyncs
 )
 
-// services are the services the binary was built with, in their order: those
-// every binary has, and those register added.
+// services are the services, in their order: those of builtIn, and those
+// register added.
 var services = inOrder(builtIn)
 
-// register adds an optional service. It is called from the init functions of
-// the files of the optional servers, which run after services was made.
+// register adds a service. It is called from the init functions of the files
+// of the servers, which run after services was made.
 func register(e entry) {
 	services = inOrder(append(services, e))
 }
@@ -86,7 +85,7 @@ func inOrder(entries []entry) []entry {
 		func(a, b entry) int { return a.order - b.order })
 }
 
-// builtIn are the services every binary has.
+// builtIn are the services this file defines.
 var builtIn = []entry{
 	{
 		name:    "http",

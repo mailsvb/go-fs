@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -57,13 +56,13 @@ type Repository struct {
 	// Title is the name the F-Droid app shows of an fdroid repository, or
 	// the name of the library music clients show of a jellyfin or a subsonic
 	// one; the name when not set.
-	Title string `toml:"title,omitempty" feature:"fdroid,jellyfin,subsonic"`
+	Title string `toml:"title,omitempty"`
 	// Description is the text the F-Droid app shows of an fdroid
 	// repository.
-	Description string `toml:"description,omitempty" feature:"fdroid"`
+	Description string `toml:"description,omitempty"`
 	// Icon is the image the F-Droid app shows of an fdroid repository, a
 	// file in its folder by its path in it, such as /icon.png.
-	Icon string `toml:"icon,omitempty" feature:"fdroid"`
+	Icon string `toml:"icon,omitempty"`
 }
 
 // DisplayName is the name a client shows of the repository.
@@ -94,9 +93,6 @@ func (r Repository) Interval() int {
 type RepositoryType struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
-
-	// feature is the part of go-fs the kind is.
-	feature string
 }
 
 // RepositoryTypeRPM is an rpm-md repository, read by zypper and dnf.
@@ -120,44 +116,17 @@ func IsMusicType(typ string) bool {
 	return typ == RepositoryTypeJellyfin || typ == RepositoryTypeSubsonic
 }
 
-// allRepositoryTypes are the kinds a repository may be, whether the binary was
-// built with them or not. Another one is added here and given an
-// implementation in internal/repository.
-var allRepositoryTypes = []RepositoryType{
-	{ID: RepositoryTypeRPM, Label: "rpm (zypper, dnf)", feature: features.RPM},
-	{ID: RepositoryTypeFDroid, Label: "F-Droid (Android)", feature: features.FDroid},
-	{ID: RepositoryTypeJellyfin, Label: "Jellyfin (music)", feature: features.Jellyfin},
-	{ID: RepositoryTypeSubsonic, Label: "OpenSubsonic (music)", feature: features.Subsonic},
-}
-
-// RepositoryTypes are the kinds a repository may be in this binary: those of
-// allRepositoryTypes it was built with.
-var RepositoryTypes = builtRepositoryTypes()
-
-func builtRepositoryTypes() []RepositoryType {
-	var built []RepositoryType
-	for _, t := range allRepositoryTypes {
-		if features.Has(t.feature) {
-			built = append(built, t)
-		}
-	}
-	return built
-}
-
-// absentRepositoryType reports a kind of repository go-fs knows but this
-// binary was built without. A repository of one is kept in the file and
-// otherwise ignored, so that go-fs-light reads the file of go-fs.
-func absentRepositoryType(id string) bool {
-	for _, t := range allRepositoryTypes {
-		if t.ID == id {
-			return !features.Has(t.feature)
-		}
-	}
-	return false
+// RepositoryTypes are the kinds a repository may be. Another one is added
+// here and given an implementation in internal/repository.
+var RepositoryTypes = []RepositoryType{
+	{ID: RepositoryTypeRPM, Label: "rpm (zypper, dnf)"},
+	{ID: RepositoryTypeFDroid, Label: "F-Droid (Android)"},
+	{ID: RepositoryTypeJellyfin, Label: "Jellyfin (music)"},
+	{ID: RepositoryTypeSubsonic, Label: "OpenSubsonic (music)"},
 }
 
 // UsableRepositories are the repositories of the file the binary can keep:
-// those whose kind it was built with.
+// those of a kind it knows.
 func (c Config) UsableRepositories() []Repository {
 	var usable []Repository
 	for _, repo := range c.Repositories {
@@ -334,11 +303,6 @@ func (c Config) validateRepositories() error {
 		}
 		names[strings.ToLower(repo.Name)] = true
 		where = fmt.Sprintf("%s %q", where, repo.Name)
-		if absentRepositoryType(repo.Type) {
-			// what this binary cannot keep it does not check either
-			continue
-		}
-
 		if _, ok := RepositoryTypeOf(repo.Type); !ok {
 			known := make([]string, len(RepositoryTypes))
 			for k, t := range RepositoryTypes {

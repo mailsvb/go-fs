@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/remote/remotetest"
 )
 
@@ -91,7 +90,6 @@ func TestRemoteServersAreInTheMenuOfASession(t *testing.T) {
 }
 
 func TestRemotePageListsAFolderOfTheServer(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	const password = "hunter2-of-the-backup"
 	host := remotetest.NewSFTPHost(t, "alice", password)
 	host.Write(t, "zeta.txt", "z")
@@ -196,7 +194,6 @@ func TestRemoteLoginReturnsToTheServer(t *testing.T) {
 }
 
 func TestRemoteDownloadsAFileAndAFolder(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "docs/report.txt", "0123456789")
 	host.Write(t, "docs/deeper/notes.md", "notes")
@@ -251,7 +248,6 @@ func TestRemoteDownloadsAFileAndAFolder(t *testing.T) {
 }
 
 func TestRemoteUploadsAFile(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "in/folder/keep", "")
 	server, session := remoteServer(t, host, func(cfg *httpConfig) {
@@ -305,7 +301,6 @@ func TestRemoteUploadsAFile(t *testing.T) {
 }
 
 func TestRemoteCreatesRenamesAndDeletes(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "a.txt", "a")
 	host.Write(t, "b.txt", "b")
@@ -353,7 +348,6 @@ func TestRemoteCreatesRenamesAndDeletes(t *testing.T) {
 }
 
 func TestRemoteWritesFollowThePermissionsOfTheAccount(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "a.txt", "a")
 	server, _ := remoteServer(t, host, func(cfg *httpConfig) {
@@ -398,7 +392,6 @@ func TestRemoteRefusesAnotherSite(t *testing.T) {
 }
 
 func TestRemotePageSaysWhyTheServerCannotBeReached(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	server, session := remoteServer(t, host, func(cfg *httpConfig) {
 		cfg.Servers[0].HostKeyFingerprint = "SHA256:somebodyElse"

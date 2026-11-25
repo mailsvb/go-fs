@@ -1,5 +1,3 @@
-//go:build !light && !no_mp3tags
-
 package mp3edit
 
 import (
@@ -21,9 +19,6 @@ import (
 	"github.com/mailsvb/go-tag/mp3gain"
 	"github.com/mailsvb/go-tag/mp3tags"
 )
-
-// Compiled says the binary was built with the part.
-const Compiled = true
 
 // Genres are the names the genre field suggests, in alphabetical order.
 func Genres() []string { return mp3tags.SortedGenres() }

@@ -2,7 +2,7 @@
 // binary into an update file that go-fs accepts over HTTP.
 //
 //	go run ./tools/sign -generate
-//	GOFS_SIGNING_KEY=... go run ./tools/sign -in dist/go-fs_1.2.0_linux_arm64 -out dist/go-fs_1.2.0_linux_arm64.update
+//	GOFS_SIGNING_KEY=... go run ./tools/sign -in dist/go-fs_1.2.0_linux_amd64 -out dist/go-fs_1.2.0_linux_amd64.update
 package main
 
 import (

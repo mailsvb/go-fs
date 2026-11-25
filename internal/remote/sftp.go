@@ -1,5 +1,3 @@
-//go:build !light && !no_sftp_remote
-
 package remote
 
 import (
@@ -24,7 +22,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/logging"
 )
 
-// Sending by SFTP is left out by the tag no_sftp_remote, and by light.
+// Sending by SFTP.
 func init() {
 	registerProtocol(protocol{id: config.ServerTypeSFTP, open: openSFTPFS, hostKey: sshHostKey})
 }

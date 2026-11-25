@@ -6,12 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 func TestSyncs(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	folder := t.TempDir()
 	mkdir(t, folder, "photos")
 	backup := Server{Name: "backup", Type: ServerTypeSFTP, Host: "sftp.example.com", Username: "u",
@@ -104,7 +101,6 @@ func TestSyncs(t *testing.T) {
 }
 
 func TestUsableSyncs(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	cfg := Default()
 	cfg.Servers = []Server{{Name: "backup", Type: ServerTypeSFTP}}
 	cfg.Syncs = []Sync{

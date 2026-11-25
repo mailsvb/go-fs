@@ -1,5 +1,3 @@
-//go:build !light && !no_fdroid
-
 package repository
 
 import (
@@ -16,7 +14,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/fdroid"
 )
 
-// The F-Droid repository is left out by the tag no_fdroid, and by light.
+// The F-Droid repository.
 func init() {
 	kinds[config.RepositoryTypeFDroid] = func(repo config.Repository, folder string, _ *slog.Logger) (kind, Status, error) {
 		key, err := config.JARKey(repo.SigningKey)

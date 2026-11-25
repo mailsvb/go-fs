@@ -1,5 +1,3 @@
-//go:build !light && (!no_sftpd || !no_sftp_remote)
-
 package config
 
 import (
@@ -12,9 +10,7 @@ import (
 	"golang.org/x/sys/cpu"
 )
 
-// The algorithms of [general.ssh] are known to golang.org/x/crypto/ssh, which
-// only a binary with the SFTP server or sending by SFTP imports; the tags
-// no_sftpd and no_sftp_remote together, or light, leave this file out.
+// The algorithms of [general.ssh] are known to golang.org/x/crypto/ssh.
 func init() {
 	checkSSHAlgorithms = SSH.checkAlgorithms
 	insecureSSHAlgorithms = SSH.insecure

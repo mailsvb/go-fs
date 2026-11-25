@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // TestSchemaCoversTheWholeFile is the test that keeps the interface flexible:
@@ -14,7 +13,6 @@ import (
 // configuration has to appear in it without anyone adding it by hand.
 func TestSchemaCoversTheWholeFile(t *testing.T) {
 	// the whole file is on the page of a binary with every part
-	skipWithout(t, features.All()...)
 	schema, skipped := build()
 	if len(skipped) != 0 {
 		t.Fatalf("the schema cannot edit %v", skipped)
@@ -67,7 +65,6 @@ func TestSchemaCoversTheWholeFile(t *testing.T) {
 // and its switches, and not its rights or its secrets.
 func TestSummaryFields(t *testing.T) {
 	// the whole file is on the page of a binary with every part
-	skipWithout(t, features.All()...)
 	schema, _ := build()
 	summary := make(map[string]bool)
 	for _, section := range schema.Sections {
@@ -101,7 +98,6 @@ func TestSummaryFields(t *testing.T) {
 // password is masked and a public key is not.
 func TestFieldKinds(t *testing.T) {
 	// the whole file is on the page of a binary with every part
-	skipWithout(t, features.All()...)
 	schema, _ := build()
 	kinds := make(map[string]string)
 	for _, section := range schema.Sections {
@@ -158,7 +154,6 @@ func TestFieldKinds(t *testing.T) {
 // browser too.
 func TestHelpComesFromTheFile(t *testing.T) {
 	// the whole file is on the page of a binary with every part
-	skipWithout(t, features.All()...)
 	schema, _ := build()
 	help := make(map[string]string)
 	for _, section := range schema.Sections {
@@ -193,7 +188,6 @@ func TestHelpComesFromTheFile(t *testing.T) {
 // back unchanged, has to describe the same configuration.
 func TestValuesRoundTrip(t *testing.T) {
 	// the whole file is on the page of a binary with every part
-	skipWithout(t, features.All()...)
 	schema, _ := build()
 
 	yes := true
@@ -293,7 +287,6 @@ func TestTokenTable(t *testing.T) {
 // key, so its kind, folder and key are not typed into the list, and the tab is
 // called what the menus of the other servers call it.
 func TestRepositoryTable(t *testing.T) {
-	skipWithout(t, features.RPM, features.FDroid)
 	schema, _ := build()
 	var section Section
 	for _, s := range schema.Sections {
@@ -326,7 +319,6 @@ func TestRepositoryTable(t *testing.T) {
 // the list has no blank record to add, and only the name and the rights are
 // typed into it. A folded server is named by its name.
 func TestServerTable(t *testing.T) {
-	skipWithout(t, features.SFTPRemote, features.Cryptomator)
 	schema, _ := build()
 	var table Table
 	for _, section := range schema.Sections {
@@ -399,7 +391,6 @@ func TestTheFoldersAreGeneralKeys(t *testing.T) {
 // TestApplyCoercesNumbers covers what JSON does to an integer: it arrives as a
 // float, or as the text of an input box.
 func TestApplyCoercesNumbers(t *testing.T) {
-	skipWithout(t, features.FTP, features.TFTP)
 	schema, _ := build()
 	values := schema.Values(config.Default())
 	values["ftp"].(map[string]any)["port"] = "2121"

@@ -8,14 +8,12 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // A table nested in a section, [general.ssh], is a subsection of it: the page
 // shows it under a tab of its own below the section's, and its keys are read
 // and written as a table inside the section's.
 func TestANestedTableIsASubsection(t *testing.T) {
-	skipWithout(t, features.SFTP)
 	schema, skipped := build()
 	if len(skipped) != 0 {
 		t.Fatalf("the schema cannot edit %v", skipped)
@@ -58,7 +56,6 @@ func TestANestedTableIsASubsection(t *testing.T) {
 }
 
 func TestASubsectionRoundTrips(t *testing.T) {
-	skipWithout(t, features.SFTP)
 	schema, _ := build()
 	cfg := config.Default()
 	cfg.General.SSH.Ciphers = []string{"aes128-gcm@openssh.com"}
@@ -92,7 +89,6 @@ func TestASubsectionRoundTrips(t *testing.T) {
 }
 
 func TestApplyWritesASubsection(t *testing.T) {
-	skipWithout(t, features.SFTP)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 

@@ -1,5 +1,3 @@
-//go:build !light && !no_sftp_remote
-
 package remote_test
 
 import (

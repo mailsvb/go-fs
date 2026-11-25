@@ -198,8 +198,7 @@ type settings struct {
 	ssh config.SSH
 	// servers are the [[servers]] entries, the hosts a send may name.
 	servers []config.Server
-	// disks is the folder of the Disks page, nil while it is off or the
-	// binary was built without it.
+	// disks is the folder of the Disks page, nil while it is off.
 	disks diskFolder
 	// registryTrusts are [[http.registry.trust]], read, and
 	// verifications what checking signatures against them came to.

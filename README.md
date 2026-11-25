@@ -33,7 +33,8 @@ HTTP server serves to its admins.
 ## Get it
 
 Every [release](https://github.com/mailsvb/go-fs/releases) has an rpm for
-x86_64 and aarch64 and an msi for Windows x64. Both install go-fs as a
+Linux x86_64, an msi for Windows x64 and a binary for macOS on Apple silicon.
+The rpm and the msi install go-fs as a
 service, with its configuration and data in `/var/lib/go-fs` or
 `C:\ProgramData\go-fs`, ready to start ([details](docs/INSTALL.md)). On openSUSE and SLES (Fedora and RHEL:
 see the [package page](https://mailsvb.github.io/go-fs/)):
@@ -91,7 +92,7 @@ or on the admin page. Every key is explained in
 | [Browser](docs/BROWSER.md) | browser login, document viewer, audio and video, MP3 tags and volume, trash, folder download, share links, play on Sonos, fetch from URL |
 | [Remote servers](docs/REMOTE-SERVERS.md) | send to SFTP, SMB or Artifactory, Cryptomator vaults, sync |
 | [Logging](docs/LOGGING.md) | log levels and format, reading the log |
-| [Development](docs/DEVELOPMENT.md) | building, versioning, releases, go-fs-light |
+| [Development](docs/DEVELOPMENT.md) | building, versioning, releases |
 
 ## License
 

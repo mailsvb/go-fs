@@ -20,17 +20,14 @@ WORKDIR /src
 
 RUN go mod download
 
-# Both products, as the Makefile builds them but not stripped: go-fs, and
-# go-fs-light, which leaves out every protocol but HTTP, HTTPS, S3 and the
-# registry.
-RUN go build -trimpath -o /usr/local/bin/go-fs . \
-    && go build -trimpath -tags light -o /usr/local/bin/go-fs-light .
+# go-fs, as the Makefile builds it but not stripped.
+RUN go build -trimpath -o /usr/local/bin/go-fs .
 
 # Compile every test binary, the fuzz targets with them, so that reproducers
 # build offline, then run the suite once as a baseline without failing the
 # build on it. internal/httpd starts many servers and gets flaky when several
 # test binaries run at once, hence -p 2.
-RUN go vet ./... && go vet -tags light ./... \
+RUN go vet ./... \
     && go test -count=1 -run '^$' ./... >/dev/null
 RUN go test -count=1 -p 2 -timeout 20m ./... \
     || echo 'WARNING: go test reported failures'

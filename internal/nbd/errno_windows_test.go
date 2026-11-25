@@ -1,5 +1,3 @@
-//go:build !light && !no_nbd
-
 package nbd
 
 import "golang.org/x/sys/windows"

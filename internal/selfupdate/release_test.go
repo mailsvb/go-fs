@@ -188,17 +188,16 @@ func TestNewerVersion(t *testing.T) {
 	}
 }
 
-// The update files of go-fs and go-fs-light share a release, told apart by
-// the product at the start of their names.
+// The update file of a platform is named after the product, the version and
+// the platform, with .exe for Windows.
 func TestAssetName(t *testing.T) {
-	want := map[string][2]string{
-		"go-fs":       {"go-fs_1.2.0_linux_arm64.update", "go-fs_1.2.0_windows_amd64.exe.update"},
-		"go-fs-light": {"go-fs-light_1.2.0_linux_arm64.update", "go-fs-light_1.2.0_windows_amd64.exe.update"},
-	}[Product]
-	if got := assetName("1.2.0", "linux", "arm64"); got != want[0] {
-		t.Errorf("linux: %q, want %q", got, want[0])
-	}
-	if got := assetName("1.2.0", "windows", "amd64"); got != want[1] {
-		t.Errorf("windows: %q, want %q", got, want[1])
+	for _, test := range []struct{ goos, goarch, want string }{
+		{"linux", "amd64", "go-fs_1.2.0_linux_amd64.update"},
+		{"darwin", "arm64", "go-fs_1.2.0_darwin_arm64.update"},
+		{"windows", "amd64", "go-fs_1.2.0_windows_amd64.exe.update"},
+	} {
+		if got := assetName("1.2.0", test.goos, test.goarch); got != test.want {
+			t.Errorf("%s/%s: %q, want %q", test.goos, test.goarch, got, test.want)
+		}
 	}
 }

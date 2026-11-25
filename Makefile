@@ -1,13 +1,6 @@
 BINARY  := go-fs
 DIST    := dist
 
-# go-fs-light is the second product built from the same code: the build tags
-# in LIGHT_TAGS leave out every protocol but HTTP, HTTPS, the S3 API and the
-# container registry, and the vaults of Cryptomator. Its files are named after it, its updates are signed
-# with a key of their own, and it installs to the same paths as go-fs.
-LIGHT      := $(BINARY)-light
-LIGHT_TAGS := light
-
 # VERSION is the released version and lives in ./VERSION so it is bumped in one
 # place. Override it on the command line for a one off build, e.g. from CI:
 #   make release VERSION=1.0
@@ -21,29 +14,24 @@ DEV_VERSION := $(VERSION)-dev-$(STAMP)
 GOFLAGS  := -trimpath
 BUILDENV := CGO_ENABLED=0
 
-# the platforms a release has a package for: the rpm on linux, the msi on
-# windows/amd64
-PLATFORMS := linux/amd64 linux/arm64 windows/amd64
+# the platforms a release is built for: linux/amd64, which the rpm packages,
+# darwin/arm64, which ships as a plain binary, and windows/amd64, which the
+# msi packages
+PLATFORMS := linux/amd64 darwin/arm64 windows/amd64
 
-# tags prints the go build flag for the product named in the shell variable
-# product: the light tags for go-fs-light, nothing for go-fs.
-tags = $$(if [ "$$product" = "$(LIGHT)" ]; then echo "-tags $(LIGHT_TAGS)"; fi)
-
-# crosscompile builds both products for every platform in PLATFORMS at the
-# version passed in. build and release differ only in that version. The
-# Windows binary is the one the msi installs, stamped as such, so that its
-# .update keeps an msi install an msi install.
+# crosscompile builds go-fs for every platform in PLATFORMS at the version
+# passed in. build and release differ only in that version. The Windows
+# binary is the one the msi installs, stamped as such, so that its .update
+# keeps an msi install an msi install.
 define crosscompile
 	@mkdir -p $(DIST)
-	@for product in $(BINARY) $(LIGHT); do \
-		for platform in $(PLATFORMS); do \
-			os=$${platform%/*}; arch=$${platform#*/}; \
-			out=$(DIST)/$${product}_$(1)_$${os}_$${arch}; stamp=; \
-			if [ "$$os" = "windows" ]; then out=$$out.exe; stamp="-X main.packaging=msi"; fi; \
-			echo "building $$out"; \
-			GOOS=$$os GOARCH=$$arch $(BUILDENV) go build $(GOFLAGS) $(tags) \
-				-ldflags "-s -w -X main.version=$(1) $$stamp" -o $$out . || exit 1; \
-		done; \
+	@for platform in $(PLATFORMS); do \
+		os=$${platform%/*}; arch=$${platform#*/}; \
+		out=$(DIST)/$(BINARY)_$(1)_$${os}_$${arch}; stamp=; \
+		if [ "$$os" = "windows" ]; then out=$$out.exe; stamp="-X main.packaging=msi"; fi; \
+		echo "building $$out"; \
+		GOOS=$$os GOARCH=$$arch $(BUILDENV) go build $(GOFLAGS) \
+			-ldflags "-s -w -X main.version=$(1) $$stamp" -o $$out . || exit 1; \
 	done
 	@$(MAKE) --no-print-directory checksums
 endef
@@ -119,35 +107,31 @@ clean:
 	rm -rf $(DIST) build $(BINARY) coverage.out
 
 # release cross compiles every supported platform at the released version.
-# With the private keys in GOFS_SIGNING_KEY and GOFS_LIGHT_SIGNING_KEY it
-# writes the signed .update files and keeps only those: a release ships
-# packages and updates, not the plain binaries. Without the keys the binaries
-# stay; the release workflow insists on both.
+# With the private key in GOFS_SIGNING_KEY it writes the signed .update files
+# and keeps those: a release ships packages and updates rather than plain
+# binaries, but for that of darwin, which has no installer and so is the
+# download for macOS. Without the key the binaries stay; the release workflow
+# insists on it.
 release: clean viewer-deps
 	$(call crosscompile,$(VERSION))
-	@if [ -n "$$GOFS_SIGNING_KEY" ] && [ -n "$$GOFS_LIGHT_SIGNING_KEY" ]; then \
+	@if [ -n "$$GOFS_SIGNING_KEY" ]; then \
 		$(MAKE) --no-print-directory sign; \
-		for bin in $(DIST)/$(BINARY)_* $(DIST)/$(LIGHT)_*; do \
-			case $$bin in *.update) ;; *) rm -f $$bin;; esac; \
+		for bin in $(DIST)/$(BINARY)_*; do \
+			case $$bin in *.update|*_darwin_*) ;; *) rm -f $$bin;; esac; \
 		done; \
 		$(MAKE) --no-print-directory checksums; \
 	else \
-		echo "GOFS_SIGNING_KEY or GOFS_LIGHT_SIGNING_KEY is not set, no .update files were written"; \
+		echo "GOFS_SIGNING_KEY is not set, no .update files were written"; \
 	fi
 
 # sign appends the update signature to every binary in dist, writing the
 # .update file go-fs accepts over HTTP next to each one, and rewrites the
-# checksums to cover them. The private key of go-fs is read from
-# GOFS_SIGNING_KEY, that of go-fs-light from GOFS_LIGHT_SIGNING_KEY; the sign
-# tool reads GOFS_SIGNING_KEY alone, so it is handed the one that fits.
+# checksums to cover them. The private key is read from GOFS_SIGNING_KEY.
 sign:
 	@test -n "$$GOFS_SIGNING_KEY" || (echo "GOFS_SIGNING_KEY is not set"; exit 1)
-	@test -n "$$GOFS_LIGHT_SIGNING_KEY" || (echo "GOFS_LIGHT_SIGNING_KEY is not set"; exit 1)
-	@for bin in $(DIST)/$(BINARY)_* $(DIST)/$(LIGHT)_*; do \
+	@for bin in $(DIST)/$(BINARY)_*; do \
 		case $$bin in *.update) continue;; esac; \
-		key=$$GOFS_SIGNING_KEY; \
-		case $$bin in $(DIST)/$(LIGHT)_*) key=$$GOFS_LIGHT_SIGNING_KEY;; esac; \
-		GOFS_SIGNING_KEY=$$key go run ./tools/sign -in $$bin -out $$bin.update || exit 1; \
+		go run ./tools/sign -in $$bin -out $$bin.update || exit 1; \
 	done
 	@$(MAKE) --no-print-directory checksums
 
@@ -162,52 +146,30 @@ checksums:
 packages: rpm msi-inputs
 	@$(MAKE) --no-print-directory checksums
 
-# what the rpm of each product serves, the first line of its description and
-# so its summary
-RPM_SERVES       := FTP, FTPS, SFTP, HTTP, HTTPS, an S3 compatible API, TFTP and NBD
-RPM_LIGHT_SERVES := HTTP, HTTPS, an S3 compatible API and an OCI registry
-
-# nfpm takes its files from fixed paths, see packaging/linux/nfpm.yaml, so the
-# products and architectures are packaged one after the other. Both products
-# are packaged from that one file, told apart by NAME, CONFLICTS and SERVES,
-# and conflict with each other: they install the same files. With
+# nfpm takes its files from fixed paths, see packaging/linux/nfpm.yaml. With
 # SIGNING_KEY_FILE naming an armored PGP private key, and NFPM_RPM_PASSPHRASE
-# unlocking it, the rpms are signed, as the package repository needs them to be.
-# Each ships the starter configuration as /usr/share/go-fs/go-fs.toml, which
-# its first install copies to /var/lib/go-fs/go-fs.toml.
+# unlocking it, the rpm is signed, as the package repository needs it to be.
+# It ships the starter configuration as /usr/share/go-fs/go-fs.toml, which its
+# first install copies to /var/lib/go-fs/go-fs.toml.
 rpm: viewer-deps
 	@mkdir -p $(PKG)/linux $(DIST)
 	@go run ./tools/starter -installer rpm -o $(PKG)/linux/go-fs.toml
-	@for product in $(BINARY) $(LIGHT); do \
-		if [ "$$product" = "$(LIGHT)" ]; then \
-			conflicts=$(BINARY); serves="$(RPM_LIGHT_SERVES)"; \
-		else \
-			conflicts=$(LIGHT); serves="$(RPM_SERVES)"; \
-		fi; \
-		for arch in amd64 arm64; do \
-			echo "building $(PKG)/linux/$(BINARY) of $$product for $$arch"; \
-			GOOS=linux GOARCH=$$arch $(BUILDENV) go build $(GOFLAGS) $(tags) \
-				-ldflags "-s -w -X main.version=$(VERSION) -X main.packaging=rpm" \
-				-o $(PKG)/linux/$(BINARY) . || exit 1; \
-			NAME=$$product CONFLICTS=$$conflicts SERVES="$$serves" \
-			VERSION=$(VERSION) ARCH=$$arch $(NFPM) package --config packaging/linux/nfpm.yaml \
-				--packager rpm --target $(DIST)/ || exit 1; \
-		done; \
-	done
+	@echo "building $(PKG)/linux/$(BINARY)"
+	@GOOS=linux GOARCH=amd64 $(BUILDENV) go build $(GOFLAGS) \
+		-ldflags "-s -w -X main.version=$(VERSION) -X main.packaging=rpm" \
+		-o $(PKG)/linux/$(BINARY) .
+	@VERSION=$(VERSION) ARCH=amd64 $(NFPM) package --config packaging/linux/nfpm.yaml \
+		--packager rpm --target $(DIST)/
 
-# both msi install the same folders, each its own product's binary, and the
-# same starter configuration, as C:\ProgramData\go-fs\go-fs.toml
+# the msi installs the binary and the starter configuration, as
+# C:\ProgramData\go-fs\go-fs.toml
 msi-inputs: viewer-deps
 	@mkdir -p $(PKG)
 	@go run ./tools/starter -installer msi -o $(PKG)/go-fs.msi.toml
-	@for product in $(BINARY) $(LIGHT); do \
-		for arch in amd64; do \
-			bin=$(PKG)/$${product}_windows_$$arch.exe; \
-			echo "building $$bin"; \
-			GOOS=windows GOARCH=$$arch $(BUILDENV) go build $(GOFLAGS) $(tags) \
-				-ldflags "-s -w -X main.version=$(VERSION) -X main.packaging=msi" -o $$bin . || exit 1; \
-		done; \
-	done
+	@echo "building $(PKG)/$(BINARY)_windows_amd64.exe"
+	@GOOS=windows GOARCH=amd64 $(BUILDENV) go build $(GOFLAGS) \
+		-ldflags "-s -w -X main.version=$(VERSION) -X main.packaging=msi" \
+		-o $(PKG)/$(BINARY)_windows_amd64.exe .
 
 # What packaging/docker/Dockerfile builds the container image from, and all it
 # sees: the linux/amd64 binary stamped as the image's, so that it leaves

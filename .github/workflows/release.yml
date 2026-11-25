@@ -18,18 +18,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Every release carries signed .update files, which is what a running
-      # go-fs accepts over HTTP, those of go-fs-light signed with a key of
-      # their own, and its rpm packages and repository are signed with the PGP
+      # go-fs accepts over HTTP, and its rpm package and repository are signed with the PGP
       # package key. Without the keys there is nothing to sign them with, so
       # this is checked before anything is committed.
       - name: check the signing keys
         env:
           GOFS_SIGNING_KEY: ${{ secrets.GOFS_SIGNING_KEY }}
-          GOFS_LIGHT_SIGNING_KEY: ${{ secrets.GOFS_LIGHT_SIGNING_KEY }}
           PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
         run: |
           missing=0
-          for name in GOFS_SIGNING_KEY GOFS_LIGHT_SIGNING_KEY PACKAGE_SIGNING_KEY; do
+          for name in GOFS_SIGNING_KEY PACKAGE_SIGNING_KEY; do
             if [ -z "${!name}" ]; then
               echo "::error::the $name secret is not set"
               missing=1
@@ -40,15 +38,14 @@ jobs:
       - uses: actions/checkout@v7
 
       # A build whose keys file holds no key refuses every update, so a release
-      # made from the placeholder files could never be updated over HTTP.
-      - name: check the keys files
+      # made from the placeholder file could never be updated over HTTP.
+      - name: check the keys file
         run: |
-          for file in internal/selfupdate/keys.txt internal/selfupdate/keys_light.txt; do
-            if ! grep -qvE '^[[:space:]]*(#|$)' "$file"; then
-              echo "::error::$file holds no key; add the public key of its signing key"
-              exit 1
-            fi
-          done
+          file=internal/selfupdate/keys.txt
+          if ! grep -qvE '^[[:space:]]*(#|$)' "$file"; then
+            echo "::error::$file holds no key; add the public key of its signing key"
+            exit 1
+          fi
 
       - uses: actions/setup-go@v7
         with:
@@ -101,11 +98,10 @@ jobs:
       - name: make release
         env:
           GOFS_SIGNING_KEY: ${{ secrets.GOFS_SIGNING_KEY }}
-          GOFS_LIGHT_SIGNING_KEY: ${{ secrets.GOFS_LIGHT_SIGNING_KEY }}
         run: make release VERSION=${{ inputs.version }}
 
-      # the signed rpm packages of both products into dist, and what the msi
-      # job below builds the Windows installers from into build/pkg
+      # the signed rpm package into dist, and what the msi job below builds
+      # the Windows installer from into build/pkg
       - name: make packages
         env:
           NFPM_RPM_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
@@ -124,7 +120,6 @@ jobs:
           name: msi-inputs
           path: |
             build/pkg/go-fs_windows_amd64.exe
-            build/pkg/go-fs-light_windows_amd64.exe
             build/pkg/go-fs.msi.toml
           if-no-files-found: error
 
@@ -156,25 +151,20 @@ jobs:
 
       # Code signing goes here once there is a certificate, for example with
       # Azure Trusted Signing (azure/trusted-signing-action): sign
-      # build/pkg/go-fs_windows_amd64.exe and
-      # build/pkg/go-fs-light_windows_amd64.exe before the msi are built, so
-      # that the installed binary is signed, and the .msi after.
+      # build/pkg/go-fs_windows_amd64.exe before the msi is built, so that the
+      # installed binary is signed, and the .msi after.
 
-      # one msi per product, from the same wxs
       - name: build the msi
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          foreach ($product in 'go-fs', 'go-fs-light') {
-            wix build packaging/windows/go-fs.wxs -arch x64 `
-              -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
-              -d Product=$product `
-              -d Version=${{ inputs.version }} `
-              -d Bin="$PWD\build\pkg\${product}_windows_amd64.exe" `
-              -d Config="$PWD\build\pkg\go-fs.msi.toml" `
-              -o dist/$product-${{ inputs.version }}-x64.msi
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
+          wix build packaging/windows/go-fs.wxs -arch x64 `
+            -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
+            -d Version=${{ inputs.version }} `
+            -d Bin="$PWD\build\pkg\go-fs_windows_amd64.exe" `
+            -d Config="$PWD\build\pkg\go-fs.msi.toml" `
+            -o dist/go-fs-${{ inputs.version }}-x64.msi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v7
         with:

@@ -16,7 +16,6 @@ import (
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/httpd/viewer"
 	"github.com/mailsvb/go-fs/internal/logging"
-	"github.com/mailsvb/go-fs/internal/mp3edit"
 	"github.com/mailsvb/go-fs/internal/remote"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
@@ -317,7 +316,7 @@ func remoteRights(cred credential, server config.Server) rights {
 		Downloads:         mayFollowFetches(cred),
 		RemoteFetch:       allowed.Download && granted(perms, actCreate) && !isRegistryServer(server),
 		RemoteFetchFolder: allowed.Download && granted(perms, actCreate) && granted(perms, actMkdir) && !isRegistryServer(server),
-		MP3Tags: mp3edit.Compiled && allowed.Download && allowed.Upload &&
+		MP3Tags: allowed.Download && allowed.Upload &&
 			granted(perms, actOverwrite),
 	}
 }

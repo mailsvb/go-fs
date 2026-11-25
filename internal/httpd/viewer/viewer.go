@@ -1,5 +1,3 @@
-//go:build !no_viewer
-
 // Package viewer is the document viewer of the web interface: the page the
 // listing opens over itself to show a file in the browser, and the libraries
 // it draws them with, pdf.js for PDF, the viewer of Office Open XML for Word,
@@ -31,10 +29,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-// Compiled says the binary was built with the viewer, which the tag
-// no_viewer leaves out.
-const Compiled = true
 
 //go:embed app libs
 var files embed.FS

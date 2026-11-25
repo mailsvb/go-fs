@@ -7,12 +7,10 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/remote/remotetest"
 )
 
 func TestSyncsRunBesideTheServers(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	sup, logs, ctx := newSupervisor(t)
 	cfg := baseConfig(t)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")

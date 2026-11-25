@@ -1,5 +1,3 @@
-//go:build !no_viewer
-
 package viewer
 
 import (

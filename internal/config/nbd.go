@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // The material of the NBD server that is neither a certificate it shows nor
@@ -23,12 +21,8 @@ const (
 	KindCRL                  = "crl"
 )
 
-// disksFolder is general.baseFolderDisks to a binary that has the Disks page,
-// and nothing to one built without it, which leaves the folder alone.
+// disksFolder is general.baseFolderDisks.
 func (c Config) disksFolder() string {
-	if !features.Has(features.NBD) {
-		return ""
-	}
 	return c.General.BaseFolderDisks
 }
 

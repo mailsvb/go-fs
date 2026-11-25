@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/audio/audiotest"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/remote/remotetest"
 )
 
@@ -68,7 +67,6 @@ func mp3Server(t *testing.T) *testServer {
 // The editor is offered to an account that may replace a file, in the menu
 // of an MP3 file, and for the whole folder where it has one.
 func TestListingOffersMP3TagsToWhoMayReplace(t *testing.T) {
-	skipWithout(t, features.MP3Tags)
 	server := mp3Server(t)
 	server.write(t, "music/song.mp3", song("One"))
 	server.write(t, "docs/notes.txt", "hello")
@@ -104,7 +102,6 @@ func TestListingOffersMP3TagsToWhoMayReplace(t *testing.T) {
 }
 
 func TestMP3TagsAreReadAndSaved(t *testing.T) {
-	skipWithout(t, features.MP3Tags)
 	server := mp3Server(t)
 	server.write(t, "music/song.mp3", song("One"))
 	link := "/music/song.mp3?go-fs=mp3tags&mp3tags="
@@ -154,7 +151,6 @@ func TestMP3TagsAreReadAndSaved(t *testing.T) {
 }
 
 func TestMP3VolumeIsMeasuredAndChanged(t *testing.T) {
-	skipWithout(t, features.MP3Tags)
 	server := mp3Server(t)
 	server.write(t, "music/a.mp3", song("A"))
 	server.write(t, "music/b.mp3", song("B"))
@@ -202,7 +198,6 @@ func TestMP3VolumeIsMeasuredAndChanged(t *testing.T) {
 // On a stored server the editor reads the file there and uploads it again,
 // where the server allows uploads.
 func TestRemoteMP3TagsAreSaved(t *testing.T) {
-	skipWithout(t, features.SFTPRemote, features.MP3Tags)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "music/song.mp3", song("One"))
 	server, session := remoteServer(t, host, func(cfg *httpConfig) {

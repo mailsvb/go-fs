@@ -1,5 +1,3 @@
-//go:build !light && !no_smb
-
 package remote
 
 import (
@@ -24,7 +22,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/logging"
 )
 
-// Sending by SMB is left out by the tag no_smb, and by light.
+// Sending by SMB.
 func init() {
 	registerProtocol(protocol{id: config.ServerTypeSMB,
 		open: func(ctx context.Context, l Login, _ config.SSH) (FS, error) { return openSMB(ctx, l) }})

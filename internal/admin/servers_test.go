@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/remote/remotetest"
 )
 
@@ -50,7 +49,6 @@ func loadServers(t *testing.T, path string) []config.Server {
 }
 
 func TestServerHostKeyIsShownWithoutALogin(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	_, front := testServer(t, testConfig(t))
 
@@ -76,7 +74,6 @@ func TestServerHostKeyIsShownWithoutALogin(t *testing.T) {
 }
 
 func TestServerIsStoredOnceTheLoginWorks(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	path := testConfig(t)
 	_, front := testServer(t, path)
@@ -148,7 +145,6 @@ func TestServerIsStoredOnceTheLoginWorks(t *testing.T) {
 }
 
 func TestServerIsEditedInPlace(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	path := testConfig(t)
 	_, front := testServer(t, path)
@@ -184,7 +180,6 @@ func TestServerIsEditedInPlace(t *testing.T) {
 // The dialog edits the login of a server, and what the server allows stays as
 // the file has it.
 func TestServerEditKeepsTheRights(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	path := testConfig(t)
 	_, front := testServer(t, path)
@@ -221,7 +216,6 @@ func TestServerEditKeepsTheRights(t *testing.T) {
 }
 
 func TestStateOffersTheProtocols(t *testing.T) {
-	skipWithout(t, features.SFTPRemote, features.SMB)
 	_, front := testServer(t, testConfig(t))
 	body := get(t, front)
 	if len(body.Protocols) != 4 || body.Protocols[0].ID != config.ServerTypeSFTP ||
@@ -276,7 +270,6 @@ func TestArtifactoryIsStoredOnceTheTokenWorks(t *testing.T) {
 // A server can be stored with a new vault, whose recovery key is answered
 // once, and an edit keeps the password of the vault unless one is typed in.
 func TestServerWithAVault(t *testing.T) {
-	skipWithout(t, features.SFTPRemote, features.Cryptomator)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	path := testConfig(t)
 	_, front := testServer(t, path)

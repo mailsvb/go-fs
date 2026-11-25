@@ -1,4 +1,4 @@
-//go:build !light && !no_nbd && !windows
+//go:build !windows
 
 package nbd
 

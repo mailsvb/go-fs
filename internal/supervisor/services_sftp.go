@@ -1,5 +1,3 @@
-//go:build !light && !no_sftpd
-
 package supervisor
 
 import (
@@ -9,7 +7,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/sftp"
 )
 
-// The SFTP server, left out by the tag no_sftpd and by light.
+// The SFTP server.
 func init() {
 	register(entry{
 		name:    "sftp",

@@ -1,5 +1,3 @@
-//go:build !light && !no_mp3tags
-
 package mp3edit
 
 import (

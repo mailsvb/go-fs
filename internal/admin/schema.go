@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // The form is generated rather than written. Every field of config.Config
@@ -40,8 +39,8 @@ type Section struct {
 	Subsections []Section `json:"subsections,omitempty"`
 
 	// index locates the section in config.Config, and a subsection in its
-	// section, as it does for a field: sections the binary was built without
-	// are left out, so the place in Sections is not the place in the struct.
+	// section, as it does for a field: keys without a toml name are left
+	// out, so the place in Sections is not the place in the struct.
 	index int
 }
 
@@ -166,11 +165,6 @@ func build() (Schema, []string) {
 		field := configType.Field(i)
 		key := tomlName(field)
 		switch {
-		case !built(field):
-			// a section of a part the binary was built without is not
-			// shown, and a save leaves it at its defaults
-			continue
-
 		case key == "":
 			skipped = append(skipped, field.Name)
 			continue
@@ -211,13 +205,6 @@ func build() (Schema, []string) {
 	return schema, skipped
 }
 
-// built reports whether the binary has the part of go-fs a field of the
-// configuration is for, as its feature tag names it. A field without one is
-// in every binary.
-func built(field reflect.StructField) bool {
-	return features.Any(field.Tag.Get("feature"))
-}
-
 // buildSection walks the keys of one table of the file, path being its name
 // in the file, "ftp" or "general.ssh". A struct among them is a subsection
 // when nested allows one, which it does at the top level only: the tab has
@@ -229,7 +216,7 @@ func buildSection(structure reflect.Type, path string, nested bool) (Section, []
 	for k := range structure.NumField() {
 		inner := structure.Field(k)
 		name := tomlName(inner)
-		if name == "" || !built(inner) {
+		if name == "" {
 			continue
 		}
 		switch kind, ok := kindOf(inner.Type); {
@@ -298,7 +285,7 @@ func buildTable(field reflect.StructField, path string, index int) (Table, []str
 	for i := range element.NumField() {
 		inner := element.Field(i)
 		name := tomlName(inner)
-		if name == "" || !built(inner) {
+		if name == "" {
 			continue
 		}
 		kind, ok := kindOf(inner.Type)
@@ -503,9 +490,8 @@ func tomlName(field reflect.StructField) string {
 // Values renders a configuration as the tree the page edits: the toml keys of
 // the schema, with the values the file holds.
 func (s Schema) Values(cfg config.Config) map[string]any {
-	// a stored server or a repository of a part the binary was built without
-	// is not shown either; handleApply carries it over into the file as it
-	// was
+	// a stored server or a repository of a kind the binary does not know is
+	// not shown
 	cfg.Servers = cfg.UsableServers()
 	cfg.Repositories = cfg.UsableRepositories()
 	root := reflect.ValueOf(cfg)

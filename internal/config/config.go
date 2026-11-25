@@ -28,7 +28,6 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/vfs"
 )
 
@@ -41,30 +40,25 @@ func Template() []byte {
 }
 
 // Config is the whole configuration file.
-//
-// A field tagged feature belongs to the optional parts of go-fs it names, any
-// of a comma separated list (see internal/features): the admin interface
-// leaves it out in a binary built without them. The field itself is there in
-// every binary, so that each reads the file of the other.
 type Config struct {
 	General General `toml:"general"`
 	Users   []User  `toml:"users"`
 	Tokens  []Token `toml:"tokens"`
-	FTP     FTP     `toml:"ftp" feature:"ftp"`
-	FTPS    FTPS    `toml:"ftps" feature:"ftp"`
-	SFTP    SFTP    `toml:"sftp" feature:"sftp"`
+	FTP     FTP     `toml:"ftp"`
+	FTPS    FTPS    `toml:"ftps"`
+	SFTP    SFTP    `toml:"sftp"`
 	HTTP    HTTP    `toml:"http"`
 	HTTPS   HTTPS   `toml:"https"`
-	TFTP    TFTP    `toml:"tftp" feature:"tftp"`
-	NBD     NBD     `toml:"nbd" feature:"nbd"`
+	TFTP    TFTP    `toml:"tftp"`
+	NBD     NBD     `toml:"nbd"`
 	// Servers are the remote hosts the file listing sends files to by name.
 	Servers []Server `toml:"servers"`
 	// Repositories are the package repositories go-fs keeps in folders the
 	// http server serves.
-	Repositories []Repository `toml:"repositories" feature:"rpm,fdroid,jellyfin,subsonic"`
+	Repositories []Repository `toml:"repositories"`
 	// Syncs keep folders the servers serve and folders of stored servers
 	// alike, on a schedule.
-	Syncs []Sync `toml:"syncs" feature:"sftp-remote"`
+	Syncs []Sync `toml:"syncs"`
 }
 
 // General holds what every server shares.
@@ -87,7 +81,7 @@ type General struct {
 	// inside any other folder of go-fs: nothing but the Disks page and the NBD
 	// server may touch an image, since a file server that replaced one under
 	// a running VM would corrupt its disk.
-	BaseFolderDisks string `toml:"baseFolderDisks" feature:"nbd"`
+	BaseFolderDisks string `toml:"baseFolderDisks"`
 	// BaseFolderTemp holds the not-yet-finalized bytes of an upload to the
 	// http server: a chunked upload, an S3 object, a WebDAV file or a fetch.
 	// It must neither be nor hold nor lie inside a folder any server serves
@@ -138,7 +132,7 @@ type General struct {
 
 	// SSH is the SSH transport under the SFTP server and under sending a file
 	// to another host from the listing.
-	SSH SSH `toml:"ssh" feature:"sftp,sftp-remote"`
+	SSH SSH `toml:"ssh"`
 
 	// Tools are the programs of the OS go-fs uses when it finds them, such
 	// as yt-dlp, which lets Fetch download video and audio. An empty path is
@@ -265,14 +259,14 @@ type User struct {
 	// FTP, SFTP and HTTP are the servers this account may log in to, each off
 	// unless it is switched on. An entry that enables none is an account
 	// nobody can use, which is a way to keep one without serving it.
-	FTP  bool `toml:"ftp,omitempty" feature:"ftp"`
-	SFTP bool `toml:"sftp,omitempty" feature:"sftp"`
+	FTP  bool `toml:"ftp,omitempty"`
+	SFTP bool `toml:"sftp,omitempty"`
 	HTTP bool `toml:"http,omitempty"`
 	// NBD lets a client certificate whose common name is this username attach
 	// the disk images of the NBD server: read-only with
 	// allowUserFileRetrieve, read-write with allowUserFileOverwrite as well.
 	// The password plays no part in it.
-	NBD bool `toml:"nbd,omitempty" feature:"nbd"`
+	NBD bool `toml:"nbd,omitempty"`
 	// S3 lets the account use the S3 API of the HTTP server, with its username
 	// as the access key and its password as the secret key. It is independent
 	// of HTTP, and the same Paths and rights apply to it.
@@ -287,7 +281,7 @@ type User struct {
 	// Basefolder is the folder this account sees on FTP and SFTP instead of
 	// the server's own. HTTP scopes an account by Paths instead and ignores
 	// it.
-	Basefolder string `toml:"basefolder,omitempty" feature:"ftp,sftp"`
+	Basefolder string `toml:"basefolder,omitempty"`
 	// Paths are regular expressions matched against an HTTP request path,
 	// after it has been normalized, so that ".." cannot be used to slip past
 	// one. An HTTP account with no pattern can reach nothing; FTP and SFTP
@@ -297,11 +291,11 @@ type User struct {
 	// AllowLoginWithoutPassword accepts the account on FTP with any password
 	// or none. SSH and HTTP have no anonymous login, so it means nothing
 	// there.
-	AllowLoginWithoutPassword *bool `toml:"allowLoginWithoutPassword,omitempty" feature:"ftp"`
+	AllowLoginWithoutPassword *bool `toml:"allowLoginWithoutPassword,omitempty"`
 	// AuthorizedKeys are SSH public keys in authorized_keys format, one entry
 	// per line as ssh-keygen writes them. They are how an SFTP account logs in
 	// with a key instead of a password; the other servers ignore them.
-	AuthorizedKeys []string `toml:"authorizedKeys,omitempty" feature:"sftp"`
+	AuthorizedKeys []string `toml:"authorizedKeys,omitempty"`
 
 	AllowUserFileCreate    *bool `toml:"allowUserFileCreate,omitempty"`
 	AllowUserFileRetrieve  *bool `toml:"allowUserFileRetrieve,omitempty"`
@@ -450,7 +444,7 @@ type Server struct {
 	// HostKeyFingerprint is the SHA-256 fingerprint of the key the server
 	// showed when it was stored. A server that shows another is not logged in
 	// to until it is edited and its new key accepted.
-	HostKeyFingerprint string `toml:"hostKeyFingerprint,omitempty" feature:"sftp-remote"`
+	HostKeyFingerprint string `toml:"hostKeyFingerprint,omitempty"`
 	// URL is the address of a server of a type reached by one and a token,
 	// as ArtifactoryURL reads it: https://acme.jfrog.io/artifactory.
 	URL string `toml:"url,omitempty"`
@@ -482,10 +476,10 @@ type Server struct {
 	// path without a slash in front is from where the login starts. The
 	// admin interface makes a new vault, or opens one the Cryptomator apps
 	// made; they open the ones go-fs made. Empty for no vault.
-	VaultPath string `toml:"vaultPath,omitempty" feature:"cryptomator"`
+	VaultPath string `toml:"vaultPath,omitempty"`
 	// VaultPassword is what unlocks the vault. It is kept as it is, as the
 	// password is, so the vault is only as private as this file.
-	VaultPassword string `toml:"vaultPassword,omitempty" feature:"cryptomator"`
+	VaultPassword string `toml:"vaultPassword,omitempty"`
 
 	// AllowedUsers are the accounts, by username, that may use the server:
 	// see it in the menu, browse it, fetch from it and send to it. An
@@ -566,10 +560,6 @@ type ServerType struct {
 	// logged in to as its Auth says, and only ever read: its images are
 	// pulled from it.
 	Registry bool `json:"registry"`
-
-	// feature is the part of go-fs the protocol is, "" for one every binary
-	// has.
-	feature string
 }
 
 const (
@@ -597,33 +587,16 @@ const (
 // no server may have.
 const ManualServer = "Manual"
 
-// allServerTypes are the protocols a server may name, whether the binary was
-// built with them or not. Another one is added here and given an
-// implementation in internal/remote.
-var allServerTypes = []ServerType{
-	{ID: ServerTypeSFTP, Label: "SFTP", DefaultPort: 22, HostKey: true, feature: features.SFTPRemote},
+// ServerTypes are the protocols a server may name. Another one is added here
+// and given an implementation in internal/remote.
+var ServerTypes = []ServerType{
+	{ID: ServerTypeSFTP, Label: "SFTP", DefaultPort: 22, HostKey: true},
 	{ID: ServerTypeArtifactory, Label: "Artifactory", Token: true},
-	{ID: ServerTypeSMB, Label: "SMB", DefaultPort: 445, feature: features.SMB},
+	{ID: ServerTypeSMB, Label: "SMB", DefaultPort: 445},
 	{ID: ServerTypeRegistry, Label: "Container registry", Registry: true},
 }
 
-// ServerTypes are the protocols a server may name in this binary: those of
-// allServerTypes it was built with. The features package is initialized
-// before this one, so what it says is known here.
-var ServerTypes = builtServerTypes()
-
-func builtServerTypes() []ServerType {
-	var built []ServerType
-	for _, t := range allServerTypes {
-		if t.feature == "" || features.Has(t.feature) {
-			built = append(built, t)
-		}
-	}
-	return built
-}
-
-// ServerTypeOf looks a protocol up by its ID, among those the binary was
-// built with.
+// ServerTypeOf looks a protocol up by its ID.
 func ServerTypeOf(id string) (ServerType, bool) {
 	for _, t := range ServerTypes {
 		if t.ID == id {
@@ -633,38 +606,12 @@ func ServerTypeOf(id string) (ServerType, bool) {
 	return ServerType{}, false
 }
 
-// absentServerType reports a protocol go-fs knows but this binary was built
-// without. A server of one is kept in the file and otherwise ignored, so that
-// go-fs-light reads the file of go-fs.
-func absentServerType(id string) bool {
-	for _, t := range allServerTypes {
-		if t.ID == id {
-			return t.feature != "" && !features.Has(t.feature)
-		}
-	}
-	return false
-}
-
-// absentVault reports a server that keeps its files in a vault, in a binary
-// built without vaults. Reaching it without the vault would show its
-// ciphertext and put cleartext beside it, so it is left alone like a server
-// of an absent protocol.
-func absentVault(s Server) bool {
-	return s.VaultPath != "" && !features.Has(features.Cryptomator)
-}
-
-// absentServer reports a server the binary keeps in the file and otherwise
-// ignores: one of a protocol, or with a vault, it was built without.
-func absentServer(s Server) bool {
-	return absentServerType(s.Type) || absentVault(s)
-}
-
-// UsableServers are the servers of the file the binary can reach: those whose
-// protocol it was built with, and without a vault when it has none.
+// UsableServers are the servers of the file the binary can reach: those of a
+// protocol it knows.
 func (c Config) UsableServers() []Server {
 	var usable []Server
 	for _, s := range c.Servers {
-		if _, ok := ServerTypeOf(s.Type); ok && !absentVault(s) {
+		if _, ok := ServerTypeOf(s.Type); ok {
 			usable = append(usable, s)
 		}
 	}
@@ -1176,16 +1123,16 @@ type HTTPServices struct {
 	// client DELETE then removes a folder with everything in it and MOVE moves
 	// across folders and onto a name that is taken; to everyone else they
 	// mean what they always did. The rights are the same for both.
-	WebDAV bool `toml:"webdav" feature:"webdav"`
+	WebDAV bool `toml:"webdav"`
 	// WebDAVClients are what the User-Agent of a WebDAV client contains,
 	// compared ignoring case: the clients that get the WebDAV meaning of
 	// PUT, DELETE and MOVE. A request with a Depth or an If header gets it
 	// whatever it names.
-	WebDAVClients []string `toml:"webdavClients" feature:"webdav"`
+	WebDAVClients []string `toml:"webdavClients"`
 	// JellyfinDiscovery answers the Jellyfin clients that look for a server
 	// on the local network, by a broadcast to UDP port 7359, with the address
 	// of this one, while there is a jellyfin repository.
-	JellyfinDiscovery bool `toml:"jellyfinDiscovery" feature:"jellyfin"`
+	JellyfinDiscovery bool `toml:"jellyfinDiscovery"`
 	// Sonos offers Play on Sonos on the audio files of the listing, to a
 	// session of an account that may read them. The server finds the
 	// speakers of the local network by SSDP and tells one to play a file,
@@ -1193,11 +1140,11 @@ type HTTPServices struct {
 	// login and lasts for a few hours: the plain listener, or
 	// general.internalAddress where that is set, has to be reachable from the
 	// speakers.
-	Sonos bool `toml:"sonos" feature:"sonos"`
+	Sonos bool `toml:"sonos"`
 	// SonosSpeakers are addresses of speakers, as host or host:port, which
 	// are asked directly besides those a search finds: for speakers on a
 	// network the search does not reach.
-	SonosSpeakers []string `toml:"sonosSpeakers" feature:"sonos"`
+	SonosSpeakers []string `toml:"sonosSpeakers"`
 }
 
 // HTTPRegistry is [http.registry]: who may pull from the container registry,
@@ -1812,12 +1759,8 @@ func (c Config) Validate() error {
 	if c.General.ReloadInterval < 1 {
 		return errors.New("general.reloadInterval has to be at least 1")
 	}
-	// general.ssh means nothing to a binary that speaks no SSH, and is not
-	// checked by one
-	if features.SSH() {
-		if err := c.General.SSH.validate(); err != nil {
-			return err
-		}
+	if err := c.General.SSH.validate(); err != nil {
+		return err
 	}
 	if c.sftpOn() && c.General.SSH.LoginGraceTime > 0 &&
 		c.General.SSH.LoginGraceTime <= c.SFTP.LoginFailureDelay {
@@ -1904,14 +1847,11 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// ftpOn, sftpOn, tftpOn and nbdOn report a server that is enabled and that the
-// binary was built with. One it was built without is ignored, enabled or not,
-// so that go-fs-light reads the file of go-fs; nothing of it is checked
-// either.
-func (c Config) ftpOn() bool  { return (c.FTP.Enabled || c.FTPS.Enabled) && features.Has(features.FTP) }
-func (c Config) sftpOn() bool { return c.SFTP.Enabled && features.Has(features.SFTP) }
-func (c Config) tftpOn() bool { return c.TFTP.Enabled && features.Has(features.TFTP) }
-func (c Config) nbdOn() bool  { return c.NBD.Enabled && features.Has(features.NBD) }
+// ftpOn, sftpOn, tftpOn and nbdOn report a server that is enabled.
+func (c Config) ftpOn() bool  { return c.FTP.Enabled || c.FTPS.Enabled }
+func (c Config) sftpOn() bool { return c.SFTP.Enabled }
+func (c Config) tftpOn() bool { return c.TFTP.Enabled }
+func (c Config) nbdOn() bool  { return c.NBD.Enabled }
 
 // validateUsers checks the account list. The rules that hold for every entry
 // are checked first; what a server needs of its accounts is checked only for
@@ -1934,10 +1874,8 @@ func (c Config) validateUsers() error {
 		}
 		seen[user.Username] = true
 
-		// what an account says of a server the binary was built without is
-		// ignored
-		ftp := user.FTP && features.Has(features.FTP)
-		sftp := user.SFTP && features.Has(features.SFTP)
+		ftp := user.FTP
+		sftp := user.SFTP
 		if (ftp || sftp) && user.Basefolder != "" {
 			if err := checkFolder(where+".basefolder", user.Basefolder); err != nil {
 				return err
@@ -1992,7 +1930,7 @@ func (c Config) validateUsers() error {
 					where, user.Username)
 			}
 		}
-		if user.NBD && features.Has(features.NBD) {
+		if user.NBD {
 			if err := validateNBDUser(where, user); err != nil {
 				return err
 			}
@@ -2085,14 +2023,8 @@ func (c Config) validateServers() error {
 		if (server.VaultPath == "") != (server.VaultPassword == "") {
 			return fmt.Errorf("%s %q: vaultPath and vaultPassword are set together or not at all", where, server.Name)
 		}
-		// checked before a vault makes the server absent, so a build
-		// without vaults refuses it as well
 		if server.Type == ServerTypeRegistry && server.VaultPath != "" {
 			return fmt.Errorf("%s %q: a container registry holds no vault", where, server.Name)
-		}
-		if absentServer(server) {
-			// what this binary cannot reach it does not check either
-			continue
 		}
 		kind, ok := ServerTypeOf(server.Type)
 		if !ok {

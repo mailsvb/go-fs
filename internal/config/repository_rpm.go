@@ -1,11 +1,8 @@
-//go:build !light && !no_rpm
-
 package config
 
 import "github.com/mailsvb/go-fs/internal/pgp"
 
-// The rpm repository is left out by the tag no_rpm, and by light, and with it
-// its OpenPGP signing key and the module that reads it.
+// The OpenPGP signing key of the rpm repository.
 func init() {
 	registerKeyKind(KindPGPKey, keyKind{decode: DecodePGPKey, describe: describePGPKey,
 		generate: GeneratePGPKey})

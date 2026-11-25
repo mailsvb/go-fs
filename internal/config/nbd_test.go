@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/testpki"
 )
 
@@ -16,7 +15,6 @@ import (
 // validates, and its CA.
 func nbdConfig(t *testing.T) (Config, *testpki.CA) {
 	t.Helper()
-	skipWithout(t, features.NBD)
 	parent := t.TempDir()
 	ca := testpki.NewCA(t, "test CA")
 	server := ca.Server(t, "localhost")

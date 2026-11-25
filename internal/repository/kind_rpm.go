@@ -1,5 +1,3 @@
-//go:build !light && !no_rpm
-
 package repository
 
 import (
@@ -18,7 +16,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/rpm"
 )
 
-// The rpm repository is left out by the tag no_rpm, and by light.
+// The rpm repository.
 func init() {
 	kinds[config.RepositoryTypeRPM] = func(repo config.Repository, folder string, logger *slog.Logger) (kind, Status, error) {
 		key, err := config.PGPKey(repo.SigningKey)

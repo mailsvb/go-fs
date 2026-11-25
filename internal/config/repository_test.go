@@ -6,8 +6,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // testSigningKey is the key the tests of internal/rpm sign with, as the file
@@ -22,7 +20,6 @@ func testSigningKey(t *testing.T) string {
 }
 
 func TestRepositories(t *testing.T) {
-	skipWithout(t, features.RPM)
 	folder := t.TempDir()
 	mkdir(t, folder, "rpm")
 	mkdir(t, filepath.Join(folder, "rpm"), "inner")
@@ -97,7 +94,6 @@ func TestRepositoryInterval(t *testing.T) {
 }
 
 func TestPGPKeyMaterial(t *testing.T) {
-	skipWithout(t, features.RPM)
 	key := testSigningKey(t)
 	if _, err := Decode(KindPGPKey, key); err != nil {
 		t.Fatal(err)
@@ -118,7 +114,6 @@ var testJARKey = sync.OnceValues(func() (string, error) {
 })
 
 func TestFDroidRepositories(t *testing.T) {
-	skipWithout(t, features.FDroid, features.RPM)
 	folder := t.TempDir()
 	mkdir(t, folder, "android/repo")
 	key, err := testJARKey()
@@ -173,7 +168,6 @@ func TestFDroidRepositories(t *testing.T) {
 }
 
 func TestJellyfinRepositories(t *testing.T) {
-	skipWithout(t, features.Jellyfin, features.RPM)
 	folder := t.TempDir()
 	mkdir(t, folder, "music")
 	mkdir(t, folder, "other")
@@ -230,7 +224,6 @@ func TestJellyfinRepositories(t *testing.T) {
 // as a jellyfin one is, and that the two may share a folder, which no two
 // other repositories may.
 func TestSubsonicRepositories(t *testing.T) {
-	skipWithout(t, features.Subsonic, features.Jellyfin)
 	folder := t.TempDir()
 	mkdir(t, folder, "music")
 	mkdir(t, folder, "music/live")
@@ -294,7 +287,6 @@ func TestSubsonicRepositories(t *testing.T) {
 }
 
 func TestJARKeyMaterial(t *testing.T) {
-	skipWithout(t, features.FDroid)
 	key, err := testJARKey()
 	if err != nil {
 		t.Fatal(err)

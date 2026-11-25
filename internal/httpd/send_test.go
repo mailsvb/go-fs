@@ -16,7 +16,6 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/remote/remotetest"
 )
 
@@ -45,7 +44,6 @@ func startSend(t *testing.T, server *testServer, file string, session *http.Cook
 }
 
 func TestSendShowsTheHostKeyWithoutLoggingIn(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	remote := remotetest.NewSFTPHost(t, "alice", "secret")
 	server := newServer(t, nil)
 	server.write(t, "report.txt", "x")
@@ -85,7 +83,6 @@ func TestSendShowsTheHostKeyWithoutLoggingIn(t *testing.T) {
 }
 
 func TestSendLogsInOnlyWithTheAcceptedKey(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	remote := remotetest.NewSFTPHost(t, "alice", "secret")
 	server := newServer(t, nil)
 	server.write(t, "report.txt", "x")
@@ -110,7 +107,6 @@ func TestSendLogsInOnlyWithTheAcceptedKey(t *testing.T) {
 }
 
 func TestSendListsTheFoldersOfTheHost(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	remote := remotetest.NewSFTPHost(t, "alice", "secret")
 	remote.Write(t, "zeta.txt", "z")
 	remote.Write(t, "Beta/inside.txt", "in")
@@ -161,7 +157,6 @@ func TestSendListsTheFoldersOfTheHost(t *testing.T) {
 }
 
 func TestSendUploadsTheFile(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	remote := remotetest.NewSFTPHost(t, "alice", "secret")
 	remote.Write(t, "inbox/.keep", "")
 	server := newServer(t, nil)
@@ -211,7 +206,6 @@ func TestSendUploadsTheFile(t *testing.T) {
 }
 
 func TestSendReplacesAFileThatIsThere(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	remote := remotetest.NewSFTPHost(t, "alice", "secret")
 	remote.Write(t, "report.txt", "the old one, which was longer")
 	server := newServer(t, nil)
@@ -235,7 +229,6 @@ func TestSendReplacesAFileThatIsThere(t *testing.T) {
 }
 
 func TestSendCanBeStopped(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	remote := remotetest.NewSFTPHost(t, "alice", "secret")
 	server := newServer(t, nil)
 	server.write(t, "big.bin", strings.Repeat("x", 16<<20))
@@ -384,7 +377,6 @@ func TestSendsAreTransfersOfTheListing(t *testing.T) {
 }
 
 func TestSendOffersOnlyTheAlgorithmsOfGeneralSSH(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	old := func(c *ssh.ServerConfig) { c.KeyExchanges = []string{ssh.InsecureKeyExchangeDH14SHA1} }
 	remote := remotetest.NewSFTPHostWith(t, "alice", "secret", old)
 	server := newServer(t, nil)
@@ -445,7 +437,6 @@ func allowingAll(server config.Server) config.Server {
 }
 
 func TestSendToAStoredServer(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	const password = "hunter2-of-the-backup"
 	remote := remotetest.NewSFTPHost(t, "alice", password)
 	remote.Write(t, "inbox/.keep", "")
@@ -505,7 +496,6 @@ func TestSendToAStoredServer(t *testing.T) {
 }
 
 func TestSendRefusesWhatAStoredServerIsNot(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	remote := remotetest.NewSFTPHost(t, "alice", "secret")
 	moved := storedServer(remote, "Moved")
 	moved.HostKeyFingerprint = "SHA256:theOneBefore"
@@ -552,7 +542,6 @@ func TestSendRefusesWhatAStoredServerIsNot(t *testing.T) {
 }
 
 func TestSendDialogFollowsTheStoredServers(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	remote := remotetest.NewSFTPHost(t, "alice", "secret")
 	server := newServer(t, nil)
 	server.write(t, "report.txt", "x")

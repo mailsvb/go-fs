@@ -4,9 +4,9 @@ Installing go-fs as a service, running it by hand, and updating it.
 
 ## Install
 
-Every release carries an rpm for x86_64 and aarch64 and an msi for x64, besides
-the `.update` files and `SHA256SUMS`. They install go-fs
-as a service that starts with the system, with a configuration that serves HTTP
+Every release carries an rpm for x86_64, an msi for x64 and a plain binary for
+macOS on arm64 ([macOS](#macos)), besides the `.update` files and `SHA256SUMS`.
+The rpm and the msi install go-fs as a service that starts with the system, with a configuration that serves HTTP
 on `127.0.0.1:8080` alone, with the [container registry](REGISTRY.md#container-registry) on,
 and has one account, `admin` with the password `admin`, which may also push to
 the registry. Log in with it at `http://127.0.0.1:8080/?go-fs=admin` from the
@@ -46,7 +46,7 @@ zypper remove go-fs                            # or dnf remove go-fs
 
 The first `zypper refresh` asks to trust the repository's key, `go-fs.asc` on
 the same page. A downloaded rpm of a release installs too, with
-`zypper install ./go-fs-<version>-1.x86_64.rpm` or `.aarch64.rpm`.
+`zypper install ./go-fs-<version>-1.x86_64.rpm`.
 
 | Path | What |
 |---|---|
@@ -237,6 +237,22 @@ version back.
 The installer is not code signed yet, so Windows SmartScreen warns about the
 msi when it is downloaded.
 
+### macOS
+
+The release carries `go-fs_<version>_darwin_arm64`, for Apple silicon. It is
+not installed as a service: put it where it is to live and run it as shown in
+[Run](#run). A binary downloaded with a browser is quarantined, which macOS
+refuses to start; lift that once:
+
+```shell
+chmod +x go-fs_<version>_darwin_arm64
+xattr -d com.apple.quarantine go-fs_<version>_darwin_arm64
+```
+
+It updates itself like any binary go-fs did not install through a package,
+see [Updating over HTTP](#updating-over-http) and
+[Updating from GitHub](#updating-from-github).
+
 ## Run
 
 ```shell
@@ -318,10 +334,10 @@ same reason the admin interface refuses them.
 ```sh
 # what is running, to pick the matching file
 curl -H "Authorization: Bearer gofs_…" "https://host:8443/?go-fs=update"
-# {"version":"1.1.0","os":"linux","arch":"arm64","executable":"/opt/go-fs/go-fs","pid":812,"keys":["d1db60358969ad82"]}
+# {"version":"1.1.0","os":"linux","arch":"amd64","executable":"/opt/go-fs/go-fs","pid":812,"keys":["d1db60358969ad82"]}
 
 # upload it; go-fs answers, then restarts
-curl -T go-fs_1.2.0_linux_arm64.update -H "Authorization: Bearer gofs_…" \
+curl -T go-fs_1.2.0_linux_amd64.update -H "Authorization: Bearer gofs_…" \
      "https://host:8443/?go-fs=update"
 # {"previous":"1.1.0","restarting":true,"version":"1.2.0"}
 ```
@@ -391,7 +407,7 @@ A script does the same with `release=latest`:
 # the latest release, and whether it is newer than what runs
 curl -H "Authorization: Bearer gofs_…" "https://host:8443/?go-fs=update&release=latest"
 # {"current":"1.1.0","version":"1.2.0","newer":true,"url":"https://github.com/…/v1.2.0",
-#  "published":"2026-10-01T10:00:00Z","asset":"go-fs_1.2.0_linux_arm64.update"}
+#  "published":"2026-10-01T10:00:00Z","asset":"go-fs_1.2.0_linux_amd64.update"}
 
 # download and install it; go-fs answers, then restarts
 curl -X POST -H "Authorization: Bearer gofs_…" "https://host:8443/?go-fs=update&release=latest"
@@ -434,7 +450,7 @@ The command prints a private key and a public key:
 To sign a build by hand:
 
 ```sh
-GOFS_SIGNING_KEY=… go run ./tools/sign -in go-fs_linux_arm64 -out go-fs_linux_arm64.update
+GOFS_SIGNING_KEY=… go run ./tools/sign -in go-fs_linux_amd64 -out go-fs_linux_amd64.update
 ```
 
 A fork that signs its own builds can add its key at build time instead of

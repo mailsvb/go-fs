@@ -20,7 +20,7 @@ func requireViewer(t *testing.T) {
 	if viewer.Available() {
 		return
 	}
-	if viewer.Compiled && os.Getenv("GOFS_REQUIRE_VIEWER") != "" {
+	if os.Getenv("GOFS_REQUIRE_VIEWER") != "" {
 		t.Fatal("the libraries of the document viewer are not embedded; run make viewer-deps")
 	}
 	t.Skip("the libraries of the document viewer are not fetched; run make viewer-deps")

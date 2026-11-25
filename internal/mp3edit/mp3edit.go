@@ -3,10 +3,6 @@
 // modules of go-tag (github.com/mailsvb/go-tag/mp3tags and mp3gain); this
 // package gives them a file wherever it is, on the local disk or on a stored
 // server, and keeps what an analysis found until the file is saved.
-//
-// The part is left out by the tag no_mp3tags, and by light: Compiled is then
-// false and every function fails with ErrUnavailable. The types are the same
-// in both, so that the HTTP server compiles either way.
 package mp3edit
 
 import (
@@ -17,9 +13,6 @@ import (
 )
 
 var (
-	// ErrUnavailable is what every function answers in a binary built
-	// without the part.
-	ErrUnavailable = errors.New("MP3 tag editing is not part of this binary")
 	// ErrOutOfRange is a volume change larger than the gain values of the
 	// file's frames allow.
 	ErrOutOfRange = errors.New("the volume change is larger than this file allows")

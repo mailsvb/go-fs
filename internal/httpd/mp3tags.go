@@ -96,7 +96,7 @@ type mp3Target struct {
 func (s *Server) handleMP3Tags(set *settings, w http.ResponseWriter, r *http.Request, target vfs.Target, cred credential) {
 	w.Header().Set("Cache-Control", "no-store")
 	part, allowed := mp3Part(r)
-	if !mp3edit.Compiled || part == "" {
+	if part == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -184,7 +184,7 @@ func statOf(info fs.FileInfo, err error) (int64, time.Time, error) {
 func (s *Server) remoteMP3Tags(set *settings, w http.ResponseWriter, r *http.Request, q *remoteRequest) {
 	w.Header().Set("Cache-Control", "no-store")
 	part, allowed := mp3Part(r)
-	if !mp3edit.Compiled || part == "" {
+	if part == "" {
 		http.NotFound(w, r)
 		return
 	}

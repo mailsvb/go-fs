@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // selfSigned makes a certificate and its key as the file holds them. The
@@ -184,7 +182,6 @@ func TestDescribeSaysWhatIsStored(t *testing.T) {
 // The pair check is the reason the material is validated here at all: a key
 // that belongs to another certificate cannot serve, and -check has to say so.
 func TestValidateChecksTheWholePair(t *testing.T) {
-	skipWithout(t, features.FTP)
 	folder := t.TempDir()
 	cert, key := selfSigned(t, "example")
 	_, otherKey := selfSigned(t, "other")

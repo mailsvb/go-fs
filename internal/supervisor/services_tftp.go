@@ -1,5 +1,3 @@
-//go:build !light && !no_tftp
-
 package supervisor
 
 import (
@@ -9,7 +7,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/tftp"
 )
 
-// The TFTP server, left out by the tag no_tftp and by light.
+// The TFTP server.
 func init() {
 	register(entry{
 		name:    "tftp",

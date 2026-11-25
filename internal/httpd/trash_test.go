@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/trash"
 )
 
@@ -131,7 +130,6 @@ func TestDeleteWithoutATrashIsForGood(t *testing.T) {
 // Deleting a path again replaces what the trash held for it, and a folder is
 // merged into the one the trash holds.
 func TestDeletingAgainReplacesWhatTheTrashHolds(t *testing.T) {
-	skipWithout(t, features.WebDAV)
 	server, bin := trashServer(t, func(cfg *httpConfig) { cfg.WebDAV = true })
 	server.write(t, "x.txt", "first")
 	basic(t, server, http.MethodDelete, "/x.txt", "john", "doe", nil)
@@ -176,7 +174,6 @@ func TestDeletingAgainReplacesWhatTheTrashHolds(t *testing.T) {
 // What WebDAV removes goes to the trash: a folder it deletes with everything
 // in it, and what a MOVE or a COPY replaces.
 func TestWebDAVDeletesIntoTheTrash(t *testing.T) {
-	skipWithout(t, features.WebDAV)
 	server, bin := trashServer(t, func(cfg *httpConfig) { cfg.WebDAV = true })
 	server.write(t, "box/a.txt", "a")
 	server.write(t, "box/sub/b.txt", "b")

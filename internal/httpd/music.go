@@ -1,5 +1,3 @@
-//go:build !light && (!no_jellyfin || !no_subsonic)
-
 package httpd
 
 import (

@@ -69,11 +69,9 @@ func Decode(kind, value string) ([]byte, error) {
 	}
 }
 
-// keyKind is a kind of key material that one of the optional parts of go-fs
-// brings, the signing key of a kind of repository for one. It is registered
-// from the file of the part, which a build tag leaves out together with the
-// module that reads the key, so that a binary built without the part does
-// not know the kind at all.
+// keyKind is a kind of key material that one of the parts of go-fs brings,
+// the signing key of a kind of repository for one. It is registered from the
+// file of the part, beside the module that reads the key.
 type keyKind struct {
 	// decode is what Decode does for the kind.
 	decode func(value string) ([]byte, error)
@@ -84,15 +82,14 @@ type keyKind struct {
 	generate func(name string) (string, error)
 }
 
-// keyKinds are the kinds the optional parts registered, by their name.
+// keyKinds are the kinds the parts registered, by their name.
 var keyKinds = map[string]keyKind{}
 
 func registerKeyKind(kind string, k keyKind) { keyKinds[kind] = k }
 
-// Generate makes a new key of one of the kinds an optional part brings, named
-// name where the kind names its keys, as the value the file holds. known is
-// false for a kind that is not one of them, or whose part the binary was
-// built without.
+// Generate makes a new key of one of the kinds a part brings, named name
+// where the kind names its keys, as the value the file holds. known is false
+// for a kind that is not one of them.
 func Generate(kind, name string) (value string, known bool, err error) {
 	k, ok := keyKinds[kind]
 	if !ok {

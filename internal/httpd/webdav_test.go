@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // explorer is the User-Agent of the WebDAV client of Windows Explorer.
@@ -23,7 +22,6 @@ const explorer = "Microsoft-WebDAV-MiniRedir/10.0.22631"
 // davServer is newServer with WebDAV on.
 func davServer(t *testing.T, tune func(*httpConfig)) *testServer {
 	t.Helper()
-	skipWithout(t, features.WebDAV)
 	return newServer(t, func(cfg *httpConfig) {
 		cfg.WebDAV = true
 		if tune != nil {
@@ -451,7 +449,6 @@ func TestWebDAVProppatch(t *testing.T) {
 // they do for the page, and Basic is offered beside Digest over TLS only,
 // since Explorer answers nothing else and sends it nowhere else.
 func TestWebDAVChallenge(t *testing.T) {
-	skipWithout(t, features.WebDAV)
 	server := newServerWith(t, func(cfg *httpConfig) { cfg.WebDAV = true },
 		func(https *config.HTTPS) { https.Enabled = true })
 

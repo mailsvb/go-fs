@@ -118,8 +118,7 @@ func (h *Handler) handleRepositorySave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name the repository", http.StatusBadRequest)
 		return
 	}
-	// the file would take a repository of a kind the binary was built
-	// without, and ignore it; the page does not offer one, so it is refused
+	// the page offers only the kinds the binary knows
 	if _, ok := config.RepositoryTypeOf(repo.Type); !ok {
 		http.Error(w, fmt.Sprintf("type %q is not a kind of repository this build keeps", repo.Type),
 			http.StatusBadRequest)

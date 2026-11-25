@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // HandshakeTimeout bounds the connection and the handshake with a host, which
@@ -75,15 +74,14 @@ func (l Login) ConfigServer(name string) config.Server {
 		VaultPath: l.VaultPath, VaultPassword: l.VaultPassword}
 }
 
-// Checked reads a login: the type defaults to SFTP, or to the first protocol of
-// a binary built without it, the host loses the brackets of an IPv6 address and
-// the port defaults to that of the type. keyOnly is a login only asked for the
-// key of its host, which needs no username. A login
-// by token is its address, as config.ArtifactoryURL reads it, and the token,
-// and nothing of the rest.
+// Checked reads a login: the type defaults to SFTP, the host loses the
+// brackets of an IPv6 address and the port defaults to that of the type.
+// keyOnly is a login only asked for the key of its host, which needs no
+// username. A login by token is its address, as config.ArtifactoryURL reads
+// it, and the token, and nothing of the rest.
 func (l Login) Checked(keyOnly bool) (Login, error) {
 	if l.Type == "" {
-		// the first protocol, SFTP in a binary built with it
+		// the first protocol, SFTP
 		l.Type = config.ServerTypes[0].ID
 	}
 	kind, ok := config.ServerTypeOf(l.Type)
@@ -123,13 +121,8 @@ func (l Login) Checked(keyOnly bool) (Login, error) {
 	return l.checkedVault()
 }
 
-// errNoVaults is what a login that names a vault fails with in a binary built
-// without the vaults of Cryptomator.
-var errNoVaults = errors.New("this binary was built without the vaults of Cryptomator")
-
 // checkedVault reads the vault of a login: a path of the host, made
-// absolute and clean, that needs a password, or no vault and no password. A
-// binary built without vaults takes no login that names one.
+// absolute and clean, that needs a password, or no vault and no password.
 func (l Login) checkedVault() (Login, error) {
 	vault, err := config.VaultPath(l.VaultPath)
 	if err != nil {
@@ -138,8 +131,6 @@ func (l Login) checkedVault() (Login, error) {
 	l.VaultPath = vault
 	if l.VaultPath == "" {
 		l.VaultPassword = ""
-	} else if !features.Has(features.Cryptomator) {
-		return Login{}, errNoVaults
 	} else if l.VaultPassword == "" {
 		return Login{}, errors.New("type the password of the vault")
 	}

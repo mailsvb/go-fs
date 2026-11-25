@@ -12,11 +12,9 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 func TestStateDescribesTheFile(t *testing.T) {
-	skipWithout(t, features.FTP)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 
@@ -46,7 +44,6 @@ func TestStateDescribesTheFile(t *testing.T) {
 }
 
 func TestApplyWritesTheFile(t *testing.T) {
-	skipWithout(t, features.FTP)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 
@@ -83,7 +80,6 @@ func TestApplyWritesTheFile(t *testing.T) {
 }
 
 func TestApplyAddsAndRemovesRecords(t *testing.T) {
-	skipWithout(t, features.FTP, features.SFTP)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 
@@ -126,7 +122,6 @@ func TestApplyAddsAndRemovesRecords(t *testing.T) {
 // TestApplyRefusesWhatWouldNotStart checks that the page reports what -check
 // reports, and that a file that cannot work is never written.
 func TestApplyRefusesWhatWouldNotStart(t *testing.T) {
-	skipWithout(t, features.FTP)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 	before, err := os.ReadFile(path)
@@ -354,7 +349,6 @@ func TestNewNeedsThePath(t *testing.T) {
 // TestWriteFollowsASymlink checks that a linked configuration file is replaced
 // where it lives rather than turning the link into a regular file.
 func TestWriteFollowsASymlink(t *testing.T) {
-	skipWithout(t, features.FTP)
 	path := testConfig(t)
 	link := filepath.Join(filepath.Dir(path), "linked.toml")
 	if err := os.Symlink(path, link); err != nil {

@@ -15,8 +15,6 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/crypto/ssh"
-
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 // authorizedKey is one line as ssh-keygen would write it, for a fresh key.
@@ -55,7 +53,6 @@ func writeConfig(t *testing.T, body string) (path string, folder string) {
 }
 
 func TestLoadAppliesDefaults(t *testing.T) {
-	skipWithout(t, features.FTP)
 	path, _ := writeConfig(t, `
 [general]
 baseFolderFiles = "{{folder}}"
@@ -154,7 +151,6 @@ func TestTheDefaultsServeHTTPOnLocalhostOnly(t *testing.T) {
 }
 
 func TestUserPermissionDefaults(t *testing.T) {
-	skipWithout(t, features.FTP)
 	path, _ := writeConfig(t, `
 [general]
 baseFolderFiles = "{{folder}}"
@@ -211,7 +207,6 @@ enabled = false
 }
 
 func TestValidateRejectsBadConfiguration(t *testing.T) {
-	skipWithout(t, features.FTP, features.SFTP, features.TFTP)
 	folder := t.TempDir()
 	cases := []struct {
 		name   string
@@ -905,7 +900,6 @@ func TestTokens(t *testing.T) {
 }
 
 func TestServers(t *testing.T) {
-	skipWithout(t, features.SFTPRemote, features.SMB)
 	valid := Server{Name: "backup", Type: ServerTypeSFTP, Host: "sftp.example.com", Port: 2222,
 		Username: "alice", Password: "secret", HostKeyFingerprint: "SHA256:abc"}
 	check := func(servers ...Server) error {

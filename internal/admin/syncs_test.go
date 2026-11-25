@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/remote/remotetest"
 )
 
@@ -19,7 +18,6 @@ import (
 // on it and one locally, the way the dialog of a server does.
 func withSyncServer(t *testing.T) (*remotetest.SFTPHost, string, *httptest.Server) {
 	t.Helper()
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	if err := os.MkdirAll(filepath.Join(host.Dir, "photos", "2025"), 0o755); err != nil {
 		t.Fatal(err)

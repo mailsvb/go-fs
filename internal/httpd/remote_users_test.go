@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/remote/remotetest"
 )
 
@@ -58,7 +57,6 @@ func TestRemoteServerRefusesAnAccountItDoesNotName(t *testing.T) {
 // A server that names nobody is for admins alone, and an admin may use every
 // server, named or not.
 func TestRemoteServerAdmitsAnAdminAlways(t *testing.T) {
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	host.Write(t, "a.txt", "a")
 	server := newServer(t, func(cfg *httpConfig) {

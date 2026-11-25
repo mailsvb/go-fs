@@ -259,9 +259,6 @@ credentials only when the server asks for them, so every `PROPFIND` needs an
 account, even of a folder anyone may read with `GET`. Otherwise the drive
 would show what a visitor without an account sees.
 
-go-fs-light is built without WebDAV, and ignores `webdav = true`; so does a
-build with the tag `no_webdav`.
-
 ```toml
 [http.services]
 webdav = true

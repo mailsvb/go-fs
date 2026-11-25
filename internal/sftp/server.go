@@ -1,5 +1,3 @@
-//go:build !light && !no_sftpd
-
 // Package sftp implements the SFTP server: the SFTP subsystem of an SSH
 // server, confined to a base folder and governed by the same per account
 // permissions as the FTP server.

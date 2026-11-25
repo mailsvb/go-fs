@@ -1,11 +1,8 @@
-//go:build !light && !no_fdroid
-
 package config
 
 import "github.com/mailsvb/go-fs/internal/fdroid"
 
-// The F-Droid repository is left out by the tag no_fdroid, and by light, and
-// with it its signing key and the modules that read it.
+// The signing key of the F-Droid repository.
 func init() {
 	registerKeyKind(KindJARKey, keyKind{decode: DecodeJARKey, describe: describeJARKey,
 		generate: GenerateJARKey})

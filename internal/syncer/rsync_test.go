@@ -12,19 +12,9 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/remote"
 	"github.com/mailsvb/go-fs/internal/remote/remotetest"
 )
-
-func skipWithout(t *testing.T, names ...string) {
-	t.Helper()
-	for _, name := range names {
-		if !features.Has(name) {
-			t.Skipf("built without %s", name)
-		}
-	}
-}
 
 // fixture is a sync between a local folder and a folder of an SFTP host.
 type fixture struct {
@@ -37,7 +27,6 @@ type fixture struct {
 
 func newFixture(t *testing.T, direction string, del bool) *fixture {
 	t.Helper()
-	skipWithout(t, features.SFTPRemote)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	if err := os.Mkdir(filepath.Join(host.Dir, "remote"), 0o755); err != nil {
 		t.Fatal(err)
@@ -286,7 +275,6 @@ func TestAMissingRemoteFolderFails(t *testing.T) {
 // In a vault, the server holds ciphertext, and the sizes and times a run
 // compares are those of the cleartext.
 func TestPushIntoAVault(t *testing.T) {
-	skipWithout(t, features.Cryptomator)
 	f := newFixture(t, config.SyncPush, true)
 	f.job.server.VaultPath = "vault"
 	f.job.server.VaultPassword = "pw"

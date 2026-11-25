@@ -1,5 +1,3 @@
-//go:build !light && !no_nbd
-
 package nbd
 
 // The numbers of the NBD protocol, as doc/proto.md of the NBD project names

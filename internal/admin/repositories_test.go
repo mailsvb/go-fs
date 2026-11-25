@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 )
 
 func testSigningKey(t *testing.T) string {
@@ -31,7 +30,6 @@ func loadRepositories(t *testing.T, path string) config.Config {
 }
 
 func TestRepositorySaveAddsMakesTheFolderAndEdits(t *testing.T) {
-	skipWithout(t, features.RPM)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 	key := testSigningKey(t)
@@ -84,7 +82,6 @@ func TestRepositorySaveAddsMakesTheFolderAndEdits(t *testing.T) {
 }
 
 func TestRepositorySaveRefuses(t *testing.T) {
-	skipWithout(t, features.RPM)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 	key := testSigningKey(t)
@@ -111,7 +108,6 @@ func TestRepositorySaveRefuses(t *testing.T) {
 }
 
 func TestStateCarriesRepositories(t *testing.T) {
-	skipWithout(t, features.RPM)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 	if status, body := postServer(t, front, ActionRepositorySave, repositorySaveBody{Repository: repositoryJSON{
@@ -129,7 +125,6 @@ func TestStateCarriesRepositories(t *testing.T) {
 }
 
 func TestGeneratePGPKey(t *testing.T) {
-	skipWithout(t, features.RPM)
 	if testing.Short() {
 		t.Skip("generating an RSA 4096 key takes seconds")
 	}
@@ -150,7 +145,6 @@ func TestGeneratePGPKey(t *testing.T) {
 }
 
 func TestRepositorySaveFDroid(t *testing.T) {
-	skipWithout(t, features.FDroid)
 	if testing.Short() {
 		t.Skip("generating an RSA 4096 key takes seconds")
 	}
@@ -195,7 +189,6 @@ func TestRepositorySaveFDroid(t *testing.T) {
 }
 
 func TestRepositorySaveJellyfin(t *testing.T) {
-	skipWithout(t, features.Jellyfin)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 	status, body := postServer(t, front, ActionRepositorySave, repositorySaveBody{Repository: repositoryJSON{
@@ -232,7 +225,6 @@ func TestRepositorySaveJellyfin(t *testing.T) {
 }
 
 func TestRepositorySaveSubsonic(t *testing.T) {
-	skipWithout(t, features.Subsonic, features.Jellyfin)
 	path := testConfig(t)
 	_, front := testServer(t, path)
 	status, body := postServer(t, front, ActionRepositorySave, repositorySaveBody{Repository: repositoryJSON{

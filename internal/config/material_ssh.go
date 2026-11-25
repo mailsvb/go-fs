@@ -1,5 +1,3 @@
-//go:build !light && (!no_sftpd || !no_sftp_remote)
-
 package config
 
 import (
@@ -13,9 +11,7 @@ import (
 )
 
 // The SSH host key, and private keys in the encoding of ssh-keygen, are read
-// by golang.org/x/crypto/ssh, which only a binary with the SFTP server or
-// sending by SFTP imports; the tags no_sftpd and no_sftp_remote together, or
-// light, leave this file out.
+// by golang.org/x/crypto/ssh.
 func init() {
 	registerKeyKind(KindSSHKey, keyKind{decode: DecodeHostKey, describe: describeHostKey,
 		generate: func(string) (string, error) { return GenerateHostKey() }})

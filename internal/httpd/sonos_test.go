@@ -1,5 +1,3 @@
-//go:build !light && !no_sonos
-
 package httpd
 
 import (
@@ -20,7 +18,6 @@ import (
 	"time"
 
 	"github.com/mailsvb/go-fs/internal/audio/audiotest"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/sonos"
 )
 
@@ -173,7 +170,6 @@ func (sp *speaker) serve(w http.ResponseWriter, r *http.Request) {
 // http.services.sonosSpeakers names: its search goes to a socket that never answers.
 func sonosServer(t *testing.T, sp *speaker, tune func(*httpConfig)) *testServer {
 	t.Helper()
-	skipWithout(t, features.Sonos)
 	server := newServer(t, func(cfg *httpConfig) {
 		cfg.Sonos = true
 		if sp != nil {
@@ -823,7 +819,6 @@ func TestSonosLinkRunsOut(t *testing.T) {
 }
 
 func TestSonosLinkStopsWhenSonosIsOff(t *testing.T) {
-	skipWithout(t, features.Sonos)
 	server := newServer(t, nil)
 	path := server.write(t, "private/music/song.mp3", "song")
 	info, err := os.Stat(path)

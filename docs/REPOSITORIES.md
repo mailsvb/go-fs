@@ -202,8 +202,7 @@ It differs from the package repositories in these ways:
   are kept per client. Playlists are not kept: a client sees none.
 
 The record of a library on the REPOSITORY tab shows how many tracks and
-albums it has, and the address clients add. A binary built with the tag
-`no_jellyfin`, and go-fs-light, have no music library.
+albums it has, and the address clients add.
 
 ## OpenSubsonic music library
 
@@ -263,5 +262,4 @@ and an account sees the tracks it may read. Where it differs:
   songs are empty.
 
 The record of a library on the REPOSITORY tab shows how many tracks and
-albums it has, and the address clients add. A binary built with the tag
-`no_subsonic`, and go-fs-light, have no OpenSubsonic library.
+albums it has, and the address clients add.

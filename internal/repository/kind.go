@@ -70,13 +70,12 @@ type entry interface {
 func newKind(repo config.Repository, folder string, logger *slog.Logger) (kind, Status, error) {
 	make, ok := kinds[repo.Type]
 	if !ok {
-		return nil, Status{}, fmt.Errorf("type %q is not one this binary was built with", repo.Type)
+		return nil, Status{}, fmt.Errorf("type %q is not a kind of repository", repo.Type)
 	}
 	return make(repo, folder, logger)
 }
 
-// kinds make the kinds of repository the binary was built with, by their
-// type. Each adds itself from a file of its own, kind_rpm.go and
-// kind_fdroid.go, which a build tag leaves out together with the modules the
-// kind imports.
+// kinds make the kinds of repository, by their type. Each adds itself from a
+// file of its own, kind_rpm.go and the like, beside the modules the kind
+// imports.
 var kinds = map[string]func(repo config.Repository, folder string, logger *slog.Logger) (kind, Status, error){}

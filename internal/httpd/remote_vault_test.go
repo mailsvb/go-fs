@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/mailsvb/go-fs/internal/config"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/remote"
 	"github.com/mailsvb/go-fs/internal/remote/remotetest"
 )
@@ -20,7 +19,6 @@ import (
 // from as any other, by the cleartext names, while the host keeps only
 // ciphertext.
 func TestRemoteServerWithAVault(t *testing.T) {
-	skipWithout(t, features.SFTPRemote, features.Cryptomator)
 	host := remotetest.NewSFTPHost(t, "alice", "secret")
 	login := remote.FromServer(storedServer(host, "Backup"))
 	login.VaultPath, login.VaultPassword = "vault", "pw"

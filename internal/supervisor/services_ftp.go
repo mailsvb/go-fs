@@ -1,5 +1,3 @@
-//go:build !light && !no_ftp
-
 package supervisor
 
 import (
@@ -9,7 +7,7 @@ import (
 	"github.com/mailsvb/go-fs/internal/service"
 )
 
-// The FTP and FTPS server, left out by the tag no_ftp and by light.
+// The FTP and FTPS server.
 func init() {
 	register(entry{
 		name:    "ftp",

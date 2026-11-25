@@ -1,5 +1,3 @@
-//go:build !light && !no_subsonic
-
 package repository
 
 import (

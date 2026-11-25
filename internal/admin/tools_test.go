@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// general.tools is a subsection whatever the binary was built with, its keys
+// general.tools is a subsection, its keys
 // are paths typed in as text, and the empty box of each says what leaving it
 // empty does on this machine.
 func TestToolsAreASubsectionOfGeneral(t *testing.T) {

@@ -41,9 +41,6 @@ const newRecoveryKeys = new WeakMap();
 const storedServers = new WeakMap();
 // the protocols a remote server may be reached with
 let protocols = [];
-// whether a remote server may keep its files in a vault of Cryptomator,
-// which a binary built without vaults does not offer
-let vaults = false;
 // the kinds a package repository may be, and what the server says of each
 // stored repository, by name: the key it signs with and how it is doing
 let repositoryTypes = [];
@@ -94,7 +91,6 @@ async function load() {
   summaries = state.summaries || {};
   placeholders = state.placeholders || {};
   protocols = state.protocols || [];
-  vaults = state.vaults === true;
   repositoryTypes = state.repositoryTypes || [];
   repositoryViews = state.repositories || {};
   syncProtocols = state.syncProtocols || [];
@@ -954,7 +950,7 @@ const serverDialog = (() => {
   }
 
   // fields shows the fields of the login the protocol chosen asks for, and
-  // those of the vault when the binary has vaults
+  // those of the vault but for a registry
   function fields() {
     const now = shape();
     const auth = field("auth").value;
@@ -972,7 +968,7 @@ const serverDialog = (() => {
     field("username").placeholder = now === "registry" && auth === "bearer"
       ? "optional: where the token is exchanged with it" : "";
     form.querySelectorAll("[data-vault]").forEach((element) => {
-      element.hidden = !vaults || now === "registry";
+      element.hidden = now === "registry";
       if (element.tagName !== "LABEL") element.disabled = element.hidden;
     });
   }
@@ -1000,9 +996,9 @@ const serverDialog = (() => {
       clientKey: shape() === "registry" ? materials.clientKey : "",
       caCert: shape() === "registry" ? materials.caCert : "",
       skipVerify: shape() === "registry" && !field("verify").checked,
-      vaultPath: vaults && shape() !== "registry" ? field("vaultPath").value.trim() : "",
-      vaultPassword: vaults && shape() !== "registry" ? field("vaultPassword").value : "",
-      createVault: vaults && shape() !== "registry" && field("createVault").checked,
+      vaultPath: shape() !== "registry" ? field("vaultPath").value.trim() : "",
+      vaultPassword: shape() !== "registry" ? field("vaultPassword").value : "",
+      createVault: shape() !== "registry" && field("createVault").checked,
     };
   }
 

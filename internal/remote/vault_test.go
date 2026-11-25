@@ -16,7 +16,6 @@ import (
 
 	"github.com/mailsvb/go-fs/internal/config"
 	"github.com/mailsvb/go-fs/internal/cryptomator"
-	"github.com/mailsvb/go-fs/internal/features"
 	"github.com/mailsvb/go-fs/internal/remote"
 	"github.com/mailsvb/go-fs/internal/remote/remotetest"
 )
@@ -36,12 +35,6 @@ func vaultHosts(t *testing.T) map[string]vaultHost {
 			Username: "alice", Password: "secret", HostKey: sftp.Fingerprint, VaultPath: "vault", VaultPassword: "pw"}, sftp.Dir},
 		"artifactory": {remote.Login{Type: config.ServerTypeArtifactory, URL: artifactory.URL,
 			Token: artifactory.Token, VaultPath: "/libs/vault", VaultPassword: "pw"}, artifactory.Dir},
-	}
-	// a binary built without a protocol tries the vault on the others
-	for name, host := range hosts {
-		if _, built := config.ServerTypeOf(host.login.Type); !built {
-			delete(hosts, name)
-		}
 	}
 	return hosts
 }
@@ -97,7 +90,6 @@ func vaultNames(t *testing.T, fsys remote.FS, p string) []string {
 }
 
 func TestVault(t *testing.T) {
-	skipWithout(t, features.Cryptomator)
 	long := strings.Repeat("long name ", 25) + ".txt"
 	big := make([]byte, 100*1024)
 	_, _ = rand.Read(big)
@@ -250,7 +242,6 @@ func withVaultPassword(l remote.Login, password string) remote.Login {
 }
 
 func TestVaultLoginIsChecked(t *testing.T) {
-	skipWithout(t, features.SFTPRemote, features.Cryptomator)
 	base := remote.Login{Host: "example.com", Username: "alice", HostKey: "SHA256:x"}
 	for name, l := range map[string]remote.Login{
 		"a vault without a password": {VaultPath: "/vault"},
@@ -277,30 +268,9 @@ func TestVaultLoginIsChecked(t *testing.T) {
 	}
 }
 
-// A binary built without vaults takes no login that names one, so that
-// nothing is read or written on the host beside the vault it was meant for.
-func TestVaultLoginWithoutVaults(t *testing.T) {
-	if features.Has(features.Cryptomator) {
-		t.Skip("built with cryptomator")
-	}
-	l := remote.Login{Type: config.ServerTypeArtifactory, URL: "https://acme.jfrog.io/artifactory", Token: "t",
-		VaultPath: "/libs/vault", VaultPassword: "pw"}
-	if _, err := l.Checked(false); err == nil || !strings.Contains(err.Error(), "without the vaults") {
-		t.Errorf("a login with a vault was read: %v", err)
-	}
-	if _, err := remote.CreateVault(context.Background(), l, sshConfig()); err == nil {
-		t.Error("a vault was made")
-	}
-	l.VaultPath, l.VaultPassword = "", ""
-	if _, err := l.Checked(false); err != nil {
-		t.Errorf("a login without a vault was refused: %v", err)
-	}
-}
-
 // A sync gives a file in a vault the time of its original, which Stat then
 // reports; a host that keeps no times says so.
 func TestVaultChtimes(t *testing.T) {
-	skipWithout(t, features.Cryptomator)
 	for name, host := range vaultHosts(t) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := remote.CreateVault(context.Background(), host.login, sshConfig()); err != nil {
